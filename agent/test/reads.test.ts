@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeString, decodeUint, formatSupply, readsBlock, balanceOfData, fromRaw } from "../src/obscura/reads.ts";
+import { decodeString, decodeUint, formatSupply, readsBlock, balanceOfData, fromRaw, marketLine, usdPrice } from "../src/obscura/reads.ts";
 
 // ABI-encoded "Obscura" as returned by name() on the real contract.
 const NAME_HEX =
@@ -28,7 +28,9 @@ test("the reads block only carries measured values", () => {
     siteUp: true,
     apiUp: false,
     wallet: { address: "0xabc", ethRobinhood: 0.25, ethMainnet: null, usdg: 120.5, obs: 0, usdc: null, usdt: null, nvda: null, rewards: { swaps: 2, volumeUsd: 480, rewardsUsd: 1.2, paidUsd: 0 } },
+    market: null,
   });
+  assert.ok(!/own market/.test(block), "an unread market is absent, not zero");
   assert.match(block, /Obscura \(OBS\), total supply 1,000,000,000, 3,261 holders/);
   assert.match(block, /wallet \(on chain\): 0\.25 ETH on Robinhood Chain, not read ETH on Ethereum, 120\.5 USDG, 0 OBS/);
   assert.match(block, /cashback for this wallet: 2 swaps, \$480 volume, \$1\.2 earned, \$0 paid out/);
@@ -39,4 +41,12 @@ test("the reads block only carries measured values", () => {
   assert.match(block, /up and answering/);
   assert.match(block, /did not answer/);
   assert.ok(!/—/.test(block));
+});
+
+test("the market line carries the pool price and its depth, sized for a small token", () => {
+  const line = marketLine({ venue: "ramses-v3", feePct: 2, priceUsd: 0.0004814205, depthUsd2pct: 202.31, liquidity: "1", at: 0 });
+  assert.equal(line, "OBS at $0.000481 on its own market (its USDG pool on Ramses, 2% tier); about $202.31 of buying moves the price 2%.");
+  assert.equal(usdPrice(2445.5150231686607), "$2,445.52");
+  assert.equal(usdPrice(0.5), "$0.5");
+  assert.ok(!/—/.test(line));
 });

@@ -13,6 +13,7 @@
     "engage": "tsx src/engage.ts",
     "engage:dry": "DRY_RUN=1 tsx src/engage.ts",
     "reads": "tsx src/obscura/reads.ts",
+    "pools": "tsx src/obscura/pools.ts",
     "setup": "node scripts/ohsetup.mjs",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",

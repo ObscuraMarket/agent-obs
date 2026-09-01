@@ -10,7 +10,7 @@
 // proposal is exactly what the dashboard shows it as.
 import { appendLedger, readLedger } from "../ledger.ts";
 import { forbiddenReason, stripDashes } from "../social/postGuards.ts";
-import { walletLines, type Reads } from "../obscura/reads.ts";
+import { walletLines, marketLine, type Reads } from "../obscura/reads.ts";
 import type { BookSnapshot, Trade } from "./book.ts";
 
 export interface Decision {
@@ -67,6 +67,7 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
   if (i.reads.prices.btcUsd != null) lines.push(`BTC ${usd(i.reads.prices.btcUsd)}.`);
   if (i.reads.prices.ethUsd != null) lines.push(`ETH ${usd(i.reads.prices.ethUsd)}.`);
   if (i.reads.token.symbol) lines.push(`${i.reads.token.name ?? i.reads.token.symbol} (${i.reads.token.symbol}) on Robinhood Chain${i.reads.token.holders != null ? `, ${i.reads.token.holders.toLocaleString("en-US")} holders` : ""}.`);
+  if (i.reads.market) lines.push(marketLine(i.reads.market));
   for (const l of walletLines(i.reads.wallet)) lines.push(l.replace(/^- /, ""));
   lines.push(`Obscura: the app is ${i.reads.siteUp ? "up" : "not answering"}, the routing API ${i.reads.apiUp ? "healthy" : "not answering"}.`);
   return lines;

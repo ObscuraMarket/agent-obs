@@ -83,7 +83,8 @@ Contract on Robinhood Chain: 0xfe242d1da8fd04f6a1f80b6d3d807b02e062ad4e.
 Name "Obscura", symbol OBS, 18 decimals, total supply 1,000,000,000. Holder
 count and price move; OBS reads them live (src/obscura/reads.ts) and never
 quotes a stale one. OBS points people at the site to verify the contract
-rather than pasting the address.
+rather than pasting the address. Where it trades, and how thin that market
+is, is in ROBINHOOD_CHAIN_KB.md and obs-chain.json.
 
 Utility the app describes:
 - Fee tier discounts that scale with $OBS balance ("Hold $OBS and trade on a

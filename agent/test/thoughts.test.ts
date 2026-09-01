@@ -10,6 +10,7 @@ const reads = {
   siteUp: true,
   apiUp: true,
   wallet: null,
+  market: null,
 };
 
 test("an empty desk observes that it has nothing, and never invents a mark", () => {
@@ -17,7 +18,14 @@ test("an empty desk observes that it has nothing, and never invents a mark", () 
   assert.match(lines[0], /no capital yet/);
   assert.ok(lines.some((l) => /BTC \$78,000\.00/.test(l)));
   assert.ok(lines.some((l) => /3,266 holders/.test(l)));
+  assert.ok(!lines.some((l) => /own market/.test(l)), "an unread market is absent");
   assert.ok(!lines.some((l) => /—/.test(l)));
+});
+
+test("the observation carries OBS's own market when the chain answered", () => {
+  const market = { venue: "ramses-v3" as const, feePct: 2, priceUsd: 0.00048142, depthUsd2pct: 202, liquidity: "1", at: 1 };
+  const lines = observationLines({ reads: { ...reads, market }, book: snapshot([], [], {}, 1), quotes: [], open: [], now: 1 });
+  assert.ok(lines.some((l) => /^OBS at \$0\.000481 on its own market \(its USDG pool on Ramses, 2% tier\); about \$202\.00 of buying moves the price 2%\.$/.test(l)), lines.join("\n"));
 });
 
 test("a funded desk observes its book, in-flight swaps and quotes", () => {

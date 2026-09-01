@@ -291,6 +291,8 @@
       if (r.prices && r.prices.ethUsd != null) rows.push(["ETH", usd(r.prices.ethUsd), ""]);
       if (r.token && r.token.symbol) rows.push([r.token.symbol + " holders", r.token.holders != null ? r.token.holders.toLocaleString("en-US") : "n/a", ""]);
       if (r.token && r.token.totalSupply) rows.push([r.token.symbol + " supply", r.token.totalSupply, ""]);
+      if (r.market && r.market.priceUsd != null) rows.push([r.token.symbol + " on chain", "$" + r.market.priceUsd.toLocaleString("en-US", { maximumSignificantDigits: 3 }), ""]);
+      if (r.market && r.market.depthUsd2pct != null) rows.push(["2% depth", usd(r.market.depthUsd2pct), ""]);
       rows.push(["App", r.siteUp ? "Up" : "Down", r.siteUp ? "lime" : ""]);
       rows.push(["Routing API", r.apiUp ? "Healthy" : "Down", r.apiUp ? "lime" : ""]);
       el("market").innerHTML = rows.map(function (kv) { return "<li><span class='k'>" + esc(kv[0]) + "</span><span class='v num " + kv[2] + "'>" + esc(kv[1]) + "</span></li>"; }).join("");

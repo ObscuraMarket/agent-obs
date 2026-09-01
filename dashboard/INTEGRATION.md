@@ -141,8 +141,10 @@ account goes live; filter on `posted` in production if you prefer.
 
 ### `GET /api/obs/reads`
 The live reads he may cite: the $OBS token as read from chain (name, symbol,
-supply, holders), BTC and ETH spot, whether the app and its `/health` answer,
-and `block`, the same text the agent sees. Cached 60 s.
+supply, holders), BTC and ETH spot, `market` ($OBS priced by its own on-chain
+pool: `priceUsd`, `depthUsd2pct` in dollars that move it 2%, `venue`,
+`feePct`; null when the chain did not answer), whether the app and its
+`/health` answer, and `block`, the same text the agent sees. Cached 60 s.
 
 ## 3. Embed options
 

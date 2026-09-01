@@ -47,7 +47,7 @@ const book = readBook();
 const reads = await liveReads();
 const chain = reads.wallet ? walletBalances(reads.wallet) : null;
 const symbols = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, book.trades, {}, now).holdings);
-const prices = await assetPrices(symbols);
+const prices = await assetPrices(symbols, { OBS: reads.market?.priceUsd ?? null });
 const mark = chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now);
 const open = latestTrades(book.trades).filter((t) => t.status === "pending" || t.status === "proposed");
 const quotes: QuoteRead[] = await quoteWatchlist(now);

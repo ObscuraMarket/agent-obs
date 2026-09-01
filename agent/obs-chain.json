@@ -1,0 +1,282 @@
+{
+  "about": "What OBS knows about the chain his token lives on, as machine-readable facts. Read by src/obscura/pools.ts. Every address here was read from the chain or its explorer on the date given; measured numbers are a snapshot, and the live read replaces them every cycle.",
+  "verifiedAt": "2026-09-01",
+  "chain": {
+    "id": 4663,
+    "name": "Robinhood Chain",
+    "stack": "Arbitrum Nitro rollup",
+    "blocksPerSecond": 10,
+    "publicRpc": "https://rpc.mainnet.chain.robinhood.com",
+    "explorer": "https://robinhoodchain.blockscout.com",
+    "contractsDoc": "https://docs.robinhood.com/chain/contracts/"
+  },
+  "reading": {
+    "browserUserAgent": true,
+    "oneCallAtATime": true,
+    "cooldownMinutesOn403or429": 5,
+    "batchedJsonRpcReturns429AsObject": true,
+    "getLogsMaxBlocksPerQuery": 20000,
+    "wideCurrencyFilteredGetLogsTimesOut": true,
+    "blockscoutV1RowCap": 1000,
+    "blockscoutV2NeedsBrowserUserAgent": true,
+    "multicall3": "0xca11bde05977b3631167028862be2a173976ca11"
+  },
+  "contracts": {
+    "uniswapV4": {
+      "poolManager": "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+      "stateView": "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b",
+      "positionManager": "0x58daec3116aae6d93017baaea7749052e8a04fa7",
+      "universalRouter": "0x8876789976decbfcbbbe364623c63652db8c0904",
+      "quoter": "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
+      "permit2": "0x000000000022d473030f116ddee9f6b43ac78ba3"
+    },
+    "ramsesV3": {
+      "factory": "0xe0c4ceb92d08ca985bb70fe0a22feb121a9854a8",
+      "poolDeployer": "0x4b37359bf291abe8453692db58d515a8b013dca9"
+    },
+    "accountAbstraction": {
+      "safeSingleton141": "0x29fcb43b46531bca003ddc8fcb67ffe91900c762",
+      "safeProxyFactory": "0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67",
+      "entryPointV06": "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789",
+      "entryPointV07": "0x0000000071727de22e5e9d8baf0edac6f37da032"
+    },
+    "launchpads": {
+      "ponsV2Hook": "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044",
+      "ponsV2Launcher": "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e",
+      "dopplerHook": "0x4e3468951d49f2eea976ed0d6e75ffcb44a9a544"
+    }
+  },
+  "tokens": {
+    "OBS": {
+      "address": "0xfe242d1da8fd04f6a1f80b6d3d807b02e062ad4e",
+      "decimals": 18,
+      "name": "Obscura",
+      "totalSupply": "1000000000"
+    },
+    "USDG": {
+      "address": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+      "decimals": 6,
+      "issuer": "Paxos (Global Dollar)"
+    },
+    "WETH": {
+      "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+      "decimals": 18,
+      "note": "every Uniswap v4 pool here quotes native ETH; WETH only appears when someone wraps"
+    },
+    "syrupUSDG": {
+      "address": "0x40858070814a57fdf33a613ae84fe0a8b4a874f7",
+      "decimals": 18,
+      "note": "Maple credit pool token; the deep yield-bearing dollar on the chain"
+    },
+    "USDe": {
+      "address": "0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34",
+      "decimals": 18,
+      "note": "Ethena dollar; plain stable here, the staked form is not on this chain"
+    },
+    "stocks": {
+      "AAPL": "0xaf3d76f1834a1d425780943c99ea8a608f8a93f9",
+      "AMD": "0x86923f96303d656e4aa86d9d42d1e57ad2023fdc",
+      "AMZN": "0x12f190a9f9d7d37a250758b26824b97ce941bf54",
+      "BE": "0x822cc93ffd030293e9842c30bbd678f530701867",
+      "COIN": "0x6330d8c3178a418788df01a47479c0ce7ccf450b",
+      "CRWV": "0x5f10a1c971b69e47e059e1dc91901b59b3fb49c3",
+      "GOOGL": "0x2e0847e8910a9732eb3fb1bb4b70a580adad4fe3",
+      "INTC": "0xc72b96e0e48ecd4dc75e1e45396e26300bc39681",
+      "META": "0xc0d6457c16cc70d6790dd43521c899c87ce02f35",
+      "MSFT": "0xe93237c50d904957cf27e7b1133b510c669c2e74",
+      "MU": "0xff080c8ce2e5feadaca0da81314ae59d232d4afd",
+      "NVDA": "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec",
+      "ORCL": "0xb0992820e760d836549ba69bc7598b4af75dee03",
+      "PLTR": "0x894e1ec2d74ffe5aef8dc8a9e84686accb964f2a",
+      "SNDK": "0xb90a19ff0af67f7779aff50a882a9cff42446400",
+      "SPCX": "0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea",
+      "TSLA": "0x322f0929c4625ed5bad873c95208d54e1c003b2d",
+      "USAR": "0xd917b029c761d264c6a312bbbcda868658ef86a6",
+      "GLD": "0xc9a981fee1f9dec688bb123ccdecc63d0debfc4e"
+    }
+  },
+  "obsMarket": {
+    "primary": {
+      "venue": "ramses-v3",
+      "pool": "0x97b11f4138f602325e081b555ec6120459af9c7c",
+      "token0": "USDG",
+      "token1": "OBS",
+      "decimals0": 6,
+      "decimals1": 18,
+      "usdToken": 0,
+      "feePct": 2,
+      "tickSpacing": 200,
+      "measured": {
+        "at": "2026-09-01T13:30:00Z",
+        "block": 51759082,
+        "sqrtPriceX96": "3610914961881416418765601521652359028",
+        "tick": 352715,
+        "liquidity": "926641070858788185",
+        "priceUsd": 0.00048142,
+        "usdgDepth2pct": 202,
+        "usdgInPool": 8714.97,
+        "obsInPool": 26517263
+      }
+    },
+    "holders": {
+      "at": "2026-09-01",
+      "count": 3275,
+      "transfers": 127909,
+      "explorerRateUsd": 0.00044062,
+      "explorerMarketCapUsd": 440493,
+      "explorerVolume24hUsd": 262009,
+      "largest": [
+        {
+          "label": "launch locker (V2LaunchLocker, verified)",
+          "address": "0x267444d099b10fb5ed7c3cc7b7c767adca574952",
+          "pctOfSupply": 8.16
+        },
+        {
+          "label": "Uniswap v4 PoolManager (the dust pools below)",
+          "address": "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+          "pctOfSupply": 6.66
+        },
+        {
+          "label": "the Ramses V3 pool above",
+          "address": "0x97b11f4138f602325e081b555ec6120459af9c7c",
+          "pctOfSupply": 2.53
+        }
+      ]
+    },
+    "uniswapV4Dust": {
+      "note": "Ten hookless USDG pools exist for OBS at tiers from 0.25% to 66%. All are initialized; the deepest takes under one dollar before a 2% move and their in-range prices disagree sixfold. OBS never quotes them.",
+      "measuredAt": "2026-09-01T13:33:16.435Z",
+      "pools": [
+        {
+          "id": "0x50d32a96a3f64ab147c31d5a1ba133478c7a0ab596763297ac0d8959f16bd8e5",
+          "feePct": 7,
+          "tickSpacing": 100,
+          "hooks": false,
+          "liquidity": "2263476910830189",
+          "usdgDepth2pct": 0.45,
+          "priceUsdInRange": 0.0004108
+        },
+        {
+          "id": "0xeccdd68e79ff2181891c2f76fbc32e2f42c317b2b9ec6449356726789519cf3f",
+          "feePct": 50,
+          "tickSpacing": 200,
+          "hooks": false,
+          "liquidity": "822805149065572",
+          "usdgDepth2pct": 0.21,
+          "priceUsdInRange": 0.0006531
+        },
+        {
+          "id": "0x674ab71ad5eedf29d5e26373a117b8caadb36ea3a71f681fec272a82164c74e1",
+          "feePct": 15,
+          "tickSpacing": 1500,
+          "hooks": false,
+          "liquidity": "76711100424659",
+          "usdgDepth2pct": 0.02,
+          "priceUsdInRange": 0.0005058
+        },
+        {
+          "id": "0x8ab31da82fe16e27b00cd4da6bc62fc4f34dcba04afc69ae33903c6e2ec7a752",
+          "feePct": 49,
+          "tickSpacing": 4900,
+          "hooks": false,
+          "liquidity": "17443899297850",
+          "usdgDepth2pct": 0.01,
+          "priceUsdInRange": 0.0012044
+        },
+        {
+          "id": "0x1ffabb7c5af9b7a7d32573c1c7b05f9f44304bd17ce4119071605e2f2ca3abf3",
+          "feePct": 32,
+          "tickSpacing": 3200,
+          "hooks": false,
+          "liquidity": "5532923851538",
+          "usdgDepth2pct": 0,
+          "priceUsdInRange": 0.0010304
+        },
+        {
+          "id": "0x8e239c649caa760052906e024c4aaf20a4c6a1e0e95c9c0081610b9007cca765",
+          "feePct": 66,
+          "tickSpacing": 6600,
+          "hooks": false,
+          "liquidity": "0",
+          "usdgDepth2pct": 0,
+          "priceUsdInRange": 0.0002158
+        },
+        {
+          "id": "0x44d3ff1cb4522b2d89c7a8c5919e6244477db061bc4b34d6e4c46d9d4acb5d94",
+          "feePct": 2.5,
+          "tickSpacing": 250,
+          "hooks": false,
+          "liquidity": "0",
+          "usdgDepth2pct": 0,
+          "priceUsdInRange": 0.0002057
+        },
+        {
+          "id": "0xa6928ea88ec66ecc88e6807c0461ba2561e42f7efad6cadc3d214630407d7752",
+          "feePct": 10,
+          "tickSpacing": 1000,
+          "hooks": false,
+          "liquidity": "0",
+          "usdgDepth2pct": 0,
+          "priceUsdInRange": 0.000334
+        },
+        {
+          "id": "0x77e84cad9c04bbf1d9ba062d4f7a47e4868d92d8c1e093e0713807e4538de6e2",
+          "feePct": 2.88,
+          "tickSpacing": 576,
+          "hooks": false,
+          "liquidity": "0",
+          "usdgDepth2pct": 0,
+          "priceUsdInRange": 0.0008773
+        },
+        {
+          "id": "0x41996d6b713cd5f40e3dec4561dc41e89204dbcfeb0dcdd701980a427a9da04d",
+          "feePct": 0.25,
+          "tickSpacing": 25,
+          "hooks": false,
+          "liquidity": "0",
+          "usdgDepth2pct": 0,
+          "priceUsdInRange": 0.0013359
+        }
+      ]
+    }
+  },
+  "referencePools": {
+    "NVDA/USDG": {
+      "venue": "uniswap-v4",
+      "id": "0x3bb34a44f1b2b5f32c034c38a53065a521a47b199700fa9bd19d60985ff24bf1",
+      "token0": "USDG",
+      "token1": "NVDA",
+      "decimals0": 6,
+      "decimals1": 18,
+      "usdToken": 0,
+      "feePct": 0.3,
+      "tickSpacing": 60,
+      "hooks": false,
+      "measured": {
+        "at": "2026-09-01T13:33:16.435Z",
+        "priceUsd": 216.58,
+        "usdgDepth2pct": 44529,
+        "liquidity": "307103664247818055"
+      }
+    },
+    "ETH/USDG": {
+      "venue": "uniswap-v4",
+      "id": "0x24107d152f14a76d292123265ae3f3c71f863fc2f4ef7ba49d64e78d28ea379e",
+      "token0": "ETH",
+      "token1": "USDG",
+      "decimals0": 18,
+      "decimals1": 6,
+      "usdToken": 1,
+      "note": "token0 is native ETH, the zero address",
+      "feePct": 0.01,
+      "tickSpacing": 1,
+      "hooks": false,
+      "measured": {
+        "at": "2026-09-01T13:33:16.435Z",
+        "priceUsd": 2445.52,
+        "usdgDepth2pct": 24434,
+        "liquidity": "49655074732949726"
+      }
+    }
+  }
+}

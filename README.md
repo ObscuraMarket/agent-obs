@@ -22,7 +22,8 @@ Chain. OBS is its operator mind and its voice.
 ```
 agent/
   OBSCURA_KB.md            what OBS knows about Obscura, verified from the site and chain
-  ROBINHOOD_CHAIN_KB.md    the chain and the tokenized stocks
+  ROBINHOOD_CHAIN_KB.md    the chain, the tokenized stocks, where things trade, how to read it
+  obs-chain.json           his chain memory: contracts, tokens, the pools where his assets trade
   OBS_X_VOICE.md           who OBS is on X and exactly how he posts
   OBS-MEMORY.md            how he keeps his own memory
   personality/             obs (operator) and copywriter (the voice), provisioned on the gateway
@@ -35,6 +36,7 @@ agent/
     engage.ts              mention replies, cursor-driven, capped, paced like a person
     server.ts              the dashboard API: read-only JSON, CORS, serves the page
     obscura/reads.ts       the live numbers he may cite: $OBS on chain, holders, prices, app health
+    obscura/pools.ts       a pool's price and depth; $OBS priced by its own market each cycle
     social/postGuards.ts   the hard boundaries, one place, shared by every job
     social/xClient.ts      draft-first X client: nothing posts until X_LIVE=true
     journal.ts             per-agent private notes, fed back next cycle

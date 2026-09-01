@@ -138,7 +138,7 @@ let pricesCache: { at: number; key: string; value: Record<string, number | null>
 async function cachedPrices(symbols: string[]): Promise<Record<string, number | null>> {
   const key = [...new Set(symbols.map((s) => s.toUpperCase()))].sort().join(",");
   if (pricesCache && pricesCache.key === key && Date.now() - pricesCache.at < READS_TTL_MS) return pricesCache.value;
-  const value = await assetPrices(symbols);
+  const value = await assetPrices(symbols, { OBS: readsCache?.value.market?.priceUsd ?? null });
   pricesCache = { at: Date.now(), key, value };
   return value;
 }

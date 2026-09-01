@@ -5,15 +5,19 @@
 // something evergreen, never invent). The samplers measure, the model
 // explains.
 //
-// The chain's public RPC is Cloudflare-fronted and rejects default
-// User-Agents, so every call carries a browser UA. Run `npm run reads` to see
-// the block as the model would.
+// Every chain call goes through rpc.ts (browser UA, one at a time, a cooldown
+// after a refusal). $OBS is priced by its own market, the pool in pools.ts,
+// ahead of the explorer's lagging rate. Run `npm run reads` to see the block
+// as the model would.
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, dataPath } from "../config.ts";
+import { UA, rpc, ethCall, rpcBlocked } from "./rpc.ts";
+import { obsMarket, type MarketRead } from "./pools.ts";
 
-const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+export { rpcBlocked };
+export type { MarketRead };
 
 // ERC-20 selectors.
 const SEL = { name: "0x06fdde03", symbol: "0x95d89b41", decimals: "0x313ce567", totalSupply: "0x18160ddd" } as const;
@@ -48,41 +52,6 @@ export function formatSupply(raw: bigint, decimals: number): string {
   return whole.toLocaleString("en-US");
 }
 
-// The public RPC in front of Robinhood Chain rate-limits bursts, so calls to
-// it are made one at a time by the callers below and each one retries once
-// after a short pause. Null still means "not read this cycle", never zero.
-// A public endpoint that answers 403 (a bot challenge page) or 429 is not
-// going to change its mind in the next second, so the process stops asking it
-// for a while instead of hammering it and making the block longer.
-const blockedUntil = new Map<string, number>();
-const RPC_COOLDOWN_MS = 5 * 60_000;
-export function rpcBlocked(url: string): boolean {
-  return (blockedUntil.get(url) ?? 0) > Date.now();
-}
-async function rpc(url: string, method: string, params: unknown[]): Promise<string | null> {
-  if (rpcBlocked(url)) return null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json", "User-Agent": UA },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (res.status === 403 || res.status === 429) {
-        blockedUntil.set(url, Date.now() + RPC_COOLDOWN_MS);
-        return null;
-      }
-      const j = (await res.json()) as { result?: string };
-      if (typeof j.result === "string") return j.result;
-    } catch {
-      /* fall through to the retry */
-    }
-    if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
-  }
-  return null;
-}
-const ethCall = (to: string, data: string) => rpc(RPC_URL, "eth_call", [{ to, data }, "latest"]);
 
 /** PURE: whole units from raw, as a number with sensible precision. */
 export function fromRaw(raw: bigint, decimals: number): number {
@@ -275,11 +244,13 @@ const COINGECKO_IDS: Record<string, string> = {
   DOGE: "dogecoin",
 };
 
-/** USD prices for a set of asset symbols. Missing or unfetchable = null, never zero. */
-export async function assetPrices(symbols: string[]): Promise<Record<string, number | null>> {
+/** USD prices for a set of asset symbols. Missing or unfetchable = null, never zero.
+ *  `known` carries prices already measured this cycle (OBS from its own pool); they win. */
+export async function assetPrices(symbols: string[], known: Record<string, number | null> = {}): Promise<Record<string, number | null>> {
   const want = [...new Set(symbols.map((s) => s.toUpperCase()))];
   const out: Record<string, number | null> = {};
-  const ids = want.map((s) => COINGECKO_IDS[s]).filter(Boolean);
+  for (const s of want) if (typeof known[s] === "number" && (known[s] as number) > 0) out[s] = known[s];
+  const ids = want.filter((s) => !(s in out)).map((s) => COINGECKO_IDS[s]).filter(Boolean);
   if (ids.length) {
     try {
       const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(",")}&vs_currencies=usd`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
@@ -342,15 +313,29 @@ export interface Reads {
   siteUp: boolean;
   apiUp: boolean;
   wallet: WalletRead | null;
+  /** $OBS as its own on-chain market prices it. Null when the chain did not answer. */
+  market: MarketRead | null;
 }
 
 export async function liveReads(): Promise<Reads> {
   const othersP = Promise.all([prices(), siteUp(), apiUp()]);
-  // The two Robinhood-heavy reads run back to back, not on top of each other.
+  // The Robinhood-heavy reads run back to back, not on top of each other.
   const token = await obsToken();
   const wallet = await walletRead();
+  const market = await obsMarket();
   const [p, up, api] = await othersP;
-  return { at: Date.now(), token, prices: p, siteUp: up, apiUp: api, wallet };
+  return { at: Date.now(), token, prices: p, siteUp: up, apiUp: api, wallet, market };
+}
+
+/** PURE: a small price with the digits that matter, a large one to the cent. */
+export function usdPrice(v: number): string {
+  return v >= 1 ? `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `$${v.toLocaleString("en-US", { maximumSignificantDigits: 3 })}`;
+}
+
+/** PURE: the market line as the prompt, the observation and the dashboard show it. */
+export function marketLine(m: MarketRead): string {
+  const venue = m.venue === "ramses-v3" ? "its USDG pool on Ramses" : "its USDG pool";
+  return `OBS at ${usdPrice(m.priceUsd)} on its own market (${venue}, ${m.feePct}% tier); about ${usdPrice(m.depthUsd2pct)} of buying moves the price 2%.`;
 }
 
 const fmt = (v: number | null, digits: number) => (v == null ? "not read" : v.toLocaleString("en-US", { maximumFractionDigits: digits }));
@@ -372,6 +357,7 @@ export function readsBlock(r: Reads): string {
   }
   if (r.prices.btcUsd != null) lines.push(`- BTC ${r.prices.btcUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`);
   if (r.prices.ethUsd != null) lines.push(`- ETH ${r.prices.ethUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`);
+  if (r.market) lines.push(`- ${marketLine(r.market)}`);
   lines.push(...walletLines(r.wallet));
   lines.push(`- obscura.market is ${r.siteUp ? "up and answering" : "not answering right now (do not mention it)"}; the routing API ${r.apiUp ? "reports healthy" : "did not answer (do not mention it)"}`);
   return lines.join("\n");

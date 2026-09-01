@@ -117,6 +117,15 @@ count from Blockscout, BTC and ETH spot, whether obscura.market and its API
 exists and is documented in the KB for a later read; OBS does not quote
 anyone's wallet.
 
+His chain memory is `agent/obs-chain.json`: the chain's contracts, the
+tokens, the pools where his assets trade, and the snapshot measured when each
+fact was verified (2026-09-01). `src/obscura/pools.ts` reads a pool's
+square-root price and in-range liquidity and turns them into a price and the
+dollars that move it 2%. Each cycle it reads $OBS's own market, a Ramses V3
+USDG pool at a 2% tier, and that price marks OBS in the book ahead of the
+explorer's lagging rate. The ten Uniswap v4 pools for OBS are recorded as what
+they are, dust, and never quoted. `ROBINHOOD_CHAIN_KB.md` is the prose half.
+
 Everything else is knowledge-base fact or "not measured". The voice doc says
 which is which.
 
