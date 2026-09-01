@@ -146,9 +146,19 @@ returning routes with `partner` and `toAmount`, `POST /order/status
 in code: `OBS_TRADING` must be exactly `on`, and the receiving address must
 come from configuration, never from a model reply. No loop calls it.
 
-The execution stage, when it is built, needs: a wallet the desk controls on
-the from-chain, a receiving address for the to-chain, a signer that sends
-exactly the quoted deposit, a status poller that turns `pending` into
+**The wallet.** OBS has one EVM key, generated on the operator's machine by
+`scripts/wallet.mjs` and stored at `~/.obs/wallet/obs-wallet.json` with
+owner-only permissions, outside the repo. The loops read only the public
+address (`OBS_WALLET_ADDRESS`): native ETH on Robinhood Chain and Ethereum,
+USDG and OBS balances, and Obscura's cashback stats for the address, all of
+which appear in the observation and on the dashboard. The address is public
+by design. The key is loaded by nothing until the execution stage exists.
+Bitcoin, Solana and other non-EVM legs would need their own keys and are a
+separate decision.
+
+The execution stage, when it is built, needs: the signer above sending
+exactly the quoted deposit from the from-chain, the same address as the
+receiving address on the to-chain, a status poller that turns `pending` into
 `settled` with the transaction, and rails (per-swap cap, daily cap, one open
 order at a time, a kill switch). That is a design document of its own.
 
@@ -186,10 +196,10 @@ drafts with a filter once it has. Fields are only added, never renamed.
 
 ## 6. What v0.2 deliberately does not do
 
-- No wallet, no key, no capital. The capital ledger is empty and only the
-  operator's tooling writes to it. When capital arrives it gets a written
-  doctrine first: an agent-custodied receive-only treasury, a separate
-  operator-held signer with caps, never the same key in two places.
+- No capital and no signing. The wallet exists and is read; its key is loaded
+  by nothing. The capital ledger is empty and only the operator's tooling
+  writes to it. Funding the wallet and recording the deposit are two
+  deliberate operator steps, and execution is a third.
 - No execution through Obscura. The read paths are used every cycle; order
   creation is gated in code and nothing calls it. A decision is a proposal.
 - No X posting until the operator flips `X_LIVE`.

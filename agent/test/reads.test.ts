@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeString, decodeUint, formatSupply, readsBlock } from "../src/obscura/reads.ts";
+import { decodeString, decodeUint, formatSupply, readsBlock, balanceOfData, fromRaw } from "../src/obscura/reads.ts";
 
 // ABI-encoded "Obscura" as returned by name() on the real contract.
 const NAME_HEX =
@@ -27,8 +27,13 @@ test("the reads block only carries measured values", () => {
     prices: { btcUsd: null, ethUsd: 4321.5 },
     siteUp: true,
     apiUp: false,
+    wallet: { address: "0xabc", ethRobinhood: 0.25, ethMainnet: null, usdg: 120.5, obs: 0, rewards: { swaps: 2, volumeUsd: 480, rewardsUsd: 1.2, paidUsd: 0 } },
   });
   assert.match(block, /Obscura \(OBS\), total supply 1,000,000,000, 3,261 holders/);
+  assert.match(block, /wallet \(on chain\): 0\.25 ETH on Robinhood Chain, not read ETH on Ethereum, 120\.5 USDG, 0 OBS/);
+  assert.match(block, /cashback for this wallet: 2 swaps, \$480 volume, \$1\.2 earned, \$0 paid out/);
+  assert.equal(balanceOfData("0xfe242d1da8fd04f6a1f80b6d3d807b02e062ad4e"), "0x70a08231000000000000000000000000fe242d1da8fd04f6a1f80b6d3d807b02e062ad4e");
+  assert.equal(fromRaw(1_500_000n, 6), 1.5);
   assert.match(block, /ETH 4,322 USD/);
   assert.ok(!/BTC/.test(block), "an unmeasured price is absent, not zero");
   assert.match(block, /up and answering/);

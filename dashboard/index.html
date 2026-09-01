@@ -140,6 +140,10 @@
       </div>
       <div>
         <div class="card">
+          <div class="card-head"><h2>Wallet</h2><span id="wallet-link"></span></div>
+          <ul class="kv" id="wallet"><li class="none">No wallet yet.</li></ul>
+        </div>
+        <div class="card">
           <div class="card-head"><h2>Book</h2><span id="book-s"></span></div>
           <ul class="kv" id="book"><li class="none">No capital on the book.</li></ul>
         </div>
@@ -202,6 +206,22 @@
       el("handle").href = "https://x.com/" + s.agent.handle;
       el("feed-h").textContent = "@" + s.agent.handle;
       el("cycle-s").textContent = s.desk.lastThoughtAt ? "last cycle " + ago(s.desk.lastThoughtAt) : "no cycle yet";
+      if (s.wallet) {
+        var a = s.wallet.address;
+        el("wallet-link").innerHTML = "<a href='" + esc(s.wallet.explorerUrl) + "' target='_blank' rel='noopener' class='num'>" + esc(a.slice(0, 6) + "…" + a.slice(-4)) + "</a>";
+      }
+    }
+    function wallet(w) {
+      if (!w) { el("wallet").innerHTML = "<li class='none'>No wallet yet.</li>"; return; }
+      var f = function (v, d) { return v == null ? "n/a" : Number(v).toLocaleString("en-US", { maximumFractionDigits: d }); };
+      var rows = [
+        ["ETH, Robinhood Chain", f(w.ethRobinhood, 6)],
+        ["ETH, Ethereum", f(w.ethMainnet, 6)],
+        ["USDG", f(w.usdg, 2)],
+        ["OBS", f(w.obs, 2)]
+      ];
+      if (w.rewards) rows.push(["Cashback", w.rewards.swaps + " swaps · " + usd(w.rewards.rewardsUsd) + " earned · " + usd(w.rewards.paidUsd) + " paid"]);
+      el("wallet").innerHTML = rows.map(function (kv) { return "<li><span class='k'>" + esc(kv[0]) + "</span><span class='v num'>" + esc(kv[1]) + "</span></li>"; }).join("");
     }
     function pnl(p) {
       var s = p.snapshot;
@@ -275,6 +295,7 @@
       rows.push(["Routing API", r.apiUp ? "Healthy" : "Down", r.apiUp ? "lime" : ""]);
       el("market").innerHTML = rows.map(function (kv) { return "<li><span class='k'>" + esc(kv[0]) + "</span><span class='v num " + kv[2] + "'>" + esc(kv[1]) + "</span></li>"; }).join("");
       el("reads-at").textContent = ago(r.at);
+      wallet(r.wallet || null);
     }
     function refresh() {
       el("err").textContent = "";

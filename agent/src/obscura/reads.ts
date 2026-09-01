@@ -10,7 +10,7 @@
 // the block as the model would.
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL } from "../config.ts";
+import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT } from "../config.ts";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -47,12 +47,12 @@ export function formatSupply(raw: bigint, decimals: number): string {
   return whole.toLocaleString("en-US");
 }
 
-async function ethCall(to: string, data: string): Promise<string | null> {
+async function rpc(url: string, method: string, params: unknown[]): Promise<string | null> {
   try {
-    const res = await fetch(RPC_URL, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", "User-Agent": UA },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
       signal: AbortSignal.timeout(15_000),
     });
     const j = (await res.json()) as { result?: string };
@@ -60,6 +60,64 @@ async function ethCall(to: string, data: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+const ethCall = (to: string, data: string) => rpc(RPC_URL, "eth_call", [{ to, data }, "latest"]);
+
+/** PURE: whole units from raw, as a number with sensible precision. */
+export function fromRaw(raw: bigint, decimals: number): number {
+  return Number(raw) / 10 ** decimals;
+}
+/** PURE: balanceOf(holder) calldata. Exported for tests. */
+export function balanceOfData(holder: string): string {
+  return "0x70a08231" + holder.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+}
+
+async function nativeBalance(url: string, holder: string): Promise<number | null> {
+  const r = await rpc(url, "eth_getBalance", [holder, "latest"]);
+  if (!r) return null;
+  try {
+    return fromRaw(BigInt(r), 18);
+  } catch {
+    return null;
+  }
+}
+async function tokenBalance(token: string, holder: string, decimals: number): Promise<number | null> {
+  const r = await ethCall(token, balanceOfData(holder));
+  const v = r ? decodeUint(r) : null;
+  return v == null ? null : fromRaw(v, decimals);
+}
+
+export interface WalletRead {
+  address: string;
+  /** Native ETH on Robinhood Chain and on Ethereum mainnet. */
+  ethRobinhood: number | null;
+  ethMainnet: number | null;
+  usdg: number | null;
+  obs: number | null;
+  /** Obscura's own cashback stats for this wallet (GET /rewards/{wallet}). */
+  rewards: { swaps: number; volumeUsd: number; rewardsUsd: number; paidUsd: number } | null;
+}
+
+/** The desk's wallet as the chains and Obscura report it. Null when no wallet is configured. */
+export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead | null> {
+  if (!address) return null;
+  const [ethRobinhood, ethMainnet, usdg, obs, rewards] = await Promise.all([
+    nativeBalance(RPC_URL, address),
+    nativeBalance(ETH_RPC_URL, address),
+    tokenBalance(USDG_CONTRACT, address, 6),
+    tokenBalance(OBS_CONTRACT, address, 18),
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/rewards/${address}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
+        const j = (await res.json()) as { stats?: { swaps?: number; volumeUsd?: number; rewardsUsd?: number; paidUsd?: number } };
+        const s = j.stats;
+        return s ? { swaps: Number(s.swaps ?? 0), volumeUsd: Number(s.volumeUsd ?? 0), rewardsUsd: Number(s.rewardsUsd ?? 0), paidUsd: Number(s.paidUsd ?? 0) } : null;
+      } catch {
+        return null;
+      }
+    })(),
+  ]);
+  return { address, ethRobinhood, ethMainnet, usdg, obs, rewards };
 }
 
 export interface TokenRead {
@@ -192,11 +250,22 @@ export interface Reads {
   prices: PriceRead;
   siteUp: boolean;
   apiUp: boolean;
+  wallet: WalletRead | null;
 }
 
 export async function liveReads(): Promise<Reads> {
-  const [token, p, up, api] = await Promise.all([obsToken(), prices(), siteUp(), apiUp()]);
-  return { at: Date.now(), token, prices: p, siteUp: up, apiUp: api };
+  const [token, p, up, api, wallet] = await Promise.all([obsToken(), prices(), siteUp(), apiUp(), walletRead()]);
+  return { at: Date.now(), token, prices: p, siteUp: up, apiUp: api, wallet };
+}
+
+const fmt = (v: number | null, digits: number) => (v == null ? "not read" : v.toLocaleString("en-US", { maximumFractionDigits: digits }));
+
+/** PURE: the wallet lines as the prompt and the dashboard show them. */
+export function walletLines(w: WalletRead | null): string[] {
+  if (!w) return [];
+  const out = [`- The desk's wallet (on chain): ${fmt(w.ethRobinhood, 6)} ETH on Robinhood Chain, ${fmt(w.ethMainnet, 6)} ETH on Ethereum, ${fmt(w.usdg, 2)} USDG, ${fmt(w.obs, 2)} OBS.`];
+  if (w.rewards) out.push(`- Obscura cashback for this wallet: ${w.rewards.swaps} swaps, $${w.rewards.volumeUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} volume, $${w.rewards.rewardsUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} earned, $${w.rewards.paidUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} paid out.`);
+  return out;
 }
 
 /** PURE: the reads block as the prompt shows it. Only measured values appear. */
@@ -207,6 +276,7 @@ export function readsBlock(r: Reads): string {
   }
   if (r.prices.btcUsd != null) lines.push(`- BTC ${r.prices.btcUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`);
   if (r.prices.ethUsd != null) lines.push(`- ETH ${r.prices.ethUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`);
+  lines.push(...walletLines(r.wallet));
   lines.push(`- obscura.market is ${r.siteUp ? "up and answering" : "not answering right now (do not mention it)"}; the routing API ${r.apiUp ? "reports healthy" : "did not answer (do not mention it)"}`);
   return lines.join("\n");
 }

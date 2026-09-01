@@ -45,3 +45,8 @@ export const RPC_URL = process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.cha
 export const OBS_CONTRACT = (process.env.OBS_CONTRACT || "0xfe242d1da8fd04f6a1f80b6d3d807b02e062ad4e").toLowerCase();
 export const SITE_URL = (process.env.OBSCURA_SITE_URL || "https://obscura.market").replace(/\/+$/, "");
 export const API_URL = (process.env.OBSCURA_API_URL || "https://api.obscura.market").replace(/\/+$/, "");
+/** OBS's own wallet, public address only. Empty until scripts/wallet.mjs create has run and the operator set it. */
+export const WALLET_ADDRESS = /^0x[0-9a-fA-F]{40}$/.test(process.env.OBS_WALLET_ADDRESS ?? "") ? (process.env.OBS_WALLET_ADDRESS as string) : "";
+export const ETH_RPC_URL = process.env.ETH_RPC_URL || "https://ethereum-rpc.publicnode.com";
+export const USDG_CONTRACT = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+export const EXPLORER_URL = "https://robinhoodchain.blockscout.com";

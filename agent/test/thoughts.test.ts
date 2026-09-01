@@ -9,6 +9,7 @@ const reads = {
   prices: { btcUsd: 78000, ethUsd: 2455.5 },
   siteUp: true,
   apiUp: true,
+  wallet: null,
 };
 
 test("an empty desk observes that it has nothing, and never invents a mark", () => {

@@ -14,7 +14,7 @@ import { readLedger } from "./ledger.ts";
 import { liveReads, readsBlock, assetPrices, type Reads } from "./obscura/reads.ts";
 import { readBook, latestTrades, snapshot, series, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { readThoughts } from "./desk/thoughts.ts";
-import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR } from "./config.ts";
+import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL } from "./config.ts";
 import { xLive, xConfigured } from "./social/xClient.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
@@ -195,7 +195,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/status") {
-    json(res, 200, buildStatus(readLedger<PostRow>("x-posts.jsonl"), readLedger<PostRow>("x-replies.jsonl"), readLedger("obs-decisions.jsonl"), { live: xLive(), configured: xConfigured(), now, desk: deskFromDisk().desk }));
+    json(res, 200, {
+      ...buildStatus(readLedger<PostRow>("x-posts.jsonl"), readLedger<PostRow>("x-replies.jsonl"), readLedger("obs-decisions.jsonl"), { live: xLive(), configured: xConfigured(), now, desk: deskFromDisk().desk }),
+      // The desk's own wallet is public on purpose: every balance and every settlement is checkable there.
+      wallet: WALLET_ADDRESS ? { address: WALLET_ADDRESS, explorerUrl: `${EXPLORER_URL}/address/${WALLET_ADDRESS}` } : null,
+    });
     return;
   }
   if (path === "/api/obs/thoughts") {

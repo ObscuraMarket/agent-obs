@@ -19,6 +19,13 @@ agent/data/
 agent/scripts/launchd/*.plist
 !agent/scripts/launchd/*.plist.template
 
+# Key material must never enter the repo. The wallet lives in ~/.obs/wallet by
+# design; these patterns are a second line of defence.
+*.wallet.json
+*.keypair.json
+*.pem
+*.key
+
 # Editor and OS cruft
 .DS_Store
 .claude/settings.local.json

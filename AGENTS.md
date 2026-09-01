@@ -60,11 +60,16 @@ memory and its continuity; they must not be shared or swapped.
 
 ## When money arrives
 
-Nothing in this repo signs anything today. The desk's capital ledger
-(`agent/data/obs-capital.jsonl`) is written by the operator's tooling only,
-never by the model and never by engineering on the operator's behalf; a
-deposit that is not in the ledger is not on the book. Order creation at
-Obscura is gated in code (`OBS_TRADING`) and no loop calls it.
+Nothing in this repo signs anything today. OBS's wallet key lives in
+`~/.obs/wallet/obs-wallet.json` on the operator's machine (mode 600), created
+by `npm run wallet -- create`; it is never committed, never placed in `.env`,
+never pasted into a chat or an issue, and only `scripts/wallet.mjs export
+--reveal` prints it, for an offline backup. The loops read the public address
+and nothing else. The desk's capital ledger (`agent/data/obs-capital.jsonl`)
+is written by `npm run capital`, never by the model and never by engineering
+on the operator's behalf; a deposit that is not in the ledger is not on the
+book. Order creation at Obscura is gated in code (`OBS_TRADING`) and no loop
+calls it.
 
 If Obscura hands OBS a treasury, it gets a treasury doctrine before a single
 key is created: an agent-custodied receive-only treasury, a separate

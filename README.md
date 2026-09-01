@@ -87,6 +87,33 @@ Desk cycle every 30 min (25 min floor inside the job), post cycle every 2h
 (90 min floor), replies every 10 min. Logs in `~/Library/Logs/obs-desk.log`,
 `obs-autopilot.log` and `obs-engage.log`.
 
+## The wallet
+
+OBS has one EVM wallet of his own (Ethereum, Base, Arbitrum, BSC and
+Robinhood Chain share the address).
+
+```
+cd agent
+npm run wallet -- create            # generates the key into ~/.obs/wallet/obs-wallet.json (mode 600)
+npm run wallet -- address           # the public address; put it in .env as OBS_WALLET_ADDRESS
+npm run wallet -- export --reveal   # the private key, once, for an offline backup
+npm run wallet:balances             # ETH on both chains, USDG, OBS, and Obscura cashback stats
+```
+
+The key never enters the repo, the `.env`, a chat, or a log. Nothing in the
+loops loads it: the desk reads the public address to show balances and
+cashback, and that is all, until the execution stage exists. The address is
+public on the dashboard on purpose, so every balance and settlement can be
+checked on the explorer.
+
+Capital handed to the desk is recorded by you, never by the model:
+
+```
+npm run capital -- deposit ETH 0.5          # USD from spot at record time
+npm run capital -- deposit USDG 500 500     # explicit USD
+npm run capital -- list
+```
+
 ## The desk
 
 Three append-only ledgers in `agent/data/` are the whole book:

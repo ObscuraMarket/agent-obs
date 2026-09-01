@@ -58,7 +58,17 @@ measured this cycle", never zero.
 `agent.mode`: `live` (posting to X), `draft` (ledger only), `unconfigured`
 (no X keys). `desk.canExecute` is `false` until the execution stage exists;
 while it is false every swap decision is a proposal. `desk` is read from the
-last stored snapshot, so this call never touches the network.
+last stored snapshot, so this call never touches the network. The response
+also carries `wallet: { address, explorerUrl }` (or `null`): the desk's own
+public address, shown on purpose so balances and settlements can be checked.
+
+`GET /api/obs/reads` includes `wallet` when one is configured:
+```json
+"wallet": { "address": "0x...", "ethRobinhood": 0.25, "ethMainnet": 0.1, "usdg": 120.5, "obs": 0,
+            "rewards": { "swaps": 2, "volumeUsd": 480, "rewardsUsd": 1.2, "paidUsd": 0 } }
+```
+Balances are read from the chains; `rewards` is Obscura's own
+`/rewards/{wallet}` for the address.
 
 ### `GET /api/obs/thoughts?limit=20`
 ```json
