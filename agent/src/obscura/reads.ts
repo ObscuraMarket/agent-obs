@@ -87,16 +87,66 @@ export async function obsToken(): Promise<TokenRead> {
   };
 }
 
-/** Holder count from Blockscout's public API. Null when it will not answer. */
-async function explorerHolders(): Promise<number | null> {
+/** The explorer's view of the token: holder count and its USD rate. Null fields when it will not answer. */
+async function explorerToken(): Promise<{ holders: number | null; priceUsd: number | null }> {
   try {
     const res = await fetch(`https://robinhoodchain.blockscout.com/api/v2/tokens/${OBS_CONTRACT}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
-    const j = (await res.json()) as { holders_count?: string | number };
+    const j = (await res.json()) as { holders_count?: string | number; exchange_rate?: string | number | null };
     const n = Number(j.holders_count);
-    return Number.isFinite(n) && n > 0 ? n : null;
+    const p = Number(j.exchange_rate);
+    return { holders: Number.isFinite(n) && n > 0 ? n : null, priceUsd: Number.isFinite(p) && p > 0 ? p : null };
   } catch {
-    return null;
+    return { holders: null, priceUsd: null };
   }
+}
+async function explorerHolders(): Promise<number | null> {
+  return (await explorerToken()).holders;
+}
+
+// Assets the desk can mark, by CoinGecko id. Anything not here (and not a
+// dollar stable) is "unpriced" in the book, which the snapshot says out loud.
+const COINGECKO_IDS: Record<string, string> = {
+  BTC: "bitcoin",
+  ETH: "ethereum",
+  SOL: "solana",
+  BNB: "binancecoin",
+  TRX: "tron",
+  XMR: "monero",
+  LTC: "litecoin",
+  TON: "the-open-network",
+  SUI: "sui",
+  POL: "polygon-ecosystem-token",
+  MATIC: "matic-network",
+  AVAX: "avalanche-2",
+  ARB: "arbitrum",
+  OP: "optimism",
+  XRP: "ripple",
+  HYPE: "hyperliquid",
+  LINK: "chainlink",
+  DOGE: "dogecoin",
+};
+
+/** USD prices for a set of asset symbols. Missing or unfetchable = null, never zero. */
+export async function assetPrices(symbols: string[]): Promise<Record<string, number | null>> {
+  const want = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const out: Record<string, number | null> = {};
+  const ids = want.map((s) => COINGECKO_IDS[s]).filter(Boolean);
+  if (ids.length) {
+    try {
+      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(",")}&vs_currencies=usd`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
+      const j = (await res.json()) as Record<string, { usd?: number }>;
+      for (const s of want) {
+        const id = COINGECKO_IDS[s];
+        const p = id ? j[id]?.usd : undefined;
+        if (typeof p === "number" && p > 0) out[s] = p;
+      }
+    } catch {
+      /* every missing symbol stays null below */
+    }
+  }
+  if (want.includes("OBS") && out.OBS == null) out.OBS = (await explorerToken()).priceUsd;
+  for (const s of want) if (!(s in out)) out[s] = null;
+  return out;
 }
 
 export interface PriceRead {

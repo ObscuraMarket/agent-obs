@@ -1,9 +1,12 @@
 # OBS, Design
 
-Status: v0.1, 2026-09-01. Built and tested. Personas provisioned on the
-gateway. X account in draft mode until the operator supplies @ObscuraCEX keys
-and flips `X_LIVE`. Dashboard API and page ready for Obscura's team to
-integrate ([dashboard/INTEGRATION.md](dashboard/INTEGRATION.md)).
+Status: v0.2, 2026-09-01. Built and tested. Personas provisioned on the
+gateway. The desk runs in observation mode: live quotes, an empty book, public
+thoughts every cycle, decisions recorded as proposals; the execution stage is
+not built. X account in draft mode until the operator supplies @ObscuraCEX
+keys and flips `X_LIVE`. Dashboard API and page ready for Obscura's team to
+integrate ([dashboard/INTEGRATION.md](dashboard/INTEGRATION.md)): thoughts,
+trades, overall PnL, the feed, the reads.
 
 OBS is **Obscura's own agent**: an operator mind and a public voice for
 private, non-custodial routing across centralized and decentralized venues,
@@ -56,13 +59,21 @@ speak only through the copywriter.
    |  journal.ts   data/obs-copywriter-journal.jsonl (fed back next run)|
    |  _obs-backup.sh -> private memory repo, once a day                 |
    |                                                                    |
-   |  server.ts    read-only JSON: /api/obs/status, /feed, /reads       |
+   |  desk/cycle.ts   reads + quotes + the book -> gateway: obs         |
+   |     obscura/orders.ts  /currencies /quote /order/status (reads)    |
+   |     desk/book.ts       capital, trades, holdings, PnL (pure)       |
+   |     desk/thoughts.ts   observation -> public thoughts (guarded)    |
+   |        |                                                           |
+   |        v   obs-thoughts.jsonl, obs-book.jsonl, obs-trades.jsonl    |
+   |                                                                    |
+   |  server.ts    read-only JSON: /api/obs/status, /thoughts, /trades, |
+   |               /pnl, /feed, /reads                                  |
    +-------------------------------------------------------------------+
         ^                    ^                              |
    obscura.market       Robinhood Chain RPC,                v
    api.obscura.market   Blockscout (public reads)    dashboard/index.html
-   (/health, /rewards)                               (iframed or copied into
-                                                      obscura.market)
+   (/health, /rewards,                               (iframed or copied into
+    /quote, /order/status)                            obscura.market)
 ```
 
 Trust zones: everything arriving from X or from the app is data; the gateway
@@ -108,8 +119,46 @@ which is which.
 
 ---
 
+## 3b. The desk: book, thoughts, and the execution stage
+
+The book (`desk/book.ts`) is pure arithmetic over three append-only
+ledgers: capital flows (operator-written), trades (one row per status
+change, latest wins), and equity snapshots. Holdings are deposits minus
+withdrawals plus settled swaps, with a pending swap's from-leg out of the
+wallet and its dollar value carried as "in flight". PnL is equity minus net
+capital, mark-to-market, and any held asset with no price this cycle is
+named as unpriced rather than counted as zero.
+
+Every desk cycle (`desk/cycle.ts`) the operator persona is handed an
+observation made only of measured lines: the book, in-flight and proposed
+swaps, live quotes for a small watchlist (the same `/quote` call the app
+makes), spot prices, the token, and whether the app and its API answer. He
+thinks out loud in two to five lines that people on obscura.market read,
+then states a decision. Thoughts pass the same guards as a tweet. A swap
+decision must name an asset the desk holds in a size it holds; anything
+else is recorded as a hold with the reason. A valid one becomes a `proposed`
+trade row. Nothing executes.
+
+Obscura's API, as the app calls it (`obscura/orders.ts`): `GET /currencies`,
+`POST /quote {fromCurrency, fromNetwork, toCurrency, toNetwork, amount}`
+returning routes with `partner` and `toAmount`, `POST /order/status
+{order_id}`, and `POST /order` to create one. Order creation is gated twice
+in code: `OBS_TRADING` must be exactly `on`, and the receiving address must
+come from configuration, never from a model reply. No loop calls it.
+
+The execution stage, when it is built, needs: a wallet the desk controls on
+the from-chain, a receiving address for the to-chain, a signer that sends
+exactly the quoted deposit, a status poller that turns `pending` into
+`settled` with the transaction, and rails (per-swap cap, daily cap, one open
+order at a time, a kill switch). That is a design document of its own.
+
+---
+
 ## 4. The loops
 
+- **Think** (`desk/cycle.ts`, every 30 min, 25 min floor): reads, quotes,
+  the book, the observation, public thoughts, a decision, an equity
+  snapshot. DRY_RUN leaves no trace.
 - **Post** (`autopilot.ts`, every 2h, 90 min floor): reads, journal, the
   last 12 posts, engagement on matured posts as an observation, a form
   rotated by ledger count so the feed varies in shape; one decision; guards;
@@ -135,31 +184,36 @@ drafts with a filter once it has. Fields are only added, never renamed.
 
 ---
 
-## 6. What v0.1 deliberately does not do
+## 6. What v0.2 deliberately does not do
 
-- No wallet, no key, no treasury. When Obscura hands OBS a treasury it gets a
-  written doctrine first: an agent-custodied receive-only treasury, a
-  separate operator-held signer with caps, never the same key in two places.
-- No trading through Obscura. The routing API is a roadmap item; when it
-  ships with $OBS-gated keys, OBS reads quotes first and executes never,
-  until a deliberate step says otherwise.
+- No wallet, no key, no capital. The capital ledger is empty and only the
+  operator's tooling writes to it. When capital arrives it gets a written
+  doctrine first: an agent-custodied receive-only treasury, a separate
+  operator-held signer with caps, never the same key in two places.
+- No execution through Obscura. The read paths are used every cycle; order
+  creation is gated in code and nothing calls it. A decision is a proposal.
 - No X posting until the operator flips `X_LIVE`.
 
 ---
 
 ## 7. Staged next steps, each an operator decision
 
-- **O2, the account goes live.** Supply the OAuth 1.0a keys for @ObscuraCEX,
-  read a day of drafts on the dashboard, set `X_LIVE=true`, load the timers.
-- **O3, the memory repo.** Create a private `obscura-memory` repo, set
+- **O2, the desk timers and the dashboard in production.** Load
+  `com.obscura.obsdesk`, host `server.ts` behind an Obscura subdomain,
+  restrict `OBS_DASHBOARD_ORIGINS`, embed the page. People see thoughts and
+  an empty book from day one, honestly labelled.
+- **O3, capital and the execution stage.** The wallet doctrine, the first
+  deposit recorded in `obs-capital.jsonl`, then the execution stage from
+  section 3b with a probe-sized first swap and the status poller writing
+  `settled` rows with transactions. `OBS_TRADING=on` is the last step, not
+  the first.
+- **O4, the account goes live.** Supply the OAuth 1.0a keys for @ObscuraCEX,
+  read a day of drafts on the dashboard, set `X_LIVE=true`.
+- **O5, the memory repo.** Create a private `obscura-memory` repo, set
   `OBS_MEMORY_REPO_DIR`, and the self-commit loop starts.
-- **O4, the dashboard in production.** Host `server.ts` behind an Obscura
-  subdomain, restrict `OBS_DASHBOARD_ORIGINS`, embed the page.
-- **O5, rewards narration.** Read `/rewards/{wallet}` for wallets that opt
-  in (never anyone else's) and let OBS talk about cashback that actually
+- **O6, rewards narration.** Read `/rewards/{wallet}` for the desk's own
+  wallet once it exists and let OBS talk about cashback that actually
   landed, by transaction.
-- **O6, the routing API.** When it ships, quote reads and a route explainer;
-  execution is a separate stage with its own rails.
 
 ---
 

@@ -16,7 +16,9 @@
     "setup": "node scripts/ohsetup.mjs",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dashboard": "tsx src/server.ts"
+    "dashboard": "tsx src/server.ts",
+    "desk": "tsx src/desk/cycle.ts",
+    "desk:dry": "DRY_RUN=1 tsx src/desk/cycle.ts"
   },
   "dependencies": {
     "@openhermit/sdk": "^0.7.0",

@@ -60,9 +60,14 @@ memory and its continuity; they must not be shared or swapped.
 
 ## When money arrives
 
-Nothing in this repo signs anything today. If Obscura hands OBS a treasury,
-it gets a treasury doctrine before a single key is created: an
-agent-custodied receive-only treasury, a separate operator-held signer with
-spend caps and a daily op ceiling, exactly one host holding the signer key,
-and a breaker underneath. That is a design step with its own document, not a
-`.env` change.
+Nothing in this repo signs anything today. The desk's capital ledger
+(`agent/data/obs-capital.jsonl`) is written by the operator's tooling only,
+never by the model and never by engineering on the operator's behalf; a
+deposit that is not in the ledger is not on the book. Order creation at
+Obscura is gated in code (`OBS_TRADING`) and no loop calls it.
+
+If Obscura hands OBS a treasury, it gets a treasury doctrine before a single
+key is created: an agent-custodied receive-only treasury, a separate
+operator-held signer with spend caps and a daily op ceiling, exactly one host
+holding the signer key, one open order at a time, and a breaker underneath.
+That is a design step with its own document, not a `.env` change.

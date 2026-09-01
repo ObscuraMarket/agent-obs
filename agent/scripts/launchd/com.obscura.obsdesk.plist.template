@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.obscura.obsdesk</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__AGENT_DIR__/scripts/_obs-desk.sh</string>
+  </array>
+  <!-- 30 min. The floor in src/desk/cycle.ts (OBS_MIN_THOUGHT_GAP_MIN,
+       default 25m) is the real guard: checked BEFORE the model call. -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/obs-desk.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/obs-desk.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
