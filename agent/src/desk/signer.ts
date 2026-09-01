@@ -20,6 +20,22 @@ function transport(a: Asset) {
   return http(c.rpc, c.browserUa ? { fetchOptions: { headers: { "User-Agent": UA } } } : undefined);
 }
 
+/**
+ * Can the from-chain be reached right now? A balance read for the desk's own
+ * address, through the same transport a send would use. If this fails the
+ * order must not be created, because the deposit could never follow it.
+ */
+export async function fromChainReady(asset: Asset): Promise<boolean> {
+  if (!WALLET_ADDRESS) return false;
+  try {
+    const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
+    await pub.getBalance({ address: WALLET_ADDRESS as `0x${string}` });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function loadAccount() {
   const w = JSON.parse(readFileSync(walletFile(), "utf8")) as { address?: string; privateKey?: string };
   if (!w.privateKey || !/^0x[0-9a-fA-F]{64}$/.test(w.privateKey)) throw new Error("wallet file has no usable key");

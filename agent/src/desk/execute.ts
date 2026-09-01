@@ -10,7 +10,7 @@ import { quote, createOrder, orderStatus } from "../obscura/orders.ts";
 import { recordTrade, latestTrades, readBook, type Trade } from "./book.ts";
 import { checkRails, partnerAllowed, depositAddressLooksRight, mapStatus, type Intent, type RailContext, type Rails } from "./rails.ts";
 import { chainOf, assetKey, ASSETS } from "./assets.ts";
-import { sendDeposit } from "./signer.ts";
+import { sendDeposit, fromChainReady } from "./signer.ts";
 
 export type ExecuteResult = { ok: true; trade: Trade } | { ok: false; reason: string; trade?: Trade };
 
@@ -29,6 +29,10 @@ export async function execute(i: Intent, c: RailContext, now = Date.now()): Prom
   const mx = Number(best.raw.max);
   if (Number.isFinite(mn) && mn > 0 && i.amount < mn) return { ok: false, reason: `${best.partner} minimum is ${mn} ${i.from.symbol}` };
   if (Number.isFinite(mx) && mx > 0 && i.amount > mx) return { ok: false, reason: `${best.partner} maximum is ${mx} ${i.from.symbol}` };
+
+  // Never create an order the deposit could not follow: the from-chain must
+  // answer through the very transport the send will use.
+  if (!(await fromChainReady(i.from))) return { ok: false, reason: `${chainOf(i.from).name} RPC is not answering; not creating an order (set ROBINHOOD_RPC_URL / ETH_RPC_URL to a provider endpoint)` };
 
   const order = await createOrder({ from: { code: i.from.code, network: i.from.network }, to: { code: i.to.code, network: i.to.network }, amount: i.amount, address: WALLET_ADDRESS, partner: best.partner, fixed: best.fixed, cexId: best.cexId });
   if (!order) return { ok: false, reason: "Obscura did not create the order" };

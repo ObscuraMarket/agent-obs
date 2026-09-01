@@ -100,11 +100,11 @@ npm run wallet -- export --reveal   # the private key, once, for an offline back
 npm run wallet:balances             # ETH on both chains, USDG, OBS, and Obscura cashback stats
 ```
 
-The key never enters the repo, the `.env`, a chat, or a log. Nothing in the
-loops loads it: the desk reads the public address to show balances and
-cashback, and that is all, until the execution stage exists. The address is
-public on the dashboard on purpose, so every balance and settlement can be
-checked on the explorer.
+The key never enters the repo, the `.env`, a chat, or a log. Only the
+execution path loads it, only when trading is armed, and only to sign one
+deposit that passed every rail; everything else reads the public address.
+The address is public on the dashboard on purpose, so every balance and
+settlement can be checked on the explorer.
 
 Capital handed to the desk is recorded by you, never by the model:
 
@@ -150,8 +150,10 @@ OBS_ALLOWED_PARTNERS=        blank = any route Obscura quotes
 OBS_TRADE_ASSETS=ETH@eth,USDC@erc20,ETH@robinhood,USDG@robinhood,NVDA@robinhood
 ```
 
-Arming order: back up the key, fund the wallet (plus gas), record the deposit
-with `npm run capital`, read a few cycles of proposals, then flip
+Arming order: back up the key, set `ROBINHOOD_RPC_URL` to a provider endpoint
+(the public RPC blocks non-browser clients after bursts and the desk refuses
+to create an order it could not fund), fund the wallet (plus gas), record the
+deposit with `npm run capital`, read a few cycles of proposals, then flip
 `OBS_TRADING=on`. Every swap also accrues Obscura's cashback in tokenized
 stocks to the same wallet, which is the desk's earning leg.
 

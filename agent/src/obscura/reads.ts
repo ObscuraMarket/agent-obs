@@ -10,7 +10,8 @@
 // the block as the model would.
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT } from "../config.ts";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, dataPath } from "../config.ts";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -50,7 +51,16 @@ export function formatSupply(raw: bigint, decimals: number): string {
 // The public RPC in front of Robinhood Chain rate-limits bursts, so calls to
 // it are made one at a time by the callers below and each one retries once
 // after a short pause. Null still means "not read this cycle", never zero.
+// A public endpoint that answers 403 (a bot challenge page) or 429 is not
+// going to change its mind in the next second, so the process stops asking it
+// for a while instead of hammering it and making the block longer.
+const blockedUntil = new Map<string, number>();
+const RPC_COOLDOWN_MS = 5 * 60_000;
+export function rpcBlocked(url: string): boolean {
+  return (blockedUntil.get(url) ?? 0) > Date.now();
+}
 async function rpc(url: string, method: string, params: unknown[]): Promise<string | null> {
+  if (rpcBlocked(url)) return null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(url, {
@@ -59,6 +69,10 @@ async function rpc(url: string, method: string, params: unknown[]): Promise<stri
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
         signal: AbortSignal.timeout(15_000),
       });
+      if (res.status === 403 || res.status === 429) {
+        blockedUntil.set(url, Date.now() + RPC_COOLDOWN_MS);
+        return null;
+      }
       const j = (await res.json()) as { result?: string };
       if (typeof j.result === "string") return j.result;
     } catch {
@@ -179,25 +193,47 @@ export interface TokenRead {
   holders: number | null;
 }
 
-/** The $OBS token as the chain reports it right now. */
+const TOKEN_CACHE = "obs-token.json";
+const TOKEN_CACHE_TTL_MS = 24 * 3600e3;
+
+/** The $OBS token as the chain reports it. Name, symbol, decimals and supply
+ *  change essentially never, so they are cached on disk for a day and cost
+ *  the rate-limited RPC nothing on ordinary cycles; holders stay live. */
 export async function obsToken(): Promise<TokenRead> {
-  // One Robinhood RPC call at a time; the explorer is a different host.
   const holdersP = explorerHolders();
-  const n = await ethCall(OBS_CONTRACT, SEL.name);
-  const s = await ethCall(OBS_CONTRACT, SEL.symbol);
-  const d = await ethCall(OBS_CONTRACT, SEL.decimals);
-  const t = await ethCall(OBS_CONTRACT, SEL.totalSupply);
-  const holders = await holdersP;
-  const decimals = d ? Number(decodeUint(d) ?? -1n) : null;
-  const supply = t ? decodeUint(t) : null;
-  return {
-    address: OBS_CONTRACT,
-    name: n ? decodeString(n) : null,
-    symbol: s ? decodeString(s) : null,
-    decimals: decimals != null && decimals >= 0 ? decimals : null,
-    totalSupply: supply != null && decimals != null && decimals >= 0 ? formatSupply(supply, decimals) : null,
-    holders,
-  };
+  let meta: Pick<TokenRead, "name" | "symbol" | "decimals" | "totalSupply"> | null = null;
+  try {
+    const p = dataPath(TOKEN_CACHE);
+    if (existsSync(p)) {
+      const c = JSON.parse(readFileSync(p, "utf8")) as { at?: number; address?: string; name?: string; symbol?: string; decimals?: number; totalSupply?: string };
+      if (c.address === OBS_CONTRACT && c.at && Date.now() - c.at < TOKEN_CACHE_TTL_MS && c.symbol) meta = { name: c.name ?? null, symbol: c.symbol, decimals: c.decimals ?? null, totalSupply: c.totalSupply ?? null };
+    }
+  } catch {
+    meta = null;
+  }
+  if (!meta) {
+    // One Robinhood RPC call at a time; the explorer is a different host.
+    const n = await ethCall(OBS_CONTRACT, SEL.name);
+    const s = await ethCall(OBS_CONTRACT, SEL.symbol);
+    const d = await ethCall(OBS_CONTRACT, SEL.decimals);
+    const t = await ethCall(OBS_CONTRACT, SEL.totalSupply);
+    const decimals = d ? Number(decodeUint(d) ?? -1n) : null;
+    const supply = t ? decodeUint(t) : null;
+    meta = {
+      name: n ? decodeString(n) : null,
+      symbol: s ? decodeString(s) : null,
+      decimals: decimals != null && decimals >= 0 ? decimals : null,
+      totalSupply: supply != null && decimals != null && decimals >= 0 ? formatSupply(supply, decimals) : null,
+    };
+    if (meta.symbol && meta.totalSupply) {
+      try {
+        writeFileSync(dataPath(TOKEN_CACHE), JSON.stringify({ at: Date.now(), address: OBS_CONTRACT, ...meta }));
+      } catch {
+        /* a cache miss next time costs four calls, nothing more */
+      }
+    }
+  }
+  return { address: OBS_CONTRACT, ...meta, holders: await holdersP };
 }
 
 /** The explorer's view of the token: holder count and its USD rate. Null fields when it will not answer. */

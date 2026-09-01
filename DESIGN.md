@@ -24,8 +24,9 @@ own memory, and acts only inside rails enforced in code.
 
 | The model decides | The model never decides |
 |---|---|
-| What to post, tone, timing, who to reply to | Whether any money moves (there is no money yet, and no key) |
-| How to explain a mechanic | Any address: deposit, contract, wallet. It points at the site |
+| What to post, tone, timing, who to reply to | Whether money moves: the rails in code decide, inside caps the operator set |
+| What to swap, and how much, within the registry | Any address: the receiver is always the desk's own wallet, the deposit address is Obscura's and checked |
+| How to explain a mechanic | Any address in public: it points at the site |
 | Whether a mention deserves an answer | Any number it was not handed this cycle |
 | Its own voice and its private notes | Its own boundaries: those are enforced in code after it speaks |
 
@@ -137,9 +138,10 @@ swaps, live quotes for a small watchlist (the same `/quote` call the app
 makes), spot prices, the token, and whether the app and its API answer. He
 thinks out loud in two to five lines that people on obscura.market read,
 then states a decision. Thoughts pass the same guards as a tweet. A swap
-decision must name an asset the desk holds in a size it holds; anything
-else is recorded as a hold with the reason. A valid one becomes a `proposed`
-trade row. Nothing executes.
+decision must name registry assets the desk holds in a size it holds;
+anything else is recorded as a hold with the reason. A valid one becomes a
+`proposed` trade row while trading is off, or an executed order once the
+operator has armed the desk (below).
 
 Obscura's API, as the app calls it (`obscura/orders.ts`): `GET /currencies`,
 `POST /quote {fromCurrency, fromNetwork, toCurrency, toNetwork, amount}`
@@ -169,7 +171,10 @@ from-leg; more than `OBS_MAX_SWAP_USD` (default $25); more than
 `OBS_DAILY_SWAP_USD` in the trailing 24h (default $100); an order already
 open (`OBS_MAX_OPEN_ORDERS`, default 1); a balance short of the amount; a
 send that would breach the gas reserve. Then: quote the pair the way the app
-does, take the best allowed partner, respect its min and max, create the
+does, confirm the from-chain RPC answers a balance read through the very
+transport the send will use (the public Robinhood RPC challenges non-browser
+clients after bursts, so a provider endpoint in `ROBINHOOD_RPC_URL` is
+required before arming), take the best allowed partner, respect its min and max, create the
 order with the desk's own wallet as the receiving address, read the order
 back, check the deposit address looks like an address on the from-chain and
 the expected amount matches, and only then sign one transfer for exactly
