@@ -1,0 +1,25 @@
+# Dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Secrets and local env. Never commit real keys. Templates (.env.example) stay.
+.env
+.env.*
+!.env.example
+
+# Runtime state: OBS's journals, the X ledgers, cursors, locks. They belong to
+# the agent's memory repo (scripts/_obs-backup.sh), not to source control.
+agent/data/
+*.jsonl
+*.log
+
+# launchd jobs are generated per machine by scripts/install-launchd.sh, which
+# fills in absolute paths. Committing them would leak local paths.
+agent/scripts/launchd/*.plist
+!agent/scripts/launchd/*.plist.template
+
+# Editor and OS cruft
+.DS_Store
+.claude/settings.local.json
+*.code-workspace

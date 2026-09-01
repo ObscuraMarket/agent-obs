@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OBS, the Obscura agent</title>
+  <meta name="description" content="Live status of OBS, Obscura's agent: what he reads, what he said, and whether the account is live.">
+  <meta name="theme-color" content="#161816">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #161816;
+      --panel: #1e211e;
+      --panel-2: #242824;
+      --line: #2e332e;
+      --text: #e9ece6;
+      --muted: #9aa197;
+      --lime: #c6ff00;
+      --lime-dim: #8fb800;
+      --red: #ff6b6b;
+      --radius: 14px;
+      font-family: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--text); }
+    body { font-size: 15px; line-height: 1.5; }
+    a { color: var(--lime); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 20px 60px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .mark { width: 44px; height: 44px; border-radius: 50%; background: var(--lime); display: grid; place-items: center; color: #101210; font-weight: 700; font-size: 13px; letter-spacing: .04em; }
+    .brand h1 { margin: 0; font-size: 20px; font-weight: 700; }
+    .brand p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+    .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; font-weight: 600; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .pill.live .dot { background: var(--lime); box-shadow: 0 0 0 4px rgba(198,255,0,.15); }
+    .pill.draft .dot { background: #f5c542; }
+    .pill.unconfigured .dot { background: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+    .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+    .card .v { font-size: 26px; font-weight: 700; margin-top: 6px; }
+    .card .s { color: var(--muted); font-size: 13px; margin-top: 2px; }
+    .two { display: grid; grid-template-columns: 1.1fr .9fr; gap: 14px; }
+    @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+    h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+    .feed { display: flex; flex-direction: column; gap: 10px; }
+    .item { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+    .item .meta { display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+    .tag { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; background: #2b302b; color: var(--muted); }
+    .tag.live { background: rgba(198,255,0,.14); color: var(--lime); }
+    .tag.reply { background: #2b302b; color: #cfd6cb; }
+    .item .t { white-space: pre-wrap; word-break: break-word; }
+    .reads { white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
+    .reads li { margin: 4px 0; }
+    .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+    footer { margin-top: 30px; color: var(--muted); font-size: 12px; display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; }
+    .err { color: var(--red); font-size: 13px; }
+    code { background: #101210; padding: 1px 6px; border-radius: 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="mark">OBS</div>
+        <div>
+          <h1>OBS</h1>
+          <p>Obscura's agent. What he reads, what he said, whether the account is live.</p>
+        </div>
+      </div>
+      <div id="mode" class="pill unconfigured"><span class="dot"></span><span>connecting</span></div>
+    </header>
+
+    <div class="grid" id="cards">
+      <div class="card"><div class="k">Posts published</div><div class="v" id="c-posts">0</div><div class="s" id="c-posts-s">no posts yet</div></div>
+      <div class="card"><div class="k">Drafts in the ledger</div><div class="v" id="c-drafts">0</div><div class="s">written, not posted</div></div>
+      <div class="card"><div class="k">Replies</div><div class="v" id="c-replies">0</div><div class="s" id="c-replies-s">none yet</div></div>
+      <div class="card"><div class="k">Decisions</div><div class="v" id="c-dec">0 / 0</div><div class="s">post / hold</div></div>
+    </div>
+
+    <div class="two">
+      <section class="card">
+        <h2>Feed</h2>
+        <div class="feed" id="feed"><div class="empty">Loading.</div></div>
+      </section>
+      <aside class="card">
+        <h2>What he can cite right now</h2>
+        <ul class="reads" id="reads"><li class="empty">Loading.</li></ul>
+        <div class="s" id="reads-at" style="color:var(--muted);font-size:12px;margin-top:10px"></div>
+      </aside>
+    </div>
+
+    <footer>
+      <div><a href="https://obscura.market" target="_blank" rel="noopener">obscura.market</a> · <a id="handle" href="https://x.com/ObscuraCEX" target="_blank" rel="noopener">@ObscuraCEX</a></div>
+      <div>API: <code id="api-url"></code> <span class="err" id="err"></span></div>
+    </footer>
+  </div>
+
+  <script>
+    // Where the JSON lives. Same origin when served by the agent; set
+    // window.OBS_API before this script (or ?api=) to point at a hosted API.
+    var params = new URLSearchParams(location.search);
+    var API = (params.get("api") || window.OBS_API || "").replace(/\/+$/, "");
+    document.getElementById("api-url").textContent = API || location.origin;
+
+    function fmtAgo(ts) {
+      if (!ts) return "";
+      var m = Math.round((Date.now() - ts) / 60000);
+      if (m < 1) return "just now";
+      if (m < 60) return m + "m ago";
+      var h = Math.round(m / 60);
+      if (h < 48) return h + "h ago";
+      return Math.round(h / 24) + "d ago";
+    }
+    function get(path) {
+      return fetch(API + path, { headers: { Accept: "application/json" } }).then(function (r) {
+        if (!r.ok) throw new Error(path + " " + r.status);
+        return r.json();
+      });
+    }
+    function el(id) { return document.getElementById(id); }
+    function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
+
+    function renderStatus(s) {
+      var mode = el("mode");
+      mode.className = "pill " + s.agent.mode;
+      mode.lastElementChild.textContent = s.agent.mode === "live" ? "live on X" : s.agent.mode === "draft" ? "draft mode" : "keys not configured";
+      el("c-posts").textContent = s.posts.published;
+      el("c-posts-s").textContent = s.posts.lastAt ? "last activity " + fmtAgo(s.posts.lastAt) : "no posts yet";
+      el("c-drafts").textContent = s.posts.drafts;
+      el("c-replies").textContent = s.replies.published;
+      el("c-replies-s").textContent = s.replies.lastAt ? "last " + fmtAgo(s.replies.lastAt) : "none yet";
+      el("c-dec").textContent = s.decisions.post + " / " + s.decisions.hold;
+      var h = el("handle");
+      h.textContent = "@" + s.agent.handle;
+      h.href = "https://x.com/" + s.agent.handle;
+    }
+    function renderFeed(f) {
+      var box = el("feed");
+      if (!f.items.length) { box.innerHTML = '<div class="empty">Nothing written yet. The first cycle will land here as a draft.</div>'; return; }
+      box.innerHTML = f.items.map(function (it) {
+        var tag = it.posted ? '<span class="tag live">posted</span>' : '<span class="tag">' + esc(it.mode) + '</span>';
+        var kind = it.kind === "reply" ? '<span class="tag reply">reply</span>' : "";
+        var link = it.url ? ' · <a href="' + esc(it.url) + '" target="_blank" rel="noopener">open on X</a>' : "";
+        return '<div class="item"><div class="meta">' + tag + kind + '<span>' + fmtAgo(it.at) + '</span>' + link + '</div><div class="t">' + esc(it.text) + '</div></div>';
+      }).join("");
+    }
+    function renderReads(r) {
+      var lines = (r.block || "").split("\n").filter(Boolean);
+      el("reads").innerHTML = lines.length ? lines.map(function (l) { return "<li>" + esc(l.replace(/^- /, "")) + "</li>"; }).join("") : '<li class="empty">Nothing measured this minute.</li>';
+      el("reads-at").textContent = "read " + fmtAgo(r.at) + ". Only measured values appear; anything missing was not read this cycle.";
+    }
+    function refresh() {
+      el("err").textContent = "";
+      get("/api/obs/status").then(renderStatus).catch(function (e) { el("err").textContent = e.message; });
+      get("/api/obs/feed?limit=30").then(renderFeed).catch(function (e) { el("err").textContent = e.message; });
+      get("/api/obs/reads").then(renderReads).catch(function (e) { el("err").textContent = e.message; });
+    }
+    refresh();
+    setInterval(refresh, 60000);
+  </script>
+</body>
+</html>
