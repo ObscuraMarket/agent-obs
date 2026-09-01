@@ -146,8 +146,30 @@ your static assets and set the API before its script runs, or pass `?api=`:
 
 **Native Angular components**: fetch the endpoints with `HttpClient` and
 render them in your own design. The page's markup is the reference for what
-each field means; its palette (`#161816`, lime `#c6ff00`, Plus Jakarta Sans)
-matches the app so it drops in without restyling.
+each field means.
+
+## 3b. Design contract
+
+The page is built from the exchange component's own values so it sits inside
+`/app` without restyling:
+
+| Piece | Value (from the app) |
+|---|---|
+| page background | `#050505` |
+| card | `linear-gradient(145deg, #161816 0%, #1a1c1a 100%)`, `1px solid #2a2e2a`, radius 24px |
+| card header rule | `1px solid #2a2e2a` |
+| inner box (the SEND / RECEIVE box) | `#16181699`, `1px solid #2a2e2a`, radius 14px, hover border `#4f574f` |
+| box label | 12px, 600, uppercase, letter-spacing .08em, `#8a968a` |
+| box figure | 24px, 600, `#fff`; winning figure `#b8ff3d` with the app's lime glow |
+| route row | `1px solid rgba(55,60,55,.6)`, radius 10px, hover `rgba(22,24,22,.5)` |
+| badge | `linear-gradient(135deg, #353a35, #262a26)`, `1.5px solid #4f574f`, radius 6px, 11px 600 |
+| header chip | `#161816`, `1px solid #2a2e2a`, radius 14px, 13px 600 |
+| type | Plus Jakarta Sans, tabular numerals for figures |
+
+Lime is used only where the app uses it: the winning figure, a live state,
+a posted item. The header mark is an inline placeholder; replace it with the
+app's logo asset when embedding, or drop the header entirely and let the
+app's own header stand.
 
 ## 4. What never crosses this boundary
 
