@@ -226,10 +226,18 @@ persona is told plainly that the rebate is not a reason to trade.
 
 ## 5. The dashboard, for Obscura's team
 
-The handoff surface is deliberately small: three JSON endpoints and one
-dependency-free HTML page in the app's own palette. Their Angular app can
-iframe the page, host a copy pointed at the API with `window.OBS_API`, or
-fetch the JSON into native components. The feed shows drafts as drafts, so
+The handoff surface is deliberately small: a handful of read-only JSON
+endpoints, one server-sent-events stream, and one dependency-free HTML page
+styled as a dark terminal (hairlines, monospace figures, one accent for
+direction). The page shows three things people asked for: a terminal where
+his thoughts and decisions land the moment a cycle writes them, a portfolio
+tracker (equity, PnL, realized against unrealized, allocation, the curve
+over 24h to all time, with $OBS's own price alongside), and every position
+with the PnL of each (size, average cost from the ledgers, value, unrealized,
+realized, share). Around them: the stats strip, the wallet, the rails with
+what is used against each cap, the live trades ticker and the X feed. Their
+Angular app can iframe the page, host a copy pointed at the API with
+`window.OBS_API`, or fetch the JSON into native components. The feed shows drafts as drafts, so
 the team can watch OBS think for a day before the account goes live, and hide
 drafts with a filter once it has. Fields are only added, never renamed.
 

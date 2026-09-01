@@ -150,14 +150,36 @@ export interface MarketRead {
   depthUsd2pct: number;
   liquidity: string;
   at: number;
+  /** What the pool holds, whole units, and its dollar value at the pool's own price. Null when not read. */
+  usdgInPool?: number | null;
+  obsInPool?: number | null;
+  tvlUsd?: number | null;
 }
 
-/** $OBS priced by its own market, the Ramses V3 USDG pool. Null when the chain did not answer this cycle. */
+/** balanceOf(holder) calldata. */
+const balanceOfData = (holder: string) => "0x70a08231" + holder.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+
+/** $OBS priced by its own market, the Ramses V3 USDG pool, with what the
+ *  pool holds. Null when the chain did not answer this cycle; the reserves
+ *  are null on their own if only they did not. */
 export async function obsMarket(): Promise<MarketRead | null> {
-  const spec = chainMemory().obsMarket.primary;
+  const m = chainMemory();
+  const spec = m.obsMarket.primary;
   const r = await poolRead(spec);
   if (!r || !(r.priceUsd > 0)) return null;
-  return { venue: r.venue, feePct: r.feePct, priceUsd: r.priceUsd, depthUsd2pct: r.depthUsd2pct, liquidity: r.liquidity, at: r.at };
+  const out: MarketRead = { venue: r.venue, feePct: r.feePct, priceUsd: r.priceUsd, depthUsd2pct: r.depthUsd2pct, liquidity: r.liquidity, at: r.at, usdgInPool: null, obsInPool: null, tvlUsd: null };
+  if (spec.pool) {
+    const token = (k: string) => m.tokens[k] as { address: string; decimals: number };
+    const held = async (t: { address: string; decimals: number }) => {
+      const v = await ethCall(t.address, balanceOfData(spec.pool as string));
+      const w = v ? decodeWord(v) : null;
+      return w == null ? null : Number(w) / 10 ** t.decimals;
+    };
+    out.usdgInPool = await held(token("USDG"));
+    out.obsInPool = await held(token("OBS"));
+    if (out.usdgInPool != null && out.obsInPool != null) out.tvlUsd = out.usdgInPool + out.obsInPool * r.priceUsd;
+  }
+  return out;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

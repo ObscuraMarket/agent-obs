@@ -12,9 +12,10 @@
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, dataPath } from "../config.ts";
+import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, DRY, dataPath } from "../config.ts";
+import { appendLedger, readLedger } from "../ledger.ts";
 import { UA, rpc, ethCall, rpcBlocked } from "./rpc.ts";
-import { obsMarket, type MarketRead } from "./pools.ts";
+import { obsMarket, poolRead, chainMemory, type MarketRead } from "./pools.ts";
 
 export { rpcBlocked };
 export type { MarketRead };
@@ -160,6 +161,10 @@ export interface TokenRead {
   totalSupply: string | null;
   /** Holder count from the chain's explorer, best-effort. */
   holders: number | null;
+  /** The explorer's own numbers, which lag the pool: its USD rate, 24h volume and market cap. */
+  explorerPriceUsd: number | null;
+  volume24hUsd: number | null;
+  marketCapUsd: number | null;
 }
 
 const TOKEN_CACHE = "obs-token.json";
@@ -169,7 +174,7 @@ const TOKEN_CACHE_TTL_MS = 24 * 3600e3;
  *  change essentially never, so they are cached on disk for a day and cost
  *  the rate-limited RPC nothing on ordinary cycles; holders stay live. */
 export async function obsToken(): Promise<TokenRead> {
-  const holdersP = explorerHolders();
+  const explorerP = explorerToken();
   let meta: Pick<TokenRead, "name" | "symbol" | "decimals" | "totalSupply"> | null = null;
   try {
     const p = dataPath(TOKEN_CACHE);
@@ -202,23 +207,70 @@ export async function obsToken(): Promise<TokenRead> {
       }
     }
   }
-  return { address: OBS_CONTRACT, ...meta, holders: await holdersP };
+  const x = await explorerP;
+  return { address: OBS_CONTRACT, ...meta, holders: x.holders, explorerPriceUsd: x.priceUsd, volume24hUsd: x.volume24hUsd, marketCapUsd: x.marketCapUsd };
 }
 
-/** The explorer's view of the token: holder count and its USD rate. Null fields when it will not answer. */
-async function explorerToken(): Promise<{ holders: number | null; priceUsd: number | null }> {
+interface ExplorerView {
+  holders: number | null;
+  priceUsd: number | null;
+  volume24hUsd: number | null;
+  marketCapUsd: number | null;
+}
+const pos = (v: unknown): number | null => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+/** The explorer's view of the token: holders, its USD rate, 24h volume, market cap. Null fields when it will not answer. */
+async function explorerToken(): Promise<ExplorerView> {
   try {
     const res = await fetch(`https://robinhoodchain.blockscout.com/api/v2/tokens/${OBS_CONTRACT}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
-    const j = (await res.json()) as { holders_count?: string | number; exchange_rate?: string | number | null };
-    const n = Number(j.holders_count);
-    const p = Number(j.exchange_rate);
-    return { holders: Number.isFinite(n) && n > 0 ? n : null, priceUsd: Number.isFinite(p) && p > 0 ? p : null };
+    const j = (await res.json()) as { holders_count?: string | number; exchange_rate?: string | number | null; volume_24h?: string | number | null; circulating_market_cap?: string | number | null };
+    return { holders: pos(j.holders_count), priceUsd: pos(j.exchange_rate), volume24hUsd: pos(j.volume_24h), marketCapUsd: pos(j.circulating_market_cap) };
   } catch {
-    return { holders: null, priceUsd: null };
+    return { holders: null, priceUsd: null, volume24hUsd: null, marketCapUsd: null };
   }
 }
-async function explorerHolders(): Promise<number | null> {
-  return (await explorerToken()).holders;
+
+// The $OBS price over time, for the chart. One sample a minute at most,
+// written whenever a read succeeds (the desk cycle, the dashboard), so the
+// curve exists without a separate job and the file stays small.
+const MARKET_LEDGER = "obs-market.jsonl";
+const SAMPLE_GAP_MS = 55_000;
+let lastSampleAt: number | null = null;
+export interface MarketSample {
+  at: number;
+  priceUsd: number;
+  depthUsd2pct: number;
+}
+function sampleMarket(m: MarketRead): void {
+  if (lastSampleAt == null) {
+    const rows = readMarketSamples();
+    lastSampleAt = rows.length ? rows[rows.length - 1].at : 0;
+  }
+  if (m.at - lastSampleAt < SAMPLE_GAP_MS) return;
+  lastSampleAt = m.at;
+  appendLedger(MARKET_LEDGER, { at: m.at, priceUsd: m.priceUsd, depthUsd2pct: m.depthUsd2pct });
+}
+export function readMarketSamples(): MarketSample[] {
+  return readLedger<MarketSample>(MARKET_LEDGER).filter((r) => r && Number.isFinite(Number(r.at)) && Number(r.priceUsd) > 0);
+}
+/** PURE: the samples inside a window, oldest first, thinned to about maxPoints with the last one always kept. */
+export function marketSeries(rows: MarketSample[], sinceMs: number, now: number, maxPoints = 400): MarketSample[] {
+  const inWindow = rows.filter((r) => r.at >= now - sinceMs).sort((a, b) => a.at - b.at);
+  if (inWindow.length <= maxPoints) return inWindow;
+  const step = Math.ceil(inWindow.length / maxPoints);
+  const out = inWindow.filter((_, i) => i % step === 0);
+  if (out[out.length - 1] !== inWindow[inWindow.length - 1]) out.push(inWindow[inWindow.length - 1]);
+  return out;
+}
+/** PURE: the move over the last day, against the oldest sample inside it. Null with fewer than two samples. */
+export function change24h(rows: MarketSample[], now: number): number | null {
+  const s = marketSeries(rows, 24 * 3600e3, now, Number.MAX_SAFE_INTEGER);
+  if (s.length < 2) return null;
+  const a = s[0].priceUsd;
+  const b = s[s.length - 1].priceUsd;
+  return a > 0 ? (b - a) / a : null;
 }
 
 // Assets the desk can mark, by CoinGecko id. Anything not here (and not a
@@ -263,6 +315,15 @@ export async function assetPrices(symbols: string[], known: Record<string, numbe
     } catch {
       /* every missing symbol stays null below */
     }
+  }
+  // Tokenized stocks, and anything else CoinGecko does not carry: the asset's
+  // own USDG pool on Robinhood Chain, from the chain memory, one at a time.
+  for (const s of want) {
+    if (s in out) continue;
+    const spec = chainMemory().referencePools[`${s}/USDG`];
+    if (!spec) continue;
+    const r = await poolRead(spec);
+    if (r && r.priceUsd > 0) out[s] = r.priceUsd;
   }
   if (want.includes("OBS") && out.OBS == null) out.OBS = (await explorerToken()).priceUsd;
   for (const s of want) if (!(s in out)) out[s] = null;
@@ -323,6 +384,7 @@ export async function liveReads(): Promise<Reads> {
   const token = await obsToken();
   const wallet = await walletRead();
   const market = await obsMarket();
+  if (market && !DRY) sampleMarket(market);
   const [p, up, api] = await othersP;
   return { at: Date.now(), token, prices: p, siteUp: up, apiUp: api, wallet, market };
 }

@@ -15,9 +15,24 @@ export function rpcBlocked(url: string): boolean {
   return (blockedUntil.get(url) ?? 0) > Date.now();
 }
 
+// The public endpoint limits bursts, so consecutive calls to one host are
+// spaced out. A burst limit (429) clears in seconds and gets one patient
+// retry; a challenge page (403) does not, and that host is left alone.
+const MIN_GAP_MS = 400;
+const nextSlot = new Map<string, number>();
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function pace(url: string): Promise<void> {
+  const now = Date.now();
+  const slot = Math.max(now, nextSlot.get(url) ?? 0);
+  nextSlot.set(url, slot + MIN_GAP_MS);
+  if (slot > now) await sleep(slot - now);
+}
+
 export async function rpc(url: string, method: string, params: unknown[]): Promise<string | null> {
-  if (rpcBlocked(url)) return null;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (rpcBlocked(url)) return null;
+    await pace(url);
+    let limited = false;
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -25,16 +40,24 @@ export async function rpc(url: string, method: string, params: unknown[]): Promi
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
         signal: AbortSignal.timeout(15_000),
       });
-      if (res.status === 403 || res.status === 429) {
+      if (res.status === 403) {
         blockedUntil.set(url, Date.now() + RPC_COOLDOWN_MS);
         return null;
       }
-      const j = (await res.json()) as { result?: string };
-      if (typeof j.result === "string") return j.result;
+      if (res.status === 429) limited = true;
+      else {
+        const j = (await res.json()) as { result?: string; error?: { code?: number } };
+        if (typeof j.result === "string") return j.result;
+        if (j.error?.code === 429) limited = true;
+      }
     } catch {
       /* fall through to the retry */
     }
-    if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
+    if (limited && attempt === 2) {
+      blockedUntil.set(url, Date.now() + RPC_COOLDOWN_MS);
+      return null;
+    }
+    await sleep(limited ? 2500 : 600);
   }
   return null;
 }

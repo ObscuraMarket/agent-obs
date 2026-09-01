@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow } from "../src/desk/book.ts";
+import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions } from "../src/desk/book.ts";
 
 const flows: CapitalFlow[] = [
   { at: 1, kind: "deposit", asset: "ETH", amount: 1, usd: 2500 },
@@ -53,4 +53,49 @@ test("the series is windowed and oldest first", () => {
     { at: 5, holdings: {}, equityUsd: 9, inFlightUsd: 0, netCapitalUsd: 10, pnlUsd: -1, pnlPct: -0.1, unpriced: [] },
   ];
   assert.deepEqual(series(snaps, 60, 100).map((p) => p.at), [50, 90]);
+});
+
+test("positions carry average cost, unrealized and realized PnL, and share of equity", () => {
+  const flows = [{ at: 1, kind: "deposit" as const, asset: "ETH", amount: 1, usd: 2400 }];
+  const trades = [
+    { at: 2, id: "a", status: "pending" as const, from: { asset: "ETH", amount: 0.5, usd: 1250 }, to: { asset: "USDG", amount: 1240, usd: 1240 }, partner: "x" },
+    { at: 2, updatedAt: 3, id: "a", status: "settled" as const, from: { asset: "ETH", amount: 0.5, usd: 1250 }, to: { asset: "USDG", amount: 1240, usd: 1240 }, partner: "x" },
+  ];
+  const held = holdingsFrom(flows, trades);
+  const p = positions(flows, trades, held, { ETH: 2600 });
+  const eth = p.positions.find((x) => x.asset === "ETH")!;
+  const usdg = p.positions.find((x) => x.asset === "USDG")!;
+  assert.equal(eth.qty, 0.5);
+  assert.equal(eth.avgCostUsd, 2400);
+  assert.equal(eth.costUsd, 1200);
+  assert.equal(eth.valueUsd, 1300);
+  assert.equal(eth.unrealizedUsd, 100);
+  assert.ok(Math.abs((eth.unrealizedPct as number) - 100 / 1200) < 1e-12);
+  assert.equal(eth.realizedUsd, 50, "sold 0.5 ETH that cost 1200 for 1250");
+  assert.equal(usdg.qty, 1240);
+  assert.ok(Math.abs((usdg.avgCostUsd as number) - 1250 / 1240) < 1e-12, "USDG cost what the ETH leg was worth");
+  assert.ok(Math.abs((usdg.unrealizedUsd as number) + 10) < 1e-9);
+  assert.equal(p.realizedUsd, 50);
+  assert.equal(p.positions[0].asset, "ETH", "largest value first");
+  assert.ok(Math.abs((eth.share as number) - 1300 / 2540) < 1e-12);
+  assert.deepEqual(p.inFlight, []);
+});
+
+test("a pending swap parks its cost in flight, and an unrecorded cost stays unknown", () => {
+  const flows = [{ at: 1, kind: "deposit" as const, asset: "ETH", amount: 1, usd: 2400 }, { at: 1, kind: "deposit" as const, asset: "NVDA", amount: 2, usd: null }];
+  const trades = [{ at: 2, id: "p", status: "pending" as const, from: { asset: "ETH", amount: 0.25, usd: 650 }, to: { asset: "USDG", amount: 640, usd: 640 }, partner: null }];
+  const p = positions(flows, trades, holdingsFrom(flows, trades), { ETH: 2600, NVDA: 200 });
+  const eth = p.positions.find((x) => x.asset === "ETH")!;
+  assert.equal(eth.qty, 0.75);
+  assert.equal(eth.costUsd, 1800);
+  assert.equal(p.inFlight.length, 1);
+  assert.equal(p.inFlight[0].costUsd, 600);
+  assert.equal(p.inFlight[0].usd, 650);
+  const nvda = p.positions.find((x) => x.asset === "NVDA")!;
+  assert.equal(nvda.valueUsd, 400);
+  assert.equal(nvda.avgCostUsd, null, "no dollar figure was recorded, so no basis is invented");
+  assert.equal(nvda.unrealizedUsd, null);
+  // Selling more than the ledger knew of poisons the basis rather than faking a gain.
+  const over = positions(flows, [{ at: 3, id: "o", status: "settled" as const, from: { asset: "ETH", amount: 2, usd: 5000 }, to: { asset: "USDG", amount: 4990, usd: 4990 }, partner: null }], { ETH: 0.5, USDG: 4990 }, { ETH: 2600 });
+  assert.equal(over.positions.find((x) => x.asset === "ETH")!.avgCostUsd, null);
 });

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { publicFeed, buildStatus } from "../src/server.ts";
+import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary } from "../src/server.ts";
+import { railsFromEnv } from "../src/desk/rails.ts";
 
 const posts = [
   { at: 1, mode: "draft", posted: false, text: "first draft" },
@@ -30,4 +31,28 @@ test("the status card counts published versus drafts and reports the mode honest
   assert.deepEqual(s.decisions, { post: 1, hold: 2 });
   assert.equal(buildStatus([], [], [], { live: true, configured: true, now: 10 }).agent.mode, "live");
   assert.equal(buildStatus([], [], [], { live: false, configured: true, now: 10 }).agent.mode, "draft");
+});
+
+test("the stream frames events the way EventSource reads them and only sends what is new", () => {
+  assert.equal(sseFrame("thought", { at: 1, thoughts: ["a"] }), 'event: thought\ndata: {"at":1,"thoughts":["a"]}\n\n');
+  const rows = [{ at: 5 }, { at: 1, updatedAt: 7 }, { at: 3 }];
+  assert.deepEqual(newerThan(rows, 3), [{ at: 5 }, { at: 1, updatedAt: 7 }], "oldest first, the updated row counted by its update");
+  assert.deepEqual(newerThan(rows, 7), []);
+});
+
+test("the rails summary puts each cap next to what is used, from the latest row per trade", () => {
+  const now = Date.UTC(2026, 8, 1, 15, 0, 0);
+  const trades = [
+    { at: now - 3600e3, id: "a", status: "pending" as const, from: { asset: "ETH", amount: 0.01, usd: 24 }, to: { asset: "USDG", amount: 23.5, usd: 23.5 }, partner: "x" },
+    { at: now - 3600e3, updatedAt: now - 1800e3, id: "a", status: "settled" as const, from: { asset: "ETH", amount: 0.01, usd: 24 }, to: { asset: "USDG", amount: 23.5, usd: 23.5 }, partner: "x" },
+    { at: now - 600e3, id: "b", status: "pending" as const, from: { asset: "USDG", amount: 20, usd: 20 }, to: { asset: "NVDA", amount: 0.09, usd: 20 }, partner: "y" },
+    { at: now - 600e3, id: "c", status: "proposed" as const, from: { asset: "USDG", amount: 20, usd: 20 }, to: { asset: "NVDA", amount: 0.09, usd: 20 }, partner: null },
+  ];
+  const r = railsSummary(railsFromEnv({ OBS_MAX_SWAP_USD: "25", OBS_DAILY_SWAP_USD: "100", OBS_MAX_OPEN_ORDERS: "1" }), trades, now);
+  assert.equal(r.tradingOn, false);
+  assert.deepEqual([r.maxSwapUsd, r.dailySwapUsd, r.maxOpenOrders], [25, 100, 1]);
+  assert.equal(r.openOrders, 1, "one pending; the proposal is not an order");
+  assert.ok(r.sentTodayUsd >= 20, `today's sends counted, got ${r.sentTodayUsd}`);
+  assert.ok(r.allowedAssets.includes("USDG@robinhood"));
+  assert.equal(r.allowedPartners, null);
 });

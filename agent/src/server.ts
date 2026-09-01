@@ -7,16 +7,16 @@
 // the journal, no key or token is read here, and the ledgers are shaped down
 // to what a public timeline already shows. Run: npm run dashboard.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readLedger } from "./ledger.ts";
-import { liveReads, readsBlock, assetPrices, type Reads } from "./obscura/reads.ts";
-import { readBook, latestTrades, snapshot, snapshotFromChain, series, type Trade, type BookSnapshot } from "./desk/book.ts";
+import { liveReads, readsBlock, assetPrices, readMarketSamples, marketSeries, change24h, type Reads } from "./obscura/reads.ts";
+import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { readThoughts } from "./desk/thoughts.ts";
-import { tradingArmed } from "./desk/rails.ts";
+import { tradingArmed, railsFromEnv, sentTodayUsd, type Rails } from "./desk/rails.ts";
 import { walletBalances } from "./obscura/reads.ts";
-import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL } from "./config.ts";
+import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL, dataPath } from "./config.ts";
 import { xLive, xConfigured } from "./social/xClient.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
@@ -109,6 +109,35 @@ export function buildDesk(latest: BookSnapshot | null, trades: Trade[], lastThou
   };
 }
 
+export interface RailsSummary {
+  tradingOn: boolean;
+  maxSwapUsd: number;
+  dailySwapUsd: number;
+  maxOpenOrders: number;
+  gasReserveEth: number;
+  /** Dollars sent into routes in the last 24 hours, against the daily cap. */
+  sentTodayUsd: number;
+  openOrders: number;
+  allowedAssets: string[];
+  allowedPartners: string[] | null;
+}
+
+/** PURE: the rails as the dashboard shows them: each cap next to what is used. */
+export function railsSummary(rails: Rails, trades: Trade[], now: number): RailsSummary {
+  const t = latestTrades(trades);
+  return {
+    tradingOn: rails.tradingOn,
+    maxSwapUsd: rails.maxSwapUsd,
+    dailySwapUsd: rails.dailySwapUsd,
+    maxOpenOrders: rails.maxOpenOrders,
+    gasReserveEth: rails.gasReserveEth,
+    sentTodayUsd: sentTodayUsd(t, now),
+    openOrders: t.filter((x) => x.status === "pending").length,
+    allowedAssets: [...rails.allowedAssets],
+    allowedPartners: rails.allowedPartners ? [...rails.allowedPartners] : null,
+  };
+}
+
 /** PURE: the status card. Exported for tests. */
 export function buildStatus(posts: PostRow[], replies: PostRow[], decisions: Array<{ decision?: string }>, opts: { live: boolean; configured: boolean; now: number; desk?: DeskSummary }): Status {
   const content = (rows: PostRow[]) => rows.filter((r) => r.text && r.at && !r.deletedId);
@@ -169,6 +198,64 @@ const json = (res: ServerResponse, code: number, body: unknown) => {
 
 const DASHBOARD = join(ROOT_DIR, "..", "dashboard", "index.html");
 
+// The live stream: server-sent events, so the page's terminal shows a thought
+// the moment the desk writes it instead of on the next poll. The ledgers are
+// append-only files, so "new" is cheap to detect: the file grew. Two seconds
+// between looks; a keepalive comment every 25 so proxies keep the socket.
+const STREAM_POLL_MS = 2000;
+const STREAM_PING_MS = 25_000;
+
+/** PURE: one SSE frame. */
+export function sseFrame(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+/** PURE: rows written after `at`, oldest first. */
+export function newerThan<T extends { at: number; updatedAt?: number }>(rows: T[], at: number): T[] {
+  return rows.filter((r) => (r.updatedAt ?? r.at) > at).sort((a, b) => (a.updatedAt ?? a.at) - (b.updatedAt ?? b.at));
+}
+const sizeOf = (file: string): number => {
+  try {
+    return statSync(dataPath(file)).size;
+  } catch {
+    return 0;
+  }
+};
+
+function stream(req: IncomingMessage, res: ServerResponse, limit: number): void {
+  res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  const history = readThoughts(limit).reverse();
+  const trades = publicTrades(readBook().trades, 20);
+  let lastThoughtAt = history.length ? history[history.length - 1].at : 0;
+  let lastTradeAt = trades.length ? Math.max(...trades.map((t) => t.updatedAt ?? t.at)) : 0;
+  let thoughtsSize = sizeOf("obs-thoughts.jsonl");
+  let tradesSize = sizeOf("obs-trades.jsonl");
+  res.write(sseFrame("hello", { at: Date.now(), thoughts: history, trades, canExecute: tradingArmed() }));
+  const look = () => {
+    const ts = sizeOf("obs-thoughts.jsonl");
+    if (ts !== thoughtsSize) {
+      thoughtsSize = ts;
+      for (const t of newerThan(readThoughts(50), lastThoughtAt)) {
+        lastThoughtAt = t.at;
+        res.write(sseFrame("thought", t));
+      }
+    }
+    const rs = sizeOf("obs-trades.jsonl");
+    if (rs !== tradesSize) {
+      tradesSize = rs;
+      for (const t of newerThan(publicTrades(readBook().trades, 50), lastTradeAt)) {
+        lastTradeAt = t.updatedAt ?? t.at;
+        res.write(sseFrame("trade", t));
+      }
+    }
+  };
+  const poll = setInterval(look, STREAM_POLL_MS);
+  const ping = setInterval(() => res.write(": ping\n\n"), STREAM_PING_MS);
+  req.on("close", () => {
+    clearInterval(poll);
+    clearInterval(ping);
+  });
+}
+
 export function handle(req: IncomingMessage, res: ServerResponse): void {
   cors(req, res);
   if (req.method === "OPTIONS") {
@@ -197,11 +284,18 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/status") {
+    const d = deskFromDisk();
     json(res, 200, {
-      ...buildStatus(readLedger<PostRow>("x-posts.jsonl"), readLedger<PostRow>("x-replies.jsonl"), readLedger("obs-decisions.jsonl"), { live: xLive(), configured: xConfigured(), now, desk: deskFromDisk().desk }),
+      ...buildStatus(readLedger<PostRow>("x-posts.jsonl"), readLedger<PostRow>("x-replies.jsonl"), readLedger("obs-decisions.jsonl"), { live: xLive(), configured: xConfigured(), now, desk: d.desk }),
+      rails: railsSummary(railsFromEnv(), d.book.trades, now),
       // The desk's own wallet is public on purpose: every balance and every settlement is checkable there.
       wallet: WALLET_ADDRESS ? { address: WALLET_ADDRESS, explorerUrl: `${EXPLORER_URL}/address/${WALLET_ADDRESS}` } : null,
     });
+    return;
+  }
+  if (path === "/api/obs/stream") {
+    const limit = Number(url.searchParams.get("limit") ?? 12);
+    stream(req, res, Number.isFinite(limit) && limit > 0 ? Math.min(limit, 50) : 12);
     return;
   }
   if (path === "/api/obs/thoughts") {
@@ -225,9 +319,13 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         const prices = await cachedPrices(held);
         const live = chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now);
         const t = latestTrades(book.trades);
+        const pos = positions(book.flows, book.trades, live.holdings, prices);
         json(res, 200, {
           snapshot: live,
           prices,
+          positions: pos.positions,
+          realizedUsd: pos.realizedUsd,
+          inFlight: pos.inFlight,
           series: series(book.snapshots, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 90) : 168) * 3600e3, now),
           capital: { netUsd: live.netCapitalUsd, deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length },
           trades: { settled: t.filter((x) => x.status === "settled").length, pending: t.filter((x) => x.status === "pending").length, proposed: t.filter((x) => x.status === "proposed").length, failed: t.filter((x) => x.status === "failed" || x.status === "cancelled").length },
@@ -236,6 +334,12 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         });
       })
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "pnl unavailable" }));
+    return;
+  }
+  if (path === "/api/obs/market") {
+    const hours = Number(url.searchParams.get("hours") ?? 168);
+    const rows = readMarketSamples();
+    json(res, 200, { series: marketSeries(rows, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 365) : 168) * 3600e3, now), change24hPct: change24h(rows, now), samples: rows.length, at: now });
     return;
   }
   if (path === "/api/obs/feed") {
@@ -249,7 +353,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/stream?limit=12 (server-sent events)"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in

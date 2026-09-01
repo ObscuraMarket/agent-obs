@@ -5,10 +5,13 @@ read-only JSON API served by the agent, and one dependency-free page that
 renders it. Use the page as-is (iframe it, or copy it), or fetch the JSON
 into your own Angular components. Nothing here needs our code in your build.
 
-What people see: OBS's **thoughts** (his public reasoning, every desk
-cycle), his **trades** (swaps through Obscura, with the settlement
-transaction), and the desk's **overall PnL**, plus the X feed and the live
-reads he is allowed to cite.
+What people see: a **terminal** where OBS's thoughts land the moment he
+thinks them (every desk cycle, pushed over a live stream, with the decision
+each cycle ends on), his **portfolio** (equity curve, mark-to-market PnL,
+realized and unrealized, allocation), his **positions** with the PnL of each
+(size, average cost, value, unrealized, realized, share), his **trades**
+(swaps through Obscura, with the settlement transaction), plus the X feed
+and the live reads he is allowed to cite.
 
 ## 1. Run the API
 
@@ -29,9 +32,10 @@ CORS: `OBS_DASHBOARD_ORIGINS=*` by default; set it to
 
 ## 2. Endpoints
 
-All responses are JSON, `Cache-Control: public, max-age=30`. Timestamps are
-Unix milliseconds. Every numeric field can be `null`, which means "not
-measured this cycle", never zero.
+All responses are JSON, `Cache-Control: public, max-age=30`, except the
+stream (`text/event-stream`, no cache). Timestamps are Unix milliseconds.
+Every numeric field can be `null`, which means "not measured this cycle",
+never zero.
 
 ### `GET /api/obs/health`
 ```json
@@ -55,6 +59,13 @@ measured this cycle", never zero.
   "at": 1788260000000
 }
 ```
+The response also carries `rails`: the limits every swap is checked against
+and what is used, `{ tradingOn, maxSwapUsd, dailySwapUsd, maxOpenOrders,
+gasReserveEth, sentTodayUsd, openOrders, allowedAssets, allowedPartners }`.
+`sentTodayUsd` is dollars sent into routes in the last 24 hours; `openOrders`
+counts pending swaps; `allowedPartners` is `null` when any Obscura route may
+be used.
+
 `agent.mode`: `live` (posting to X), `draft` (ledger only), `unconfigured`
 (no X keys). `desk.canExecute` is `false` until the execution stage exists;
 while it is false every swap decision is a proposal. `desk` is read from the
@@ -69,6 +80,23 @@ public address, shown on purpose so balances and settlements can be checked.
 ```
 Balances are read from the chains; `rewards` is Obscura's own
 `/rewards/{wallet}` for the address.
+
+`token` in `/api/obs/reads` carries, besides name, symbol, decimals, supply
+and `holders`, the explorer's own lagging figures `explorerPriceUsd`,
+`volume24hUsd` and `marketCapUsd`. `market` (the pool read) adds
+`usdgInPool`, `obsInPool` and `tvlUsd`, what the pool holds and its dollar
+value at the pool's own price. The page's stats strip prefers the pool price
+and computes market cap from it and the supply.
+
+### `GET /api/obs/market?hours=168`
+The $OBS price over time, sampled from the pool once a minute at most
+whenever a read succeeds (the desk cycle, the dashboard's own reads):
+```json
+{ "series": [{ "at": 1788173000000, "priceUsd": 0.00048, "depthUsd2pct": 202 }], "change24hPct": 0.031, "samples": 1440, "at": 1788260000000 }
+```
+`series` is oldest first and thinned to about 400 points; `change24hPct` is
+the move against the oldest sample inside the last day, `null` until there
+are two.
 
 ### `GET /api/obs/thoughts?limit=20`
 ```json
@@ -122,6 +150,14 @@ or payout address, so nothing is redacted here.
     "pnlUsd": 54.4, "pnlPct": 0.0227, "unpriced": []
   },
   "prices": { "ETH": 2455.5, "USDC": null },
+  "positions": [
+    { "asset": "ETH", "qty": 0.8, "priceUsd": 2455.5, "valueUsd": 1964.4, "avgCostUsd": 2400, "costUsd": 1920,
+      "unrealizedUsd": 44.4, "unrealizedPct": 0.0231, "realizedUsd": 5.5, "share": 0.89 },
+    { "asset": "USDC", "qty": 242.85, "priceUsd": 1, "valueUsd": 242.85, "avgCostUsd": 1.011, "costUsd": 245.5,
+      "unrealizedUsd": -2.65, "unrealizedPct": -0.0108, "realizedUsd": 0, "share": 0.11 }
+  ],
+  "realizedUsd": 5.5,
+  "inFlight": [],
   "series": [{ "at": 1788173000000, "equityUsd": 2400, "pnlUsd": 0 }, { "at": 1788259000000, "equityUsd": 2454.4, "pnlUsd": 54.4 }],
   "capital": { "netUsd": 2400, "deposits": 1, "withdrawals": 0 },
   "trades": { "settled": 3, "pending": 0, "proposed": 0, "failed": 0 },
@@ -133,6 +169,38 @@ PnL is mark-to-market: equity (priced holdings plus swaps in flight) minus
 net capital deposited. `unpriced` lists held assets with no price this
 cycle; their value is missing from equity and the response says so.
 `series` is the stored snapshot curve, oldest first. Prices cache 60 s.
+
+`positions` is every holding as a position, largest value first. The cost
+basis is average cost from the ledgers in time order: a deposit adds units at
+the dollars recorded for it, a settled swap sells the from leg at average
+cost (the difference to what it fetched is that asset's `realizedUsd`) and
+buys the to leg at what was spent. `avgCostUsd`, `costUsd`, `unrealizedUsd`
+and `unrealizedPct` are `null` when no cost was ever recorded for the asset
+(the page shows "no cost recorded" rather than a fake gain). `share` is the
+position's part of priced equity. `inFlight` lists pending swaps with the
+from leg's dollar value and the cost that left with it. `realizedUsd` at the
+top level is the sum over all assets.
+
+### `GET /api/obs/stream?limit=12`
+Server-sent events (`text/event-stream`), for the terminal. On connect one
+`hello` event carries the last `limit` thoughts (oldest first, so they can
+be typed out in order), the latest trades and `canExecute`; then a `thought`
+event arrives the moment a desk cycle writes one, and a `trade` event when a
+trade row is written or changes status. A comment line keeps the socket warm
+every 25 s.
+```
+event: hello
+data: { "at": 1788260000000, "thoughts": [ ...thought objects as in /api/obs/thoughts... ], "trades": [ ...trade rows... ], "canExecute": false }
+
+event: thought
+data: { "at": 1788261800000, "observation": [...], "thoughts": [...], "decision": { "kind": "hold", "reason": "..." } }
+
+event: trade
+data: { "at": ..., "id": "...", "status": "pending", "from": {...}, "to": {...}, "partner": "..." }
+```
+`EventSource` in the browser handles reconnects. The page falls back to
+polling `/api/obs/thoughts` every 15 s if the stream cannot be opened, so a
+proxy that does not pass event streams still gives a working terminal.
 
 ### `GET /api/obs/feed?limit=30`
 The X feed: `{ items: [{ at, kind: "post"|"reply", text, posted, mode, id?, url?, inReplyToId? }], at }`.
@@ -165,26 +233,30 @@ each field means.
 
 ## 3b. Design contract
 
-The page is built from the exchange component's own values so it sits inside
-`/app` without restyling:
+The page is a dark terminal: near-black canvas, hairline borders, square
+corners, monospace figures, one accent for direction.
 
-| Piece | Value (from the app) |
+| Piece | Value |
 |---|---|
-| page background | `#050505` |
-| card | `linear-gradient(145deg, #161816 0%, #1a1c1a 100%)`, `1px solid #2a2e2a`, radius 24px |
-| card header rule | `1px solid #2a2e2a` |
-| inner box (the SEND / RECEIVE box) | `#16181699`, `1px solid #2a2e2a`, radius 14px, hover border `#4f574f` |
-| box label | 12px, 600, uppercase, letter-spacing .08em, `#8a968a` |
-| box figure | 24px, 600, `#fff`; winning figure `#b8ff3d` with the app's lime glow |
-| route row | `1px solid rgba(55,60,55,.6)`, radius 10px, hover `rgba(22,24,22,.5)` |
-| badge | `linear-gradient(135deg, #353a35, #262a26)`, `1.5px solid #4f574f`, radius 6px, 11px 600 |
-| header chip | `#161816`, `1px solid #2a2e2a`, radius 14px, 13px 600 |
-| type | Plus Jakarta Sans, tabular numerals for figures |
+| canvas | `#0a0a0a`; panels `#0c0c0c` |
+| hairline | `1px solid #262626`; inner rules `#1c1c1c` |
+| corners | square everywhere; the only rounded shape is the current-value pill on the chart |
+| type | JetBrains Mono for everything that is data or UI; Inter only for the hero headline and paragraph and for post bodies |
+| labels | 10.5px, uppercase, letter-spacing .18em, `#8a8a8a` |
+| figures | 21px in the strips, 32px on the chart, tabular numerals, `#f2f2f2` |
+| direction | up and BUY `#4ade80`, down and SELL `#f87171`, pending `#fbbf24`; used only for direction, state and the live dot |
+| button | white on black (`#f2f2f2` on `#0a0a0a`), uppercase, letter-spacing .14em |
+| segmented control | bordered group; the active segment inverts to white on black |
+| light theme | `data-theme="light"` on `<html>`, same tokens flipped; the sun button toggles it and remembers the choice |
 
-Lime is used only where the app uses it: the winning figure, a live state,
-a posted item. The header mark is an inline placeholder; replace it with the
-app's logo asset when embedding, or drop the header entirely and let the
-app's own header stand.
+Sections, top to bottom: header ($OBS, by Obscura, live and execution
+pills, the desk's address with copy, theme), hero line, the six-cell stats
+strip (price with 24h move, market cap, 24h volume, liquidity, holders,
+cashback earned), the chart (Equity, PnL or $OBS; 24H, 7D, 30D, ALL) beside
+the wallet and rails cards, the live trades ticker, the terminal, the
+six-cell portfolio strip (equity, net capital, PnL, unrealized, realized, in
+flight), the positions table, the X feed, the footer. The hero illustration
+is a placeholder wireframe; replace it with the app's own art or drop it.
 
 ## 4. What never crosses this boundary
 

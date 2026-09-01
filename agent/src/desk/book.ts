@@ -169,6 +169,135 @@ export function series(snapshots: BookSnapshot[], sinceMs: number, now: number):
     .map((s) => ({ at: s.at, equityUsd: s.equityUsd, pnlUsd: s.pnlUsd }));
 }
 
+// Positions: each holding with what it cost. Average cost from the ledgers,
+// in time order: a deposit adds units at the dollars recorded for it, a
+// withdrawal removes units at average cost, a settled swap sells the from leg
+// at average cost (the difference to what it fetched is realized) and buys
+// the to leg at what was spent. A pending swap parks the from leg's cost in
+// flight. Where no dollar figure was recorded the basis is unknown and the
+// position says so instead of pretending a zero cost and a fat gain.
+interface Lot {
+  qty: number;
+  usd: number;
+  /** False once any unit came in without a dollar figure, or more left than the ledger knew of. */
+  known: boolean;
+}
+
+export interface CostBasis {
+  lots: Record<string, Lot>;
+  /** Realized dollars per asset from settled sells, where the basis was known. */
+  realized: Record<string, number>;
+  inFlight: Array<{ id: string; from: Leg; to: Leg; usd: number | null; costUsd: number | null }>;
+}
+
+/** PURE: average cost per asset after every flow and swap, oldest first. */
+export function costBasis(flows: CapitalFlow[], trades: Trade[]): CostBasis {
+  const lots: Record<string, Lot> = {};
+  const realized: Record<string, number> = {};
+  const inFlight: CostBasis["inFlight"] = [];
+  const lot = (a: string): Lot => (lots[a.toUpperCase()] ??= { qty: 0, usd: 0, known: true });
+  const avg = (a: string): number | null => {
+    const l = lot(a);
+    return l.known && l.qty > EPS ? l.usd / l.qty : null;
+  };
+  const put = (a: string, q: number, usd: number | null) => {
+    const l = lot(a);
+    l.qty += q;
+    if (usd == null) l.known = false;
+    else l.usd += usd;
+  };
+  /** Remove q units at average cost; the cost removed, or null when unknown. */
+  const take = (a: string, q: number): number | null => {
+    const l = lot(a);
+    const c = avg(a);
+    if (q > l.qty + EPS) l.known = false;
+    const cost = c == null ? null : c * Math.min(q, l.qty);
+    l.qty -= q;
+    if (cost != null) l.usd -= cost;
+    if (l.qty <= EPS) {
+      l.qty = 0;
+      l.usd = 0;
+    }
+    return cost;
+  };
+  type Ev = { at: number; flow?: CapitalFlow; trade?: Trade };
+  const events: Ev[] = [
+    ...flows.map((f) => ({ at: f.at, flow: f })),
+    ...latestTrades(trades)
+      .filter((t) => t.status === "settled" || t.status === "pending")
+      .map((t) => ({ at: t.at, trade: t })),
+  ].sort((a, b) => a.at - b.at);
+  for (const e of events) {
+    if (e.flow) {
+      if (e.flow.kind === "deposit") put(e.flow.asset, e.flow.amount, e.flow.usd);
+      else take(e.flow.asset, e.flow.amount);
+      continue;
+    }
+    const t = e.trade as Trade;
+    const cost = take(t.from.asset, t.from.amount);
+    if (t.status === "pending") {
+      inFlight.push({ id: t.id, from: t.from, to: t.to, usd: t.from.usd, costUsd: cost });
+      continue;
+    }
+    const spent = t.from.usd ?? t.to.usd;
+    if (cost != null && spent != null) realized[t.from.asset.toUpperCase()] = (realized[t.from.asset.toUpperCase()] ?? 0) + (spent - cost);
+    put(t.to.asset, t.to.amount, spent);
+  }
+  return { lots, realized, inFlight };
+}
+
+export interface Position {
+  asset: string;
+  qty: number;
+  priceUsd: number | null;
+  valueUsd: number | null;
+  /** Average dollars paid per unit; null when the ledgers never recorded a cost. */
+  avgCostUsd: number | null;
+  costUsd: number | null;
+  unrealizedUsd: number | null;
+  unrealizedPct: number | null;
+  /** Realized on this asset so far, from settled sells. */
+  realizedUsd: number;
+  /** Share of priced equity, 0 to 1. */
+  share: number | null;
+}
+
+export interface Positions {
+  positions: Position[];
+  realizedUsd: number;
+  inFlight: CostBasis["inFlight"];
+}
+
+/** PURE: every holding as a position with its cost, its mark and its PnL, largest first. */
+export function positions(flows: CapitalFlow[], trades: Trade[], holdings: Record<string, number>, prices: Prices): Positions {
+  const { lots, realized, inFlight } = costBasis(flows, trades);
+  const total = valueHoldings(holdings, prices).usd;
+  const rows: Position[] = [];
+  for (const [asset, qty] of Object.entries(holdings)) {
+    if (!(qty > EPS)) continue;
+    const priceUsd = prices[asset] ?? (STABLES.has(asset) ? 1 : null);
+    const valueUsd = priceUsd == null ? null : qty * priceUsd;
+    const l = lots[asset];
+    const avgCostUsd = l && l.known && l.qty > EPS ? l.usd / l.qty : null;
+    const costUsd = avgCostUsd == null ? null : avgCostUsd * qty;
+    const unrealizedUsd = valueUsd != null && costUsd != null ? valueUsd - costUsd : null;
+    rows.push({
+      asset,
+      qty,
+      priceUsd,
+      valueUsd,
+      avgCostUsd,
+      costUsd,
+      unrealizedUsd,
+      unrealizedPct: unrealizedUsd != null && costUsd != null && costUsd > 0 ? unrealizedUsd / costUsd : null,
+      realizedUsd: realized[asset] ?? 0,
+      share: valueUsd != null && total > 0 ? valueUsd / total : null,
+    });
+  }
+  rows.sort((a, b) => (b.valueUsd ?? -1) - (a.valueUsd ?? -1));
+  return { positions: rows, realizedUsd: Object.values(realized).reduce((s, v) => s + v, 0), inFlight };
+}
+
 export function readBook(): { flows: CapitalFlow[]; trades: Trade[]; snapshots: BookSnapshot[] } {
   return {
     flows: readLedger<CapitalFlow>("obs-capital.jsonl").filter((f) => f && f.asset && Number.isFinite(Number(f.amount))),

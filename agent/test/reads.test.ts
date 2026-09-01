@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeString, decodeUint, formatSupply, readsBlock, balanceOfData, fromRaw, marketLine, usdPrice } from "../src/obscura/reads.ts";
+import { decodeString, decodeUint, formatSupply, readsBlock, balanceOfData, fromRaw, marketLine, usdPrice, marketSeries, change24h } from "../src/obscura/reads.ts";
 
 // ABI-encoded "Obscura" as returned by name() on the real contract.
 const NAME_HEX =
@@ -23,7 +23,7 @@ test("supply formats to whole tokens", () => {
 test("the reads block only carries measured values", () => {
   const block = readsBlock({
     at: 0,
-    token: { address: "0xabc", name: "Obscura", symbol: "OBS", decimals: 18, totalSupply: "1,000,000,000", holders: 3261 },
+    token: { address: "0xabc", name: "Obscura", symbol: "OBS", decimals: 18, totalSupply: "1,000,000,000", holders: 3261 , explorerPriceUsd: null, volume24hUsd: null, marketCapUsd: null },
     prices: { btcUsd: null, ethUsd: 4321.5 },
     siteUp: true,
     apiUp: false,
@@ -49,4 +49,20 @@ test("the market line carries the pool price and its depth, sized for a small to
   assert.equal(usdPrice(2445.5150231686607), "$2,445.52");
   assert.equal(usdPrice(0.5), "$0.5");
   assert.ok(!/—/.test(line));
+});
+
+test("the price series is windowed, thinned and keeps its last sample; the day change needs two samples", () => {
+  const H = 3600e3;
+  const rows = Array.from({ length: 1000 }, (_, i) => ({ at: i * 60e3, priceUsd: 0.0004 + i * 1e-7, depthUsd2pct: 200 }));
+  const now = 999 * 60e3;
+  const week = marketSeries(rows, 7 * 24 * H, now, 100);
+  assert.ok(week.length <= 101 && week.length >= 100, `thinned to about 100, got ${week.length}`);
+  assert.equal(week[week.length - 1].at, rows[rows.length - 1].at, "the newest sample survives thinning");
+  assert.equal(week[0].at, 0);
+  const hour = marketSeries(rows, H, now);
+  assert.equal(hour.length, 61);
+  assert.equal(change24h([], now), null);
+  assert.equal(change24h([rows[0]], now), null);
+  const c = change24h(rows, now) as number;
+  assert.ok(Math.abs(c - (rows[999].priceUsd - rows[0].priceUsd) / rows[0].priceUsd) < 1e-12);
 });

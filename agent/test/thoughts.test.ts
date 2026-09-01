@@ -5,7 +5,7 @@ import { snapshot } from "../src/desk/book.ts";
 
 const reads = {
   at: 0,
-  token: { address: "0xfe24", name: "Obscura", symbol: "OBS", decimals: 18, totalSupply: "1,000,000,000", holders: 3266 },
+  token: { address: "0xfe24", name: "Obscura", symbol: "OBS", decimals: 18, totalSupply: "1,000,000,000", holders: 3266 , explorerPriceUsd: null, volume24hUsd: null, marketCapUsd: null },
   prices: { btcUsd: 78000, ethUsd: 2455.5 },
   siteUp: true,
   apiUp: true,
