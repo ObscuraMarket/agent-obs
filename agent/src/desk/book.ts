@@ -32,6 +32,11 @@ export interface Trade {
   partner: string | null;
   settlementTx?: string | null;
   explorerUrl?: string | null;
+  /** The deposit the desk sent to open the swap, and where to see it. */
+  depositTx?: string | null;
+  depositTxUrl?: string | null;
+  /** Obscura's public order page for this swap. */
+  trackUrl?: string | null;
   /** The desk's stated reason, public. */
   note?: string;
   updatedAt?: number;
@@ -47,6 +52,8 @@ export interface CapitalFlow {
 
 export interface BookSnapshot {
   at: number;
+  /** "chain" when holdings were read from the wallet, "ledger" when derived from the ledgers. */
+  source?: "chain" | "ledger";
   holdings: Record<string, number>;
   /** Dollar value of priced holdings plus in-flight swaps; null if nothing could be priced. */
   equityUsd: number | null;
@@ -130,7 +137,28 @@ export function snapshot(flows: CapitalFlow[], trades: Trade[], prices: Prices, 
   const equityUsd = anyValue ? usd + inFlightUsd : null;
   const pnlUsd = equityUsd == null ? null : equityUsd - net;
   const pnlPct = pnlUsd == null || net <= 0 ? null : pnlUsd / net;
-  return { at: now, holdings, equityUsd, inFlightUsd, netCapitalUsd: net, pnlUsd, pnlPct, unpriced };
+  return { at: now, source: "ledger", holdings, equityUsd, inFlightUsd, netCapitalUsd: net, pnlUsd, pnlPct, unpriced };
+}
+
+/**
+ * PURE: the book from what the chain says the wallet holds. Once a wallet
+ * exists this is the truth: gas, fees and dust all show up here, where the
+ * ledger alone would drift. In-flight swaps still ride as dollars because
+ * their from-leg has left the wallet and their to-leg has not landed.
+ */
+export function snapshotFromChain(flows: CapitalFlow[], trades: Trade[], balances: Record<string, number>, prices: Prices, now: number): BookSnapshot {
+  const holdings: Record<string, number> = {};
+  for (const [k, v] of Object.entries(balances)) if (v != null && Math.abs(v) >= EPS) holdings[k.toUpperCase()] = (holdings[k.toUpperCase()] ?? 0) + v;
+  const { usd, priced, unpriced } = valueHoldings(holdings, prices);
+  const inFlightUsd = latestTrades(trades)
+    .filter((t) => t.status === "pending")
+    .reduce((s, t) => s + (t.from.usd ?? 0), 0);
+  const net = netCapitalUsd(flows);
+  const anyValue = priced > 0 || inFlightUsd > 0 || Object.keys(holdings).length === 0;
+  const equityUsd = anyValue ? usd + inFlightUsd : null;
+  const pnlUsd = equityUsd == null ? null : equityUsd - net;
+  const pnlPct = pnlUsd == null || net <= 0 ? null : pnlUsd / net;
+  return { at: now, source: "chain", holdings, equityUsd, inFlightUsd, netCapitalUsd: net, pnlUsd, pnlPct, unpriced };
 }
 
 /** PURE: the PnL curve from stored snapshots, oldest first, within a window. */

@@ -15,6 +15,7 @@ import type { BookSnapshot, Trade } from "./book.ts";
 
 export interface Decision {
   kind: "hold" | "propose-swap";
+  /** Asset specs as the registry reads them: "ETH" or "ETH@robinhood". */
   from?: string;
   to?: string;
   amount?: number;
@@ -43,8 +44,9 @@ const usd = (v: number) => `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en
 const qty = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: 6 });
 
 /** PURE: the measured observation. Every number the model may use is here. */
-export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number }): string[] {
+export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number; unread?: string[] }): string[] {
   const lines: string[] = [];
+  if (i.unread?.length) lines.push(`Balances the chain did not answer for this cycle, excluded from equity, not zero: ${i.unread.join(", ")}. Do not size anything against them.`);
   const h = Object.entries(i.book.holdings);
   if (!h.length && i.book.netCapitalUsd === 0) lines.push("Book: no capital yet. The desk holds nothing and has been handed nothing; there is nothing to trade and nothing to mark.");
   else {
@@ -86,7 +88,7 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     `Think out loud, in public. Two to five short lines that a person on obscura.market will read as your reasoning: what you see, what it means, what you would do and why not yet. Plain first-person sentences. Every figure must appear in the observation above; anything else is "not measured". No addresses of any kind, no advice, no price predictions, no dates, no em dashes, no quotation marks.`,
     "",
     canExecute
-      ? `Then decide. A swap you decide on is executed through Obscura with the desk's own rails.`
+      ? `Then decide. A swap you decide on is executed through Obscura from the desk's own wallet, inside the rails in code (a per-swap cap, a daily cap, one open order at a time, an asset allowlist, a gas reserve). Size small; the rails refuse anything else and the refusal is public. Every swap through Obscura earns the desk cashback in tokenized stocks, which is the earning leg: trade only when the route and the reason are real, never to farm the rebate.`
       : `Then decide. You cannot execute anything yet: a swap decision is a proposal the operator sees on the dashboard, and you say so nowhere except in the DECISION line.`,
     "",
     "Reply in exactly this shape, one item per line:",
@@ -96,7 +98,7 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     "REASON: <one sentence>",
     "NOTE: <one private sentence to yourself, fed back next cycle>",
     "",
-    "For a swap the DECISION line is: DECISION: swap <amount> <FROM> -> <TO>",
+    "For a swap the DECISION line is: DECISION: swap <amount> <FROM> -> <TO>, where an asset is a symbol with an optional network, for example ETH@robinhood or USDG@robinhood or USDC@erc20. Assets you may name: ETH@eth, USDC@erc20, ETH@robinhood, USDG@robinhood, NVDA@robinhood.",
   ]
     .filter((s) => s !== undefined)
     .join("\n");
@@ -122,8 +124,14 @@ export function parseThoughtReply(raw: string): { thoughts: string[]; decision: 
     else if (key === "REASON") reason = val;
     else if (key === "NOTE") note = val;
     else if (key === "DECISION") {
-      const swap = val.match(/^swap\s+([\d.]+)\s+([A-Za-z0-9]+)\s*(?:->|to)\s*([A-Za-z0-9]+)/i);
-      if (swap && Number(swap[1]) > 0) decision = { kind: "propose-swap", amount: Number(swap[1]), from: swap[2].toUpperCase(), to: swap[3].toUpperCase(), reason: "" };
+      const swap = val.match(/^swap\s+([\d.]+)\s+([A-Za-z0-9]+(?:@[A-Za-z0-9-]+)?)\s*(?:->|to)\s*([A-Za-z0-9]+(?:@[A-Za-z0-9-]+)?)/i);
+      if (swap && Number(swap[1]) > 0) {
+        const norm = (s: string) => {
+          const [sym, net] = s.split("@");
+          return net ? `${sym.toUpperCase()}@${net.toLowerCase()}` : sym.toUpperCase();
+        };
+        decision = { kind: "propose-swap", amount: Number(swap[1]), from: norm(swap[2]), to: norm(swap[3]), reason: "" };
+      }
       else decision = { kind: "hold", reason: "" };
     }
   }

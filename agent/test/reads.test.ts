@@ -27,7 +27,7 @@ test("the reads block only carries measured values", () => {
     prices: { btcUsd: null, ethUsd: 4321.5 },
     siteUp: true,
     apiUp: false,
-    wallet: { address: "0xabc", ethRobinhood: 0.25, ethMainnet: null, usdg: 120.5, obs: 0, rewards: { swaps: 2, volumeUsd: 480, rewardsUsd: 1.2, paidUsd: 0 } },
+    wallet: { address: "0xabc", ethRobinhood: 0.25, ethMainnet: null, usdg: 120.5, obs: 0, usdc: null, usdt: null, nvda: null, rewards: { swaps: 2, volumeUsd: 480, rewardsUsd: 1.2, paidUsd: 0 } },
   });
   assert.match(block, /Obscura \(OBS\), total supply 1,000,000,000, 3,261 holders/);
   assert.match(block, /wallet \(on chain\): 0\.25 ETH on Robinhood Chain, not read ETH on Ethereum, 120\.5 USDG, 0 OBS/);

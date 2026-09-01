@@ -12,8 +12,10 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readLedger } from "./ledger.ts";
 import { liveReads, readsBlock, assetPrices, type Reads } from "./obscura/reads.ts";
-import { readBook, latestTrades, snapshot, series, type Trade, type BookSnapshot } from "./desk/book.ts";
+import { readBook, latestTrades, snapshot, snapshotFromChain, series, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { readThoughts } from "./desk/thoughts.ts";
+import { tradingArmed } from "./desk/rails.ts";
+import { walletBalances } from "./obscura/reads.ts";
 import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL } from "./config.ts";
 import { xLive, xConfigured } from "./social/xClient.ts";
 
@@ -93,7 +95,7 @@ export interface Status {
 }
 
 /** PURE: the desk summary from the latest stored snapshot (no network on the status path). */
-export function buildDesk(latest: BookSnapshot | null, trades: Trade[], lastThoughtAt: number | null): DeskSummary {
+export function buildDesk(latest: BookSnapshot | null, trades: Trade[], lastThoughtAt: number | null, canExecute = false): DeskSummary {
   const t = latestTrades(trades);
   return {
     equityUsd: latest?.equityUsd ?? null,
@@ -103,7 +105,7 @@ export function buildDesk(latest: BookSnapshot | null, trades: Trade[], lastThou
     trades: { settled: t.filter((x) => x.status === "settled").length, pending: t.filter((x) => x.status === "pending").length, proposed: t.filter((x) => x.status === "proposed").length },
     lastThoughtAt,
     markedAt: latest?.at ?? null,
-    canExecute: false,
+    canExecute,
   };
 }
 
@@ -149,7 +151,7 @@ const deskFromDisk = () => {
   const book = readBook();
   const latest = book.snapshots.length ? book.snapshots.reduce((a, b) => (b.at > a.at ? b : a)) : null;
   const thoughts = readThoughts(1);
-  return { book, desk: buildDesk(latest, book.trades, thoughts[0]?.at ?? null) };
+  return { book, desk: buildDesk(latest, book.trades, thoughts[0]?.at ?? null, tradingArmed()) };
 };
 
 function cors(req: IncomingMessage, res: ServerResponse): void {
@@ -215,10 +217,13 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   if (path === "/api/obs/pnl") {
     const hours = Number(url.searchParams.get("hours") ?? 168);
     const { book } = deskFromDisk();
-    const held = Object.keys(snapshot(book.flows, book.trades, {}, now).holdings);
-    cachedPrices(held)
-      .then((prices) => {
-        const live = snapshot(book.flows, book.trades, prices, now);
+    // The chain is the truth once a wallet exists; the ledgers are the fallback.
+    cachedReads()
+      .then(async (r) => {
+        const chain = r.wallet ? walletBalances(r.wallet) : null;
+        const held = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, book.trades, {}, now).holdings);
+        const prices = await cachedPrices(held);
+        const live = chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now);
         const t = latestTrades(book.trades);
         json(res, 200, {
           snapshot: live,
@@ -226,7 +231,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           series: series(book.snapshots, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 90) : 168) * 3600e3, now),
           capital: { netUsd: live.netCapitalUsd, deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length },
           trades: { settled: t.filter((x) => x.status === "settled").length, pending: t.filter((x) => x.status === "pending").length, proposed: t.filter((x) => x.status === "proposed").length, failed: t.filter((x) => x.status === "failed" || x.status === "cancelled").length },
-          canExecute: false,
+          canExecute: tradingArmed(),
           at: now,
         });
       })

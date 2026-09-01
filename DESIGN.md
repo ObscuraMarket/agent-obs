@@ -1,18 +1,20 @@
 # OBS, Design
 
-Status: v0.2, 2026-09-01. Built and tested. Personas provisioned on the
-gateway. The desk runs in observation mode: live quotes, an empty book, public
-thoughts every cycle, decisions recorded as proposals; the execution stage is
-not built. X account in draft mode until the operator supplies @ObscuraCEX
+Status: v0.3, 2026-09-01. Built and tested. Personas provisioned on the
+gateway. The desk has its own wallet (unfunded) and a complete execution
+stage behind an arming switch: with `OBS_TRADING=off` every decision is a
+proposal on the board; with it on, a decision that passes the rails is
+executed through Obscura from the desk's wallet and settled with its
+transaction. X account in draft mode until the operator supplies @ObscuraCEX
 keys and flips `X_LIVE`. Dashboard API and page ready for Obscura's team to
 integrate ([dashboard/INTEGRATION.md](dashboard/INTEGRATION.md)): thoughts,
-trades, overall PnL, the feed, the reads.
+trades, overall PnL, the wallet, the feed, the reads.
 
-OBS is **Obscura's own agent**: an operator mind and a public voice for
-private, non-custodial routing across centralized and decentralized venues,
-with cashback paid in tokenized stocks on Robinhood Chain. He runs on an
-OpenHermit gateway, keeps his own memory, and speaks only inside boundaries
-enforced in code.
+OBS is **Obscura's own trading agent**: an operator mind that buys and sells
+tokens through Obscura's private routing from a wallet it owns, earns the
+swap-to-earn cashback in tokenized stocks on Robinhood Chain on every swap,
+and narrates all of it in public. He runs on an OpenHermit gateway, keeps his
+own memory, and acts only inside rails enforced in code.
 
 ---
 
@@ -156,11 +158,36 @@ by design. The key is loaded by nothing until the execution stage exists.
 Bitcoin, Solana and other non-EVM legs would need their own keys and are a
 separate decision.
 
-The execution stage, when it is built, needs: the signer above sending
-exactly the quoted deposit from the from-chain, the same address as the
-receiving address on the to-chain, a status poller that turns `pending` into
-`settled` with the transaction, and rails (per-swap cap, daily cap, one open
-order at a time, a kill switch). That is a design document of its own.
+**The execution stage** (`desk/assets.ts`, `desk/rails.ts`,
+`desk/signer.ts`, `desk/execute.ts`). The model decides what; code decides
+whether. A swap decision names two registry assets (`ETH@robinhood`,
+`USDG@robinhood`, `USDC@erc20`, `ETH@eth`, `NVDA@robinhood`; nothing
+inferred, nothing outside the table) and an amount. In order, the rails
+refuse: trading off; same asset; either side off the allowlist; a from-leg
+Obscura will not accept or a to-leg it will not pay out; an unpriced
+from-leg; more than `OBS_MAX_SWAP_USD` (default $25); more than
+`OBS_DAILY_SWAP_USD` in the trailing 24h (default $100); an order already
+open (`OBS_MAX_OPEN_ORDERS`, default 1); a balance short of the amount; a
+send that would breach the gas reserve. Then: quote the pair the way the app
+does, take the best allowed partner, respect its min and max, create the
+order with the desk's own wallet as the receiving address, read the order
+back, check the deposit address looks like an address on the from-chain and
+the expected amount matches, and only then sign one transfer for exactly
+that amount. The trade is recorded `pending` with the deposit transaction
+and Obscura's public order page. Every later cycle polls open orders and
+writes `settled` (with the payout transaction) or `failed`. A refusal at any
+step before the deposit costs nothing and is recorded as a public hold with
+the reason.
+
+Arming is `OBS_TRADING=on` in the operator's `.env` with the wallet key
+present; the dashboard shows the state. With a wallet, equity is read from
+the chain (gas and fees included), not derived from the ledgers.
+
+**The earning leg.** Every swap through Obscura accrues cashback in
+tokenized stocks on Robinhood Chain, scaled by 30-day volume and boosted by
+holding $OBS. The desk reads its own `/rewards/{wallet}` stats every cycle
+and the payouts land in the same wallet, where the book counts them. The
+persona is told plainly that the rebate is not a reason to trade.
 
 ---
 
@@ -194,14 +221,13 @@ drafts with a filter once it has. Fields are only added, never renamed.
 
 ---
 
-## 6. What v0.2 deliberately does not do
+## 6. What v0.3 deliberately does not do
 
-- No capital and no signing. The wallet exists and is read; its key is loaded
-  by nothing. The capital ledger is empty and only the operator's tooling
-  writes to it. Funding the wallet and recording the deposit are two
-  deliberate operator steps, and execution is a third.
-- No execution through Obscura. The read paths are used every cycle; order
-  creation is gated in code and nothing calls it. A decision is a proposal.
+- No trading until armed. The wallet is unfunded, the capital ledger is
+  empty, `OBS_TRADING` is off. Funding, recording the deposit, and arming are
+  three separate operator steps, in that order.
+- No non-EVM legs. Bitcoin, Solana, Monero and the rest are refused by the
+  registry; each needs its own key and its own decision.
 - No X posting until the operator flips `X_LIVE`.
 
 ---
@@ -212,11 +238,11 @@ drafts with a filter once it has. Fields are only added, never renamed.
   `com.obscura.obsdesk`, host `server.ts` behind an Obscura subdomain,
   restrict `OBS_DASHBOARD_ORIGINS`, embed the page. People see thoughts and
   an empty book from day one, honestly labelled.
-- **O3, capital and the execution stage.** The wallet doctrine, the first
-  deposit recorded in `obs-capital.jsonl`, then the execution stage from
-  section 3b with a probe-sized first swap and the status poller writing
-  `settled` rows with transactions. `OBS_TRADING=on` is the last step, not
-  the first.
+- **O3, first capital, then arm.** Back up the key, fund the wallet with a
+  small amount plus gas, `npm run capital -- deposit`, watch a few cycles
+  propose, then `OBS_TRADING=on` with the default rails ($25 a swap, $100 a
+  day, one open order). Raise the rails only after settled swaps have shown
+  up on the board with their transactions.
 - **O4, the account goes live.** Supply the OAuth 1.0a keys for @ObscuraCEX,
   read a day of drafts on the dashboard, set `X_LIVE=true`.
 - **O5, the memory repo.** Create a private `obscura-memory` repo, set

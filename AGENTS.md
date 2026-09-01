@@ -68,8 +68,16 @@ never pasted into a chat or an issue, and only `scripts/wallet.mjs export
 and nothing else. The desk's capital ledger (`agent/data/obs-capital.jsonl`)
 is written by `npm run capital`, never by the model and never by engineering
 on the operator's behalf; a deposit that is not in the ledger is not on the
-book. Order creation at Obscura is gated in code (`OBS_TRADING`) and no loop
-calls it.
+book.
+
+**Arming is the operator's act alone.** `OBS_TRADING=on` is set by the
+operator in their `.env`, never by engineering and never by the model. The
+rails (`OBS_MAX_SWAP_USD`, `OBS_DAILY_SWAP_USD`, `OBS_MAX_OPEN_ORDERS`,
+`OBS_GAS_RESERVE_ETH`, `OBS_TRADE_ASSETS`) are lowered freely and raised
+only after settled swaps have appeared on the board with their transactions.
+An asset enters `OBS_TRADE_ASSETS` only if it is already in the registry
+(`agent/src/desk/assets.ts`) with a verified contract and decimals; adding
+one there is an engineering change with a test, not an env edit.
 
 If Obscura hands OBS a treasury, it gets a treasury doctrine before a single
 key is created: an agent-custodied receive-only treasury, a separate

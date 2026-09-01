@@ -47,19 +47,26 @@ export function formatSupply(raw: bigint, decimals: number): string {
   return whole.toLocaleString("en-US");
 }
 
+// The public RPC in front of Robinhood Chain rate-limits bursts, so calls to
+// it are made one at a time by the callers below and each one retries once
+// after a short pause. Null still means "not read this cycle", never zero.
 async function rpc(url: string, method: string, params: unknown[]): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "User-Agent": UA },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const j = (await res.json()) as { result?: string };
-    return typeof j.result === "string" ? j.result : null;
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", "User-Agent": UA },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const j = (await res.json()) as { result?: string };
+      if (typeof j.result === "string") return j.result;
+    } catch {
+      /* fall through to the retry */
+    }
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
   }
+  return null;
 }
 const ethCall = (to: string, data: string) => rpc(RPC_URL, "eth_call", [{ to, data }, "latest"]);
 
@@ -94,18 +101,60 @@ export interface WalletRead {
   ethMainnet: number | null;
   usdg: number | null;
   obs: number | null;
+  usdc: number | null;
+  usdt: number | null;
+  nvda: number | null;
   /** Obscura's own cashback stats for this wallet (GET /rewards/{wallet}). */
   rewards: { swaps: number; volumeUsd: number; rewardsUsd: number; paidUsd: number } | null;
+}
+
+async function mainnetTokenBalance(token: string, holder: string, decimals: number): Promise<number | null> {
+  const r = await rpc(ETH_RPC_URL, "eth_call", [{ to: token, data: balanceOfData(holder) }, "latest"]);
+  const v = r ? decodeUint(r) : null;
+  return v == null ? null : fromRaw(v, decimals);
+}
+
+/** PURE: balances keyed the way the rails and the book read them (SYMBOL@network and SYMBOL).
+ *  `unread` names the balances the chain did not answer for this cycle; they are absent, not zero. */
+export function walletBalances(w: WalletRead): { byKey: Record<string, number>; bySymbol: Record<string, number>; unread: string[] } {
+  const pairs: Array<[string, string, number | null]> = [
+    ["ETH@eth", "ETH", w.ethMainnet],
+    ["ETH@robinhood", "ETH", w.ethRobinhood],
+    ["USDC@erc20", "USDC", w.usdc],
+    ["USDT@erc20", "USDT", w.usdt],
+    ["USDG@robinhood", "USDG", w.usdg],
+    ["NVDA@robinhood", "NVDA", w.nvda],
+    ["OBS@robinhood", "OBS", w.obs],
+  ];
+  const byKey: Record<string, number> = {};
+  const bySymbol: Record<string, number> = {};
+  const unread: string[] = [];
+  for (const [k, s, v] of pairs) {
+    if (v == null) {
+      unread.push(k);
+      continue;
+    }
+    byKey[k] = v;
+    bySymbol[s] = (bySymbol[s] ?? 0) + v;
+  }
+  return { byKey, bySymbol, unread };
 }
 
 /** The desk's wallet as the chains and Obscura report it. Null when no wallet is configured. */
 export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead | null> {
   if (!address) return null;
-  const [ethRobinhood, ethMainnet, usdg, obs, rewards] = await Promise.all([
-    nativeBalance(RPC_URL, address),
+  // Robinhood Chain reads one at a time (rate-limited RPC); the rest in parallel.
+  const mainnetP = Promise.all([
     nativeBalance(ETH_RPC_URL, address),
-    tokenBalance(USDG_CONTRACT, address, 6),
-    tokenBalance(OBS_CONTRACT, address, 18),
+    mainnetTokenBalance("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", address, 6),
+    mainnetTokenBalance("0xdAC17F958D2ee523a2206206994597C13D831ec7", address, 6),
+  ]);
+  const ethRobinhood = await nativeBalance(RPC_URL, address);
+  const usdg = await tokenBalance(USDG_CONTRACT, address, 6);
+  const obs = await tokenBalance(OBS_CONTRACT, address, 18);
+  const nvda = await tokenBalance("0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec", address, 18);
+  const [[ethMainnet, usdc, usdt], rewards] = await Promise.all([
+    mainnetP,
     (async () => {
       try {
         const res = await fetch(`${API_URL}/rewards/${address}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
@@ -117,7 +166,7 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
       }
     })(),
   ]);
-  return { address, ethRobinhood, ethMainnet, usdg, obs, rewards };
+  return { address, ethRobinhood, ethMainnet, usdg, obs, usdc, usdt, nvda, rewards };
 }
 
 export interface TokenRead {
@@ -132,7 +181,13 @@ export interface TokenRead {
 
 /** The $OBS token as the chain reports it right now. */
 export async function obsToken(): Promise<TokenRead> {
-  const [n, s, d, t, holders] = await Promise.all([ethCall(OBS_CONTRACT, SEL.name), ethCall(OBS_CONTRACT, SEL.symbol), ethCall(OBS_CONTRACT, SEL.decimals), ethCall(OBS_CONTRACT, SEL.totalSupply), explorerHolders()]);
+  // One Robinhood RPC call at a time; the explorer is a different host.
+  const holdersP = explorerHolders();
+  const n = await ethCall(OBS_CONTRACT, SEL.name);
+  const s = await ethCall(OBS_CONTRACT, SEL.symbol);
+  const d = await ethCall(OBS_CONTRACT, SEL.decimals);
+  const t = await ethCall(OBS_CONTRACT, SEL.totalSupply);
+  const holders = await holdersP;
   const decimals = d ? Number(decodeUint(d) ?? -1n) : null;
   const supply = t ? decodeUint(t) : null;
   return {
@@ -254,7 +309,11 @@ export interface Reads {
 }
 
 export async function liveReads(): Promise<Reads> {
-  const [token, p, up, api, wallet] = await Promise.all([obsToken(), prices(), siteUp(), apiUp(), walletRead()]);
+  const othersP = Promise.all([prices(), siteUp(), apiUp()]);
+  // The two Robinhood-heavy reads run back to back, not on top of each other.
+  const token = await obsToken();
+  const wallet = await walletRead();
+  const [p, up, api] = await othersP;
   return { at: Date.now(), token, prices: p, siteUp: up, apiUp: api, wallet };
 }
 
@@ -263,7 +322,8 @@ const fmt = (v: number | null, digits: number) => (v == null ? "not read" : v.to
 /** PURE: the wallet lines as the prompt and the dashboard show them. */
 export function walletLines(w: WalletRead | null): string[] {
   if (!w) return [];
-  const out = [`- The desk's wallet (on chain): ${fmt(w.ethRobinhood, 6)} ETH on Robinhood Chain, ${fmt(w.ethMainnet, 6)} ETH on Ethereum, ${fmt(w.usdg, 2)} USDG, ${fmt(w.obs, 2)} OBS.`];
+  const extras = [w.usdc ? `${fmt(w.usdc, 2)} USDC` : "", w.usdt ? `${fmt(w.usdt, 2)} USDT` : "", w.nvda ? `${fmt(w.nvda, 6)} NVDA` : ""].filter(Boolean);
+  const out = [`- The desk's wallet (on chain): ${fmt(w.ethRobinhood, 6)} ETH on Robinhood Chain, ${fmt(w.ethMainnet, 6)} ETH on Ethereum, ${fmt(w.usdg, 2)} USDG, ${fmt(w.obs, 2)} OBS${extras.length ? ", " + extras.join(", ") : ""}.`];
   if (w.rewards) out.push(`- Obscura cashback for this wallet: ${w.rewards.swaps} swaps, $${w.rewards.volumeUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} volume, $${w.rewards.rewardsUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} earned, $${w.rewards.paidUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} paid out.`);
   return out;
 }

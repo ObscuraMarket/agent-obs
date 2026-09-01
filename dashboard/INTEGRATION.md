@@ -106,8 +106,11 @@ reader can check the thinking against it. `decision.kind` is `hold` or
 }
 ```
 One row per trade, latest status. `status` is one of `proposed`, `pending`,
-`settled`, `failed`, `cancelled`. The ledger never holds a deposit or payout
-address, so nothing is redacted here.
+`settled`, `failed`, `cancelled`. Executed swaps also carry `depositTx` and
+`depositTxUrl` (the desk's transfer into the route), `trackUrl` (Obscura's
+public order page, `https://obscura.market/exchange/{id}`), and once settled
+`settlementTx` / `explorerUrl` (the payout). The ledger never holds a deposit
+or payout address, so nothing is redacted here.
 
 ### `GET /api/obs/pnl?hours=168`
 ```json

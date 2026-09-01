@@ -129,9 +129,31 @@ Three append-only ledgers in `agent/data/` are the whole book:
 `obs-thoughts.jsonl` holds his public reasoning per cycle, alongside the
 measured observation he was handed, so anyone can check the thinking.
 
-Execution is not built. A swap decision becomes a `proposed` row that the
-dashboard shows as exactly that. `OBS_TRADING` stays `off`; arming it is a
-design step described in [DESIGN.md](DESIGN.md), not an env change.
+## Trading
+
+With `OBS_TRADING=off` (the default) a swap decision becomes a `proposed`
+row that the dashboard shows as exactly that. With `OBS_TRADING=on` and the
+wallet key present, a decision that passes the rails is executed through
+Obscura from the desk's own wallet: quote, best allowed partner, order with
+the desk's address as the receiver, deposit address checked, one signed
+transfer for exactly the quoted amount, then polled until Obscura reports it
+settled, with both transactions on the board.
+
+The rails live in `.env` and refuse before anything is sent:
+
+```
+OBS_MAX_SWAP_USD=25          dollars per swap
+OBS_DAILY_SWAP_USD=100       dollars per trailing 24h
+OBS_MAX_OPEN_ORDERS=1        orders in flight at once
+OBS_GAS_RESERVE_ETH=0.002    never spent
+OBS_ALLOWED_PARTNERS=        blank = any route Obscura quotes
+OBS_TRADE_ASSETS=ETH@eth,USDC@erc20,ETH@robinhood,USDG@robinhood,NVDA@robinhood
+```
+
+Arming order: back up the key, fund the wallet (plus gas), record the deposit
+with `npm run capital`, read a few cycles of proposals, then flip
+`OBS_TRADING=on`. Every swap also accrues Obscura's cashback in tokenized
+stocks to the same wallet, which is the desk's earning leg.
 
 ## His memory
 

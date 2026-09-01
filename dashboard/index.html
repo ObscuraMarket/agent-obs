@@ -273,7 +273,7 @@
       if (!t.items.length) { el("trades").innerHTML = "<div class='none'>No trades.</div>"; return; }
       el("trades").innerHTML = t.items.map(function (x) {
         var cls = x.status === "settled" ? "lime" : x.status === "pending" || x.status === "proposed" ? "amber" : "red";
-        var tx = x.explorerUrl ? " <a href='" + esc(x.explorerUrl) + "' target='_blank' rel='noopener'>tx</a>" : "";
+        var tx = (x.trackUrl ? " · <a href='" + esc(x.trackUrl) + "' target='_blank' rel='noopener'>order</a>" : "") + (x.depositTxUrl ? " · <a href='" + esc(x.depositTxUrl) + "' target='_blank' rel='noopener'>deposit</a>" : "") + (x.explorerUrl ? " · <a href='" + esc(x.explorerUrl) + "' target='_blank' rel='noopener'>payout</a>" : "");
         return "<div class='row'><div class='top'><span class='name'>" + qty(x.from.amount) + " " + esc(x.from.asset) + " &rarr; " + esc(x.to.asset) + "</span><span class='badge " + cls + "'>" + esc(x.status) + "</span></div><div class='top' style='margin:0'><span class='when'>" + when(x.at) + (x.partner ? " &middot; " + esc(x.partner) : "") + tx + "</span><span class='amt" + (x.to.amount ? "" : " plain") + " num'>" + (x.to.amount ? qty(x.to.amount) + " " + esc(x.to.asset) : (x.from.usd != null ? usd(x.from.usd) : "")) + "</span></div></div>";
       }).join("");
     }

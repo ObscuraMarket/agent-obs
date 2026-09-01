@@ -39,6 +39,8 @@ test("the reply parses into public thoughts, a decision, and a private note", ()
   assert.equal(r.note, "watch for the first deposit.");
   const s = parseThoughtReply("THOUGHT: quote looks fine.\nDECISION: swap 0.1 ETH -> USDG\nREASON: taking a little off.\nNOTE: check the fill.");
   assert.deepEqual(s.decision, { kind: "propose-swap", amount: 0.1, from: "ETH", to: "USDG", reason: "taking a little off." });
+  const n = parseThoughtReply("DECISION: swap 0.005 eth@Robinhood -> usdg@robinhood\nREASON: probe.");
+  assert.deepEqual(n.decision, { kind: "propose-swap", amount: 0.005, from: "ETH@robinhood", to: "USDG@robinhood", reason: "probe." });
 });
 
 test("public thoughts pass the same boundaries as a tweet", () => {
