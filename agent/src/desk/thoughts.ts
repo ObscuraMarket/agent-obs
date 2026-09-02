@@ -100,7 +100,7 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     "REASON: <one sentence>",
     "NOTE: <one private sentence to yourself, fed back next cycle>",
     "",
-    `For a swap the DECISION line is: DECISION: swap <amount> <FROM> -> <TO>, where an asset is a symbol with an optional network, for example ETH@robinhood or USDG@robinhood or USDC@erc20. Assets you may name: ${assets.join(", ")}. A from-leg on Ethereum (@eth, @erc20) pays mainnet gas, real money at this desk's size, and needs ETH there to pay it; a from-leg on Robinhood Chain costs almost nothing to send.`,
+    `For a swap the DECISION line is: DECISION: swap <amount> <FROM> -> <TO>, where an asset is a symbol with an optional network, for example ETH@robinhood or USDG@robinhood or USDC@erc20. Assets you may name: ${assets.join(", ")}. Both legs of every swap stay on Robinhood Chain; the rails refuse anything else, in public.`,
   ]
     .filter((s) => s !== undefined)
     .join("\n");

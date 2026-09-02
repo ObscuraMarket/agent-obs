@@ -136,7 +136,7 @@ export function parseWatchlist(spec: string): WatchItem[] {
   return out;
 }
 
-export const DEFAULT_WATCHLIST = "eth/eth->usdc/erc20:0.1,btc/btc->eth/eth:0.01,eth/robinhood->nvda/robinhood:0.05,nvda/robinhood->usdc/erc20:0.2,eth/robinhood->usdc/erc20:0.05,eth/eth->wbtc/erc20:0.1,usdc/erc20->link/erc20:50,usdc/erc20->uni/erc20:50,usdc/erc20->aave/erc20:50,usdc/erc20->dai/erc20:50";
+export const DEFAULT_WATCHLIST = "eth/robinhood->nvda/robinhood:0.05,nvda/robinhood->eth/robinhood:0.2";
 
 /** The best route for each watched pair right now, as the desk observes it. */
 export async function quoteWatchlist(now = Date.now(), spec = process.env.OBS_QUOTE_WATCHLIST ?? DEFAULT_WATCHLIST): Promise<QuoteRead[]> {

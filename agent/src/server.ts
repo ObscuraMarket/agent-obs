@@ -120,6 +120,8 @@ export interface RailsSummary {
   openOrders: number;
   allowedAssets: string[];
   allowedPartners: string[] | null;
+  /** Chain keys both legs must be on; the mandate is Robinhood Chain only. */
+  allowedChains: string[];
 }
 
 /** PURE: the rails as the dashboard shows them: each cap next to what is used. */
@@ -135,6 +137,7 @@ export function railsSummary(rails: Rails, trades: Trade[], now: number): RailsS
     openOrders: t.filter((x) => x.status === "pending").length,
     allowedAssets: [...rails.allowedAssets],
     allowedPartners: rails.allowedPartners ? [...rails.allowedPartners] : null,
+    allowedChains: [...rails.allowedChains],
   };
 }
 

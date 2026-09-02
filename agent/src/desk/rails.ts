@@ -19,16 +19,20 @@ export interface Rails {
   allowedPartners: Set<string> | null;
   /** SYMBOL@network keys the desk may trade. */
   allowedAssets: Set<string>;
+  /** Chain keys both legs of a swap must sit on. The mandate: Robinhood Chain only. */
+  allowedChains: Set<string>;
   /** Refuse a route whose output is below this fraction of the best quote seen. */
   minFillRatio: number;
 }
 
-// The mandate: high-volume majors, dollar stables, and the tokenized stocks
-// Obscura routes. Ethereum legs pay mainnet gas, which the rails price in
-// through the gas reserve; the operator narrows this with OBS_TRADE_ASSETS.
-// USDG@robinhood stays in the registry but off this list: probed 2026-09-02,
-// Obscura quoted no USDG leg in any direction. Put it back when it does.
-export const DEFAULT_TRADE_ASSETS = "ETH@eth,WBTC@erc20,USDC@erc20,USDT@erc20,DAI@erc20,LINK@erc20,UNI@erc20,AAVE@erc20,ETH@robinhood,NVDA@robinhood";
+// The mandate: this desk trades on Robinhood Chain only, in the majors,
+// the dollar stables and the tokenized stocks Obscura routes there. Today
+// Obscura quotes ETH and NVDA on that network; USDG@robinhood stays in the
+// registry but off this list (probed 2026-09-02, no USDG leg quoted in any
+// direction) and goes back on when it does. The Ethereum entries in the
+// registry are read and marked, never traded: the chain rail refuses them.
+export const DEFAULT_TRADE_ASSETS = "ETH@robinhood,NVDA@robinhood";
+export const DEFAULT_TRADE_CHAINS = "robinhood";
 
 export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
   const partners = (env.OBS_ALLOWED_PARTNERS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
@@ -40,6 +44,7 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     gasReserveEth: Number(env.OBS_GAS_RESERVE_ETH ?? 0.002),
     allowedPartners: partners.length ? new Set(partners) : null,
     allowedAssets: new Set((env.OBS_TRADE_ASSETS ?? DEFAULT_TRADE_ASSETS).split(",").map((s) => s.trim()).filter(Boolean)),
+    allowedChains: new Set((env.OBS_TRADE_CHAINS ?? DEFAULT_TRADE_CHAINS).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)),
     minFillRatio: Number(env.OBS_MIN_FILL_RATIO ?? 0.97),
   };
 }
@@ -76,6 +81,7 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   if (!r.tradingOn) return { ok: false, reason: "trading is off (OBS_TRADING)" };
   if (!(i.amount > 0)) return { ok: false, reason: "amount must be positive" };
   if (assetKey(i.from) === assetKey(i.to)) return { ok: false, reason: "from and to are the same asset" };
+  for (const leg of [i.from, i.to]) if (!r.allowedChains.has(leg.chain)) return { ok: false, reason: `${assetKey(leg)} is on ${leg.chain}; this desk trades on Robinhood Chain only` };
   if (!r.allowedAssets.has(assetKey(i.from))) return { ok: false, reason: `${assetKey(i.from)} is not on the trade allowlist` };
   if (!r.allowedAssets.has(assetKey(i.to))) return { ok: false, reason: `${assetKey(i.to)} is not on the trade allowlist` };
   if (!i.from.deposit) return { ok: false, reason: `Obscura does not accept ${assetKey(i.from)} as a deposit` };

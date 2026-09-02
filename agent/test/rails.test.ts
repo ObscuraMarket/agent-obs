@@ -22,8 +22,9 @@ test("the registry resolves symbols, defaults networks, and refuses strangers", 
   assert.equal(resolveAsset("WBTC@erc20")!.decimals, 8);
   for (const s of ["LINK", "UNI", "AAVE", "DAI"]) assert.equal(assetKey(resolveAsset(s)!), `${s}@erc20`);
   const rails = railsFromEnv({} as NodeJS.ProcessEnv);
-  for (const k of ["WBTC@erc20", "LINK@erc20", "DAI@erc20", "NVDA@robinhood", "ETH@robinhood"]) assert.ok(rails.allowedAssets.has(k), `${k} on the default allowlist`);
-  assert.ok(!rails.allowedAssets.has("ETH@base"), "withdraw-only assets are not on it");
+  assert.deepEqual([...rails.allowedAssets].sort(), ["ETH@robinhood", "NVDA@robinhood"], "the default allowlist is the Robinhood legs Obscura routes");
+  assert.deepEqual([...rails.allowedChains], ["robinhood"], "the mandate: Robinhood Chain only");
+  for (const k of ["WBTC@erc20", "LINK@erc20", "DAI@erc20", "USDC@erc20", "ETH@eth"]) assert.ok(!rails.allowedAssets.has(k), `${k} is registered and read, never traded`);
   assert.ok(!rails.allowedAssets.has("USDG@robinhood"), "registered but not routable today, so not on the default allowlist");
   assert.ok(resolveAsset("USDG@robinhood"), "still in the registry: held, read, marked");
 });
@@ -33,7 +34,11 @@ test("the rails pass a small, funded, allowlisted swap and refuse everything els
   const no = (i: Partial<Intent>, c: Partial<RailContext> = {}) => (checkRails(intent(i), ctx(c)) as { ok: false; reason: string }).reason;
   assert.match(no({}, { rails: { ...rails, tradingOn: false } }), /trading is off/);
   assert.match(no({ to: ETH }), /same asset/);
-  assert.match(no({ from: resolveAsset("ETH@base")! }, { balances: { "ETH@base": 1 } }), /allowlist/);
+  assert.match(no({ from: resolveAsset("ETH@base")! }, { balances: { "ETH@base": 1 } }), /Robinhood Chain only/);
+  // An Ethereum leg is refused by the chain rail even when the operator allowlisted it.
+  const loose = { ...rails, allowedAssets: new Set([...rails.allowedAssets, "USDC@erc20"]) };
+  assert.match(no({ to: resolveAsset("USDC@erc20")! }, { rails: loose }), /USDC@erc20 is on ethereum; this desk trades on Robinhood Chain only/);
+  assert.match(no({ from: resolveAsset("USDG@robinhood")!, to: resolveAsset("NVDA@robinhood")!, amount: 1 }, { rails: { ...rails, allowedAssets: new Set(["ETH@robinhood"]) } }), /allowlist/);
   assert.match(no({ usd: null }), /unpriced/);
   assert.match(no({ usd: 30 }), /per-swap cap/);
   assert.match(no({}, { sentTodayUsd: 95 }), /daily cap/);

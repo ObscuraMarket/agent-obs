@@ -172,21 +172,22 @@ separate decision.
 **The execution stage** (`desk/assets.ts`, `desk/rails.ts`,
 `desk/signer.ts`, `desk/execute.ts`). The model decides what; code decides
 whether. A swap decision names two registry assets and an amount; nothing
-inferred, nothing outside the table. The table is the desk's mandate, the
-high-volume majors, the dollar stables and the tokenized stocks Obscura
-routes, each verified on chain (symbol, decimals, contract) against
-Obscura's own currency list: on Ethereum `ETH@eth`, `WBTC@erc20`,
-`LINK@erc20`, `UNI@erc20`, `AAVE@erc20`, `USDC@erc20`, `USDT@erc20`,
-`DAI@erc20`; on Robinhood Chain `ETH@robinhood` and `NVDA@robinhood` (the
-one tokenized stock Obscura lists there today; CASHCAT and PIPEDOG are
-listed too and deliberately left out). `USDG@robinhood` is registered and
-read but off the default allowlist: probed 2026-09-02, Obscura quoted no
-USDG leg in any direction, while every ETH and NVDA leg on the Robinhood
-network quoted through Obscura's own pool route. `ETH@base` is
-withdraw-only. The prompt names exactly the allowlisted keys, and tells
-him that an Ethereum from-leg pays mainnet gas. `OBS_TRADE_ASSETS` narrows
-the allowlist; the quote watchlist (`OBS_QUOTE_WATCHLIST`) covers the same
-universe so every cycle sees those markets. In order, the rails
+inferred, nothing outside the table. The mandate is Robinhood Chain only:
+a rail refuses any leg on another chain (`OBS_TRADE_CHAINS`, default
+`robinhood`), in public, before the allowlist is even consulted. On that
+chain the desk trades what Obscura routes there, today `ETH@robinhood` and
+`NVDA@robinhood` (the one tokenized stock Obscura lists on the network;
+CASHCAT and PIPEDOG are listed too and deliberately left out).
+`USDG@robinhood` is registered and read but off the default allowlist:
+probed 2026-09-02, Obscura quoted no USDG leg in any direction, while every
+ETH and NVDA leg on the network quoted through Obscura's own pool route.
+The registry also carries the Ethereum assets Obscura routes (`ETH@eth`,
+`WBTC@erc20`, `LINK@erc20`, `UNI@erc20`, `AAVE@erc20`, `USDC@erc20`,
+`USDT@erc20`, `DAI@erc20`, each verified on chain): they are read and
+marked if ever held, never traded. `ETH@base` is withdraw-only. The prompt
+names exactly the allowlisted keys and states the chain rule;
+`OBS_TRADE_ASSETS` narrows the allowlist; the quote watchlist
+(`OBS_QUOTE_WATCHLIST`) covers the same legs so every cycle sees them. In order, the rails
 refuse: trading off; same asset; either side off the allowlist; a from-leg
 Obscura will not accept or a to-leg it will not pay out; an unpriced
 from-leg; more than `OBS_MAX_SWAP_USD` (default $25); more than
