@@ -46,7 +46,8 @@ for (const [agentId, p] of Object.entries(personas)) {
   } else {
     console.log(`agent ${agentId} already exists, updating it`);
   }
-  for (const key of ["identity", "rules", "soul"]) {
+  for (const key of ["identity", "rules", "soul", "knowledge"]) {
+    if (!existsSync(join(ROOT, "personality", p.dir, `${key}.md`))) continue;
     const content = load(p.dir, key);
     if (content.includes("—")) {
       console.log(`  !! EM DASH in ${p.dir}/${key}.md, skipping`);
