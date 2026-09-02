@@ -231,6 +231,11 @@ your static assets and set the API before its script runs, or pass `?api=`:
 render them in your own design. The page's markup is the reference for what
 each field means.
 
+**The real Obscura front end**: `dashboard/angular/` is the Agent page from
+obscuracex.com as a standalone Angular app, wired to this API. Run it next to
+`npm run dashboard` to test the two together; its README covers `?api=`
+overrides and a same-origin proxy. See [angular/README.md](angular/README.md).
+
 ## 3b. Design contract
 
 The page is a dark terminal: near-black canvas, hairline borders, square

@@ -1,0 +1,25 @@
+/* Global base, lifted from the Obscura app so the page renders identically here. */
+* {
+  font-family: Questrial, Roboto, Tahoma, sans-serif;
+}
+
+body {
+  background: #050505;
+  color: white;
+  margin: 0;
+  /* clip, not hidden: hidden turns body into a scroll container, which breaks position: sticky. */
+  overflow-x: clip;
+}
+
+.main-container {
+  max-width: 1200px;
+  margin: auto;
+}
+
+::-webkit-scrollbar-track { background: #f1f1f1; }
+::-webkit-scrollbar-thumb { background: #3b3b3b; }
+::-webkit-scrollbar { width: 5px; }
+
+@media (max-width: 1400px) {
+  .main-container { width: 100%; }
+}

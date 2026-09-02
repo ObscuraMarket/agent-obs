@@ -51,6 +51,8 @@ agent/
 dashboard/
   index.html               the standalone dashboard page (iframe it, or copy it)
   INTEGRATION.md           endpoints, JSON shapes, embed options, what never leaks
+  angular/                 the obscuracex.com Agent page as its own Angular app,
+                           for testing this API against the real front end
 ```
 
 ## Run

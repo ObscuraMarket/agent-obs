@@ -1,0 +1,420 @@
+<!-- Ambient background: the mask spin loop, dimmed so the desk stays readable. -->
+<div class="obs-video-bg" aria-hidden="true">
+  <video
+    class="obs-video-bg__media"
+    autoplay
+    [muted]="true"
+    loop
+    playsinline
+    preload="auto"
+    poster="/assets/images/maskspin-poster.jpg"
+  >
+    <source src="/assets/video/maskspin.mp4" type="video/mp4" />
+  </video>
+</div>
+
+<div class="obs-page">
+
+  <!-- Page head, centred: eyebrow, title, lede, then the status chips beneath. -->
+  <div class="bar">
+    <div class="head">
+      <div class="eyebrow">Obscura Agent</div>
+      <h1>
+        An AI
+        <svg class="bot-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <g class="bot-body">
+            <path d="M12 6V2H8"/>
+            <path d="M2 12h2"/>
+            <path d="M20 12h2"/>
+            <path class="bot-bubble" d="M20 16a2 2 0 0 1-2 2H8.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 4 20.286V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/>
+            <path class="bot-eye bot-eye-l" d="M9 11v2"/>
+            <path class="bot-eye bot-eye-r" d="M15 11v2"/>
+            <circle class="bot-dot bot-dot-0" cx="10" cy="18" r="0.5"/>
+            <circle class="bot-dot bot-dot-1" cx="12" cy="18" r="0.5"/>
+            <circle class="bot-dot bot-dot-2" cx="14" cy="18" r="0.5"/>
+          </g>
+        </svg>
+        trader that thinks out loud.
+      </h1>
+      <p class="lede">OBS is Obscura's own agent: it holds its own wallet, is built to route every swap through private liquidity and earns the same tokenized stock cashback as any trader. Its reasoning is published before each move and its book is marked to market every cycle. Every dollar of realised profit buys $OBS on the open market and is burned for good, with every burn on the explorer. The model decides what to say. Code decides what it can spend.</p>
+    </div>
+    <div class="chips">
+      <div class="chip" [ngClass]="streamPillCls"><i></i><span>{{ streamState }}</span></div>
+      <div class="chip" [class.on]="status?.desk?.canExecute"><i></i><span>{{ status?.desk?.canExecute ? 'Execution on' : 'Execution off' }}</span></div>
+      <ng-template #walletIco>
+        <svg class="wallet-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>
+          <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
+        </svg>
+      </ng-template>
+      <div class="chip wallet-chip" *ngIf="status?.wallet as w">
+        <ng-container *ngTemplateOutlet="walletIco"></ng-container>
+        <a class="num" [href]="w.explorerUrl" target="_blank" rel="noopener">{{ short(w.address) }}</a>
+        <button type="button" class="copy" (click)="copyAddress()" [class.ok]="copied" title="Copy address" aria-label="Copy address">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="9" y="9" width="11" height="11"/><path d="M5 15V5h10"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Market: six house boxes -->
+  <div class="card">
+    <div class="card-head ico-head market-head">
+      <h2>
+        <svg class="btc-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <g class="btc-sway">
+            <g class="btc-base">
+              <path d="M11.767 19.089c4.924.868 6.14-6.025 1.216-6.894"/>
+              <path d="M10.551 19.089L5.86 18.047"/>
+              <path d="M10.551 19.089l-.347 1.97"/>
+              <path d="M12.114 12.195c4.924.869 6.14-6.025 1.215-6.893"/>
+              <path d="M12.114 12.195l-3.94-.694"/>
+              <path d="M13.329 5.301L8.29 4.26"/>
+              <path d="M14.198 5.302l.348-1.97"/>
+              <path d="M7.48 20.364l3.126-17.727"/>
+            </g>
+            <path class="btc-draw" style="animation-delay: 0.06s" pathLength="1" d="M11.767 19.089c4.924.868 6.14-6.025 1.216-6.894"/>
+            <path class="btc-draw" style="animation-delay: 0.12s" pathLength="1" d="M10.551 19.089L5.86 18.047"/>
+            <path class="btc-draw" style="animation-delay: 0.18s" pathLength="1" d="M10.551 19.089l-.347 1.97"/>
+            <path class="btc-draw" style="animation-delay: 0.26s" pathLength="1" d="M12.114 12.195c4.924.869 6.14-6.025 1.215-6.893"/>
+            <path class="btc-draw" style="animation-delay: 0.32s" pathLength="1" d="M12.114 12.195l-3.94-.694"/>
+            <path class="btc-draw" style="animation-delay: 0.4s" pathLength="1" d="M13.329 5.301L8.29 4.26"/>
+            <path class="btc-draw" style="animation-delay: 0.46s" pathLength="1" d="M14.198 5.302l.348-1.97"/>
+            <path class="btc-draw" style="animation-delay: 0.54s" pathLength="1" d="M7.48 20.364l3.126-17.727"/>
+            <circle class="btc-spark" style="animation-delay: 0.28s" cx="12.2" cy="12.2" r="0.9" fill="currentColor" stroke="none"/>
+            <circle class="btc-spark" style="animation-delay: 0.16s" cx="10.6" cy="19.1" r="0.8" fill="currentColor" stroke="none"/>
+            <circle class="btc-spark" style="animation-delay: 0.48s" cx="14.3" cy="5.3" r="0.7" fill="currentColor" stroke="none"/>
+          </g>
+        </svg>
+        Market
+      </h2>
+      <div class="asset-dd">
+        <ng-template #assetIco let-id>
+          <span class="dd-ico">
+            <img *ngIf="id === 'obs'" src="/assets/images/obs-icon.png" alt=""/>
+            <img *ngIf="id === 'usdg'" src="/assets/images/usdg.png" alt=""/>
+            <svg *ngIf="id === 'eth'" viewBox="0 0 256 417" xmlns="http://www.w3.org/2000/svg">
+              <polygon fill="#8a92b2" points="127.9 0 0 212.3 127.9 154.2"/>
+              <polygon fill="#62688f" points="127.9 0 255.9 212.3 127.9 154.2"/>
+              <polygon fill="#62688f" points="0 212.3 127.9 287.9 127.9 154.2"/>
+              <polygon fill="#454a75" points="255.9 212.3 127.9 287.9 127.9 154.2"/>
+              <polygon fill="#8a92b2" points="0 236.6 127.9 416.9 127.9 312.2"/>
+              <polygon fill="#62688f" points="255.9 236.6 127.9 416.9 127.9 312.2"/>
+            </svg>
+            <img *ngIf="id === 'btc'" src="/assets/images/btc-icon.png" alt=""/>
+            <img *ngIf="id === 'bnb'" src="/assets/images/bnb-icon.png" alt=""/>
+            <img *ngIf="id === 'sol'" src="/assets/images/sol-icon.png" alt=""/>
+          </span>
+        </ng-template>
+        <button type="button" class="dd-btn" (click)="assetMenuOpen = !assetMenuOpen">
+          <ng-container *ngTemplateOutlet="assetIco; context: { $implicit: marketAsset }"></ng-container>
+          <span>{{ marketAssetLabel }}</span>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="dd-menu" *ngIf="assetMenuOpen">
+          <button type="button" *ngFor="let a of marketAssets" [class.on]="a.id === marketAsset" (click)="setMarketAsset(a.id)">
+            <ng-container *ngTemplateOutlet="assetIco; context: { $implicit: a.id }"></ng-container>
+            <span>{{ a.label }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="boxes">
+      <div class="box" *ngFor="let c of stats">
+        <div class="lbl">{{ c.lbl }}</div>
+        <div class="val num" [ngClass]="c.valCls || ''">{{ c.val }}</div>
+        <div class="sub num" *ngIf="c.sub" [ngClass]="c.subCls || ''">{{ c.sub }}</div>
+      </div>
+      <div class="none" *ngIf="!stats.length">Loading.</div>
+    </div>
+  </div>
+
+  <!-- Live trades ticker, between Market and Performance -->
+  <div class="ticker">
+    <div class="live" [class.off]="streamState !== 'live'"><i></i><h2>Live trades</h2></div>
+    <div class="track-wrap">
+      <div class="track" [class.roll]="tickerRoll">
+        <span class="tchip" *ngIf="!ticker.length"><span class="mutedtx">no trades yet · the desk is observing</span></span>
+        <ng-container *ngFor="let copy of (tickerRoll ? [0, 1] : [0])">
+          <span class="tchip" *ngFor="let c of ticker">
+            <b [ngClass]="c.sideCls">{{ c.side }}</b>
+            <span>{{ c.asset }}</span>
+            <span class="num">{{ c.amt }}</span>
+            <span class="st">{{ c.status }}</span>
+          </span>
+        </ng-container>
+      </div>
+    </div>
+  </div>
+
+  <!-- Performance full width, wallet and rails side by side below -->
+  <div class="card block">
+    <ng-template #chartIco>
+      <svg class="chart-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path class="bar bar-0" d="M3 13.125C3 12.5037 3.50368 12 4.125 12H6.375C6.99632 12 7.5 12.5037 7.5 13.125V19.875C7.5 20.4963 6.99632 21 6.375 21H4.125C3.50368 21 3 20.4963 3 19.875V13.125Z"/>
+        <path class="bar bar-1" d="M9.75 8.625C9.75 8.00368 10.2537 7.5 10.875 7.5H13.125C13.7463 7.5 14.25 8.00368 14.25 8.625V19.875C14.25 20.4963 13.7463 21 13.125 21H10.875C10.2537 21 9.75 20.4963 9.75 19.875V8.625Z"/>
+        <path class="bar bar-2" d="M16.5 4.125C16.5 3.50368 17.0037 3 17.625 3H19.875C20.4963 3 21 3.50368 21 4.125V19.875C21 20.4963 20.4963 21 19.875 21H17.625C17.0037 21 16.5 20.4963 16.5 19.875V4.125Z"/>
+      </svg>
+    </ng-template>
+    <div class="card-head ico-head chart-head">
+      <h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Performance</h2>
+      <span>{{ chartCap }}</span>
+    </div>
+      <div class="chart-top">
+        <div class="big num" [ngClass]="chartValCls">{{ chartVal }}<small class="num" [ngClass]="chartChgCls">{{ chartChg }}</small></div>
+        <div class="segs">
+          <div class="seg">
+            <button type="button" [class.on]="chartSeries === 'equity'" (click)="setSeries('equity')">Equity</button>
+            <button type="button" [class.on]="chartSeries === 'pnl'" (click)="setSeries('pnl')">PnL</button>
+            <button type="button" [class.on]="chartSeries === 'obs'" (click)="setSeries('obs')">$OBS</button>
+          </div>
+          <div class="seg">
+            <button type="button" [class.on]="chartHours === 24" (click)="setRange(24)">24H</button>
+            <button type="button" [class.on]="chartHours === 168" (click)="setRange(168)">7D</button>
+            <button type="button" [class.on]="chartHours === 720" (click)="setRange(720)">30D</button>
+            <button type="button" [class.on]="chartHours === 8760" (click)="setRange(8760)">ALL</button>
+          </div>
+        </div>
+      </div>
+      <div class="chart-stats" *ngIf="chartHigh">
+        <span class="cs"><span class="k">High:</span><span class="num up">{{ chartHigh }}</span></span>
+        <span class="cs"><span class="k">Low:</span><span class="num amber">{{ chartLow }}</span></span>
+        <span class="cs"><span class="k">Change:</span><span class="num" [ngClass]="chartRangeCls">{{ chartRangeChg }}</span></span>
+      </div>
+      <div class="chart">
+        <canvas #chartCanvas></canvas>
+      </div>
+  </div>
+
+  <div class="cols side-cols">
+      <div class="card">
+        <div class="card-head ico-head wallet-head"><h2><ng-container *ngTemplateOutlet="walletIco"></ng-container>Wallet</h2></div>
+        <ul class="kv">
+          <li class="none" *ngIf="!walletRows.length">No wallet yet.</li>
+          <li *ngFor="let r of walletRows">
+            <span class="k top-tags">
+              <span class="t-ico" *ngIf="r.icon">
+                <svg *ngIf="r.icon === 'eth'" viewBox="0 0 256 417" xmlns="http://www.w3.org/2000/svg">
+                  <polygon fill="#8a92b2" points="127.9 0 0 212.3 127.9 154.2"/>
+                  <polygon fill="#62688f" points="127.9 0 255.9 212.3 127.9 154.2"/>
+                  <polygon fill="#62688f" points="0 212.3 127.9 287.9 127.9 154.2"/>
+                  <polygon fill="#454a75" points="255.9 212.3 127.9 287.9 127.9 154.2"/>
+                  <polygon fill="#8a92b2" points="0 236.6 127.9 416.9 127.9 312.2"/>
+                  <polygon fill="#62688f" points="255.9 236.6 127.9 416.9 127.9 312.2"/>
+                </svg>
+                <img *ngIf="r.icon === 'obs'" src="/assets/images/obs-icon.png" alt=""/>
+                <img *ngIf="r.icon === 'usdg'" src="/assets/images/usdg.png" alt=""/>
+              </span>
+              <span>{{ r.k }}</span>
+            </span>
+            <span class="v num">{{ r.v }}</span>
+          </li>
+        </ul>
+        <a class="cta" [href]="status?.wallet?.explorerUrl || 'https://obscura.market'" target="_blank" rel="noopener">View on explorer</a>
+      </div>
+      <div class="card">
+        <div class="card-head ico-head rails-head">
+          <h2>
+            <svg class="boxes-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <g class="bx bx-2">
+                <path d="M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z"/>
+                <path d="m7 16.5-4.74-2.85"/>
+                <path d="m7 16.5 5-3"/>
+                <path d="M7 16.5v5.17"/>
+              </g>
+              <g class="bx bx-1">
+                <path d="M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5l-5 3Z"/>
+                <path d="m17 16.5-5-3"/>
+                <path d="m17 16.5 4.74-2.85"/>
+                <path d="M17 16.5v5.17"/>
+              </g>
+              <g class="bx bx-0">
+                <path d="M7.97 4.42A2 2 0 0 0 7 6.13v4.37l5 3 5-3V6.13a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0l-3 1.8Z"/>
+                <path d="M12 8 7.26 5.15"/>
+                <path d="m12 8 4.74-2.85"/>
+                <path d="M12 13.5V8"/>
+              </g>
+            </svg>
+            Rails
+          </h2>
+        </div>
+        <div class="none" *ngIf="!railGauges.length">Rails not reported.</div>
+        <div class="rail" *ngFor="let g of railGauges">
+          <div class="t"><span>{{ g.label }}</span><b class="num">{{ g.used }}</b></div>
+          <div class="blocks"><i *ngFor="let b of g.blocks" [ngClass]="b"></i></div>
+        </div>
+        <ul class="kv rail-kv" *ngIf="railKv.length">
+          <li *ngFor="let r of railKv"><span class="k">{{ r.k }}</span><span class="v num">{{ r.v }}</span></li>
+        </ul>
+      </div>
+  </div>
+
+  <!-- Tokens in, PnL out: the stepped marquee before the terminal. -->
+  <div class="marquee">
+    <div class="marquee-box">
+    <div class="m-info">
+      <button type="button" class="m-info-btn" aria-label="About this strip" aria-describedby="m-info-tip">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 16v-4m0-4h.01"/>
+          </g>
+        </svg>
+      </button>
+      <div class="m-info-tip" id="m-info-tip" role="tooltip">
+        Visual reference only. This strip does not show the agent's real trades. Live activity is in Live Trades, Positions and the Terminal below.
+      </div>
+    </div>
+    <div class="marquee-viewport" aria-hidden="true">
+      <div class="marquee-track" [class.stepping]="marqueeStepping">
+        <div class="m-slot" *ngFor="let it of marqueeItems">
+          <svg *ngIf="it.kind === 'eth'" class="m-eth" viewBox="0 0 256 417" xmlns="http://www.w3.org/2000/svg">
+            <polygon fill="#8a92b2" points="127.9 0 0 212.3 127.9 154.2"/>
+            <polygon fill="#62688f" points="127.9 0 255.9 212.3 127.9 154.2"/>
+            <polygon fill="#62688f" points="0 212.3 127.9 287.9 127.9 154.2"/>
+            <polygon fill="#454a75" points="255.9 212.3 127.9 287.9 127.9 154.2"/>
+            <polygon fill="#8a92b2" points="0 236.6 127.9 416.9 127.9 312.2"/>
+            <polygon fill="#62688f" points="255.9 236.6 127.9 416.9 127.9 312.2"/>
+          </svg>
+          <img *ngIf="it.kind === 'usdg'" class="m-coin" src="/assets/images/usdg.png" alt=""/>
+          <img *ngIf="it.kind === 'obs'" class="m-coin" src="/assets/images/obs-icon.png" alt=""/>
+          <img *ngIf="it.kind === 'stock'" class="m-coin m-stock" [src]="it.src" alt=""/>
+          <span *ngIf="it.kind === 'pnl'" class="m-pnl num">{{ it.value }}</span>
+        </div>
+      </div>
+      <div class="marquee-center">
+        <img src="/assets/logo.png" alt="" />
+      </div>
+    </div>
+    </div>
+  </div>
+
+  <!-- The terminal -->
+  <div class="card block">
+    <div class="card-head ico-head term-head">
+      <h2>
+        <svg class="term-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <polyline points="4 17 10 11 4 5"/>
+          <line class="cursor" x1="12" y1="19" x2="20" y2="19"/>
+        </svg>
+        Terminal
+      </h2>
+    </div>
+    <div class="term" #termEl></div>
+  </div>
+
+  <!-- Desk: six house boxes -->
+  <div class="card block">
+    <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Desk</h2><span>{{ (status?.desk?.lastThoughtAt ? 'last cycle ' + ago(status?.desk?.lastThoughtAt) : '') | titlecase }}</span></div>
+    <div class="boxes">
+      <div class="box" *ngFor="let c of portfolio">
+        <div class="lbl">{{ c.lbl }}</div>
+        <div class="val num" [ngClass]="c.valCls || ''">{{ c.val }}</div>
+        <div class="sub num" *ngIf="c.sub" [ngClass]="c.subCls || ''">{{ c.sub }}</div>
+      </div>
+      <div class="none" *ngIf="!portfolio.length">Loading.</div>
+    </div>
+  </div>
+
+  <!-- Positions table -->
+  <div class="card block">
+    <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Positions</h2><span>{{ posSummary | titlecase }}</span></div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Asset</th><th class="r">Size</th><th class="r">Price</th><th class="r">Value</th><th class="r">Avg cost</th><th class="r">Unrealized</th><th class="r">Realized</th><th>Share</th></tr>
+        </thead>
+        <tbody>
+          <tr *ngIf="!positions.length && !inFlight.length"><td colspan="8" class="none">No positions. The desk holds nothing yet.</td></tr>
+          <tr *ngFor="let x of positions">
+            <td class="asset">{{ x.asset }}</td>
+            <td class="r num">{{ qty(x.qty) }}</td>
+            <td class="r num"><span [class.mutedtx]="x.priceUsd == null">{{ x.priceUsd == null ? 'n/a' : price(x.priceUsd) }}</span></td>
+            <td class="r num"><span [class.mutedtx]="x.valueUsd == null">{{ x.valueUsd == null ? 'unpriced' : usd(x.valueUsd) }}</span></td>
+            <td class="r num"><span [class.mutedtx]="x.avgCostUsd == null">{{ x.avgCostUsd == null ? 'n/a' : price(x.avgCostUsd) }}</span></td>
+            <td class="r num">
+              <span class="mutedtx" *ngIf="x.unrealizedUsd == null">{{ posUnrealDim(x) }}</span>
+              <ng-container *ngIf="x.unrealizedUsd != null">
+                <span [ngClass]="dir(x.unrealizedUsd)">{{ usd(x.unrealizedUsd, true) }}</span>
+                <span class="mutedtx" *ngIf="x.unrealizedPct != null">{{ pct(x.unrealizedPct) }}</span>
+              </ng-container>
+            </td>
+            <td class="r num"><span [ngClass]="x.realizedUsd ? dir(x.realizedUsd) : 'mutedtx'">{{ x.realizedUsd ? usd(x.realizedUsd, true) : '$0.00' }}</span></td>
+            <td>
+              <div class="share" *ngIf="x.share != null">
+                <div class="sharebar"><i [style.width.%]="shareWidth(x.share)"></i></div>
+                <span class="num mutedtx">{{ (x.share * 100).toFixed(0) }}%</span>
+              </div>
+            </td>
+          </tr>
+          <tr *ngFor="let f of inFlight">
+            <td class="asset"><span class="top-tags"><span>{{ f.from.asset }} &rarr; {{ f.to.asset }}</span><span class="mutedtx">in flight</span></span></td>
+            <td class="r num">{{ qty(f.from.amount) }}</td>
+            <td class="r"><span class="mutedtx">route</span></td>
+            <td class="r num"><span [class.mutedtx]="f.usd == null">{{ f.usd == null ? 'unpriced' : usd(f.usd) }}</span></td>
+            <td class="r num"><span [class.mutedtx]="f.costUsd == null">{{ f.costUsd == null ? 'n/a' : usd(f.costUsd) }}</span></td>
+            <td class="r num"><span [ngClass]="flightPl(f) == null ? 'mutedtx' : dir(flightPl(f))">{{ flightPl(f) == null ? 'n/a' : usd(flightPl(f), true) }}</span></td>
+            <td class="r"></td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- X feed -->
+  <div class="card block">
+    <div class="card-head ico-head feed-head">
+      <h2>
+        <svg class="feed-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          <path class="dot dot-0" d="M8 10h.01"/>
+          <path class="dot dot-1" d="M12 10h.01"/>
+          <path class="dot dot-2" d="M16 10h.01"/>
+        </svg>
+        Feed
+      </h2>
+      <span>{{ feedHead }}</span>
+    </div>
+    <div class="none" *ngIf="!feed.length">Nothing yet.</div>
+    <div class="feedgrid" *ngIf="feed.length">
+      <div class="post" *ngFor="let it of feed">
+        <div class="m">
+          <span class="top-tags">
+            <span class="badge" [class.lime]="it.posted">{{ it.posted ? 'Posted' : it.mode }}</span>
+            <span class="reply-tag" *ngIf="it.kind === 'reply'">
+              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+                  <path stroke-dasharray="70" stroke-dashoffset="70" d="M3 19.5v-15.5c0 -0.55 0.45 -1 1 -1h16c0.55 0 1 0.45 1 1v12c0 0.55 -0.45 1 -1 1h-14.5Z">
+                    <animate attributeName="stroke-dashoffset" dur="2.4s" repeatCount="indefinite" values="70;0;0" keyTimes="0;0.25;1"/>
+                  </path>
+                  <g stroke-dasharray="10" stroke-dashoffset="10">
+                    <path d="M8 7h8">
+                      <animate attributeName="stroke-dashoffset" dur="2.4s" repeatCount="indefinite" values="10;10;0;0" keyTimes="0;0.29;0.375;1"/>
+                    </path>
+                    <path d="M8 10h8">
+                      <animate attributeName="stroke-dashoffset" dur="2.4s" repeatCount="indefinite" values="10;10;0;0" keyTimes="0;0.333;0.417;1"/>
+                    </path>
+                  </g>
+                  <path stroke-dasharray="6" stroke-dashoffset="6" d="M8 13h4">
+                    <animate attributeName="stroke-dashoffset" dur="2.4s" repeatCount="indefinite" values="6;6;0;0" keyTimes="0;0.375;0.458;1"/>
+                  </path>
+                </g>
+              </svg>
+              <span>Reply</span>
+            </span>
+          </span>
+          <span class="top-tags when">
+            <span>{{ when(it.at) }}</span>
+            <a *ngIf="it.url" [href]="it.url" target="_blank" rel="noopener">x.com</a>
+          </span>
+        </div>
+        <p>{{ it.text }}</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot" *ngIf="err">
+    <div class="err">could not reach the desk API ({{ err }})</div>
+  </div>
+</div>

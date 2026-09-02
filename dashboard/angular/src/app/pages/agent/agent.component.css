@@ -1,0 +1,1589 @@
+/* The OBS desk: agent-obs's newest dashboard features rendered in the house
+   design language: the exchange component's own values (cards, lime, Plus
+   Jakarta Sans, tabular numerals), shimmer on every section title, the mask
+   background video and the ETH-to-PnL marquee. The terminal keeps a monospace
+   face because it is a terminal; everything else is the app's. */
+:host {
+  display: block;
+
+  --card: linear-gradient(145deg, #161816 0%, #1a1c1a 100%);
+  --badge: linear-gradient(135deg, #353a35 0%, #262a26 100%);
+  --box: #16181699;
+  --line: #2a2e2a;
+  --line-strong: #373c37;
+  --line-badge: #4f574f;
+  --row-line: rgba(55, 60, 55, 0.6);
+  --white: #fff;
+  --muted: #8a968a;
+  --muted-deep: #656f65;
+  --lime: #b8ff3d;
+  --lime-ink: #07130a;
+  --amber: #ffce4d;
+  --red: #ff6b6b;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.obs-page,
+.obs-page * {
+  box-sizing: border-box;
+}
+
+.obs-page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 48px 20px 96px;
+  color: var(--white);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.obs-page a {
+  color: var(--lime);
+  text-decoration: none;
+}
+
+.obs-page a:hover {
+  text-decoration: underline;
+}
+
+.obs-page button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.up {
+  color: var(--lime);
+}
+
+.down {
+  color: var(--red);
+}
+
+.mutedtx {
+  color: var(--white);
+}
+
+.none {
+  color: var(--white);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 4px 0;
+}
+
+.err {
+  color: var(--red);
+}
+
+/* A badge/label and the text next to it are separate elements and Angular
+   strips the template whitespace between them, so any such group is a flex
+   row with a real gap. */
+.top-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* ---- Ambient background video ---- */
+
+.obs-video-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    linear-gradient(rgba(5, 5, 5, 0.55), rgba(5, 5, 5, 0.78)),
+    url("/assets/images/maskspin-poster.jpg") center / cover no-repeat;
+}
+
+.obs-video-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(5, 5, 5, 0.15), rgba(5, 5, 5, 0.62) 78%),
+    linear-gradient(to bottom, rgba(5, 5, 5, 0.35), rgba(5, 5, 5, 0.72));
+}
+
+.obs-video-bg__media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .obs-video-bg__media {
+    display: none;
+  }
+}
+
+/* ---- Page head ---- */
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 22px;
+  margin-bottom: 30px;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lime);
+}
+
+.head h1 {
+  margin: 10px 0 12px;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+/* The bot mark in the title (ported from Lucide Animated): the whole head
+   wobbles, the bubble puffs twice, the eyes blink in turn and the typing dots
+   pulse without end. The wobble replays every few seconds and while hovered. */
+.bot-ico {
+  width: 1.3em;
+  height: 1.3em;
+  display: inline-block;
+  vertical-align: -0.28em;
+  margin: 0 0.12em;
+  color: var(--lime);
+  overflow: visible;
+}
+
+.bot-ico .bot-body {
+  transform-box: view-box;
+  transform-origin: 12px 12px;
+  animation: bot-wobble 4s ease-in-out infinite;
+}
+
+.bot-ico .bot-bubble {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: bot-puff 4s ease-in-out infinite;
+}
+
+.bot-ico .bot-eye {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: bot-blink 4s ease-in-out infinite;
+}
+
+.bot-ico .bot-eye-l { animation-delay: 0.1s; }
+.bot-ico .bot-eye-r { animation-delay: 0.2s; }
+
+.bot-ico .bot-dot {
+  fill: currentColor;
+  stroke: none;
+  animation: bot-dot 1.2s ease-in-out infinite;
+}
+
+.bot-ico .bot-dot-0 { animation-delay: 0s; }
+.bot-ico .bot-dot-1 { animation-delay: 0.3s; }
+.bot-ico .bot-dot-2 { animation-delay: 0.6s; }
+
+.head h1:hover .bot-ico .bot-body,
+.head h1:hover .bot-ico .bot-bubble,
+.head h1:hover .bot-ico .bot-eye {
+  animation-duration: 1.2s;
+}
+
+@keyframes bot-wobble {
+  0%, 25%, 100% { transform: rotate(0deg) translateY(0) scale(1); }
+  6% { transform: rotate(-3deg) translateY(1.5px) scale(1.03); }
+  12% { transform: rotate(3deg) translateY(-1.5px) scale(1.03); }
+  19% { transform: rotate(0deg) translateY(0) scale(1); }
+}
+
+@keyframes bot-puff {
+  0%, 15%, 30%, 100% { transform: scale(1); }
+  7.5%, 22.5% { transform: scale(1.04); }
+}
+
+@keyframes bot-blink {
+  0%, 10%, 100% { transform: scaleY(1); }
+  5% { transform: scaleY(0.1); }
+}
+
+@keyframes bot-dot {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-ico .bot-body, .bot-ico .bot-bubble, .bot-ico .bot-eye, .bot-ico .bot-dot { animation: none; }
+  .bot-ico .bot-dot { opacity: 0.6; }
+}
+
+.lede {
+  margin: 0;
+  max-width: 760px;
+  color: var(--white);
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.chips {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  background: #161816;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--white);
+  text-transform: capitalize;
+}
+
+.chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted-deep);
+}
+
+.chip.on i {
+  background: var(--lime);
+  box-shadow: 0 0 10px rgba(184, 255, 61, 0.5);
+}
+
+.chip.warn i {
+  background: var(--amber);
+}
+
+.chip a {
+  color: var(--white);
+}
+
+.chip .copy {
+  display: inline-flex;
+  color: var(--white);
+}
+
+.chip .copy:hover {
+  color: var(--white);
+}
+
+.chip .copy.ok {
+  color: var(--lime);
+}
+
+.chip .copy svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---- Cards ---- */
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 22px 24px 24px;
+}
+
+.block {
+  margin-top: 18px;
+}
+
+.card + .card {
+  margin-top: 18px;
+}
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.card-head h2,
+.ticker .live h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--white);
+  text-transform: uppercase;
+}
+
+.card-head span {
+  color: var(--white);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Shimmer sweep on every section title (ported from a pasted shadcn/motion
+   shimmer-text spec: 1.5s linear sweep, 1.5s rest, 1.5s initial delay). */
+.card-head h2,
+.ticker .live h2 {
+  --shimmer-contrast: rgba(0, 0, 0, 0.5);
+  -webkit-text-fill-color: transparent;
+  background:
+    currentColor
+    linear-gradient(to right, currentColor 0%, var(--shimmer-contrast) 40%, var(--shimmer-contrast) 60%, currentColor 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  background-repeat: no-repeat;
+  background-size: 50% 200%;
+  background-position-x: 250%;
+  animation: shimmer-sweep 3s linear 1.5s infinite;
+}
+
+@keyframes shimmer-sweep {
+  0% { background-position-x: -100%; }
+  50%, 100% { background-position-x: 250%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-head h2,
+  .ticker .live h2 {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+/* ---- Asset switcher in the Market head ---- */
+
+.asset-dd {
+  position: relative;
+}
+
+.dd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--box);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--white);
+  transition: border-color 0.3s ease;
+}
+
+.dd-btn:hover {
+  border-color: var(--line-badge);
+}
+
+.dd-btn .chev {
+  width: 14px;
+  height: 14px;
+}
+
+/* Token marks in the switcher, button and menu alike. */
+.dd-ico {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dd-ico img {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: block;
+}
+
+.dd-ico svg {
+  height: 17px;
+  width: auto;
+  display: block;
+}
+
+.dd-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 5;
+  min-width: 170px;
+  background: #161816;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.dd-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--white);
+}
+
+.dd-menu button:hover {
+  background: rgba(184, 255, 61, 0.08);
+}
+
+.dd-menu button.on {
+  color: var(--lime);
+}
+
+/* ---- House boxes (Market and Desk strips) ---- */
+
+.boxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.box {
+  border: 1px solid var(--line);
+  background: var(--box);
+  border-radius: 14px;
+  padding: 14px 16px;
+  transition: border-color 0.3s ease;
+  min-width: 0;
+}
+
+.box:hover {
+  border-color: var(--line-badge);
+}
+
+.box .lbl {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--white);
+}
+
+.box .val {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--white);
+  margin-top: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.box .val.up {
+  color: var(--lime);
+  text-shadow: 0 0 12px rgba(184, 255, 61, 0.3);
+}
+
+.box .val.down {
+  color: var(--red);
+}
+
+.box .sub {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--white);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.box .sub.up {
+  color: var(--lime);
+}
+
+.box .sub.down {
+  color: var(--red);
+}
+
+/* ---- Chart + side column ---- */
+
+.cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+/* Wallet and Rails as an equal pair under the full-width Performance. The
+   house `.card + .card` gap must not push the second card down inside the
+   grid, and both cards stretch to the same height. */
+.cols.side-cols {
+  grid-template-columns: 1fr 1fr;
+}
+
+.cols.side-cols > .card + .card {
+  margin-top: 0;
+}
+
+@media (max-width: 900px) {
+  .cols,
+  .cols.side-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chart-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.chart-top .big {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.chart-top .big small {
+  font-size: 14px;
+  font-weight: 600;
+  margin-left: 10px;
+}
+
+/* Both segmented bars share one fixed width and every button inside a bar
+   gets an equal column, so the two rows stack as a clean block. */
+.segs {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 252px;
+  max-width: 100%;
+}
+
+.seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--box);
+}
+
+.seg button {
+  padding: 7px 0;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--white);
+  border-right: 1px solid var(--line);
+}
+
+.seg button:last-child {
+  border-right: 0;
+}
+
+.seg button.on {
+  background: var(--lime);
+  color: var(--lime-ink);
+}
+
+.chart {
+  position: relative;
+  margin-top: 14px;
+}
+
+.chart canvas {
+  width: 100%;
+  height: 330px;
+  display: block;
+}
+
+/* Stats row above the chart (High / Low / Change, from the pasted spec). */
+.chart-stats {
+  display: flex;
+  justify-content: flex-end;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.chart-stats .cs {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.chart-stats .k {
+  color: var(--white);
+}
+
+.amber {
+  color: var(--amber);
+}
+
+/* ---- Key-value lists ---- */
+
+.kv {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.kv li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.kv li:first-child {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+.kv li .k {
+  color: var(--white);
+  font-weight: 500;
+}
+
+/* Token marks in the wallet list. */
+.t-ico {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 26px;
+}
+
+.t-ico svg {
+  height: 21px;
+  width: auto;
+  display: block;
+}
+
+.t-ico img {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.t-ico img {
+  border-radius: 50%;
+}
+
+.kv li .v {
+  font-weight: 700;
+  color: var(--white);
+  white-space: nowrap;
+}
+
+.cta {
+  display: block;
+  width: 100%;
+  text-align: center;
+  background: var(--lime);
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: 16px;
+  box-shadow: 0 2px 12px rgba(184, 255, 61, 0.25);
+}
+
+.obs-page a.cta {
+  color: var(--lime-ink);
+}
+
+.cta:hover {
+  text-decoration: none;
+  opacity: 0.92;
+}
+
+/* ---- Rails ---- */
+
+.rail {
+  margin-top: 14px;
+}
+
+.rail:first-of-type {
+  margin-top: 0;
+}
+
+.rail .t {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--white);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.rail .t b {
+  color: var(--white);
+  font-weight: 700;
+}
+
+.blocks {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 4px;
+}
+
+.blocks i {
+  display: block;
+  height: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: transparent;
+}
+
+.blocks i.f {
+  background: var(--white);
+  border-color: var(--white);
+}
+
+.blocks i.g {
+  background: var(--lime);
+  border-color: var(--lime);
+  box-shadow: 0 0 6px rgba(184, 255, 61, 0.35);
+}
+
+.blocks i.a {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.rail-kv {
+  margin-top: 14px;
+}
+
+.rail-note {
+  font-size: 12.5px;
+  color: var(--white);
+  margin-top: 14px;
+}
+
+/* ---- Ticker ---- */
+
+.ticker {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 14px;
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 16px;
+  overflow: hidden;
+}
+
+.ticker .live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.ticker .live i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lime);
+  box-shadow: 0 0 8px rgba(184, 255, 61, 0.6);
+}
+
+.ticker .live.off i {
+  background: var(--muted-deep);
+  box-shadow: none;
+}
+
+.track-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.track {
+  display: inline-flex;
+  gap: 10px;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.track.roll {
+  animation: roll 60s linear infinite;
+}
+
+.track:hover {
+  animation-play-state: paused;
+}
+
+@keyframes roll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.tchip {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--row-line);
+  border-radius: 8px;
+  background: var(--box);
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.tchip b {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.tchip .st {
+  color: var(--white);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ---- The terminal (monospace stays: it is a terminal) ---- */
+
+.term {
+  background: #0a0c0a;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px 16px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  height: 440px;
+  overflow-y: auto;
+}
+
+.term::-webkit-scrollbar {
+  width: 8px;
+}
+
+.term::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 4px;
+}
+
+.term ::ng-deep .ln {
+  display: grid;
+  grid-template-columns: 64px 62px minmax(0, 1fr);
+  gap: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.term ::ng-deep .ts {
+  color: var(--white);
+  font-variant-numeric: tabular-nums;
+}
+
+.term ::ng-deep .tag {
+  color: var(--white);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding-top: 2px;
+}
+
+.term ::ng-deep .obs {
+  color: var(--white);
+}
+
+.term ::ng-deep .think {
+  color: var(--white);
+}
+
+.term ::ng-deep .decide,
+.term ::ng-deep .decide .tag {
+  color: var(--lime);
+}
+
+.term ::ng-deep .decide.swap,
+.term ::ng-deep .decide.swap .tag {
+  color: var(--amber);
+}
+
+.term ::ng-deep .why {
+  color: var(--white);
+}
+
+.term ::ng-deep .trade,
+.term ::ng-deep .trade .tag {
+  color: var(--amber);
+}
+
+.term ::ng-deep .trade.settled,
+.term ::ng-deep .trade.settled .tag {
+  color: var(--lime);
+}
+
+.term ::ng-deep .trade.bad,
+.term ::ng-deep .trade.bad .tag {
+  color: var(--red);
+}
+
+.term ::ng-deep .sys {
+  color: var(--white);
+}
+
+.term ::ng-deep .cycle {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.term ::ng-deep .cur {
+  display: inline-block;
+  width: 7px;
+  height: 13px;
+  background: var(--lime);
+  vertical-align: -2px;
+  margin-left: 2px;
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* ---- Positions table ---- */
+
+.tbl-wrap {
+  overflow-x: auto;
+}
+
+table.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  min-width: 820px;
+}
+
+.tbl th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--white);
+  padding: 2px 10px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.tbl td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--row-line);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.tbl tr:last-child td {
+  border-bottom: 0;
+}
+
+.tbl .r {
+  text-align: right;
+}
+
+.tbl .asset {
+  font-weight: 700;
+}
+
+.tbl .share {
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) 40px;
+  gap: 8px;
+  align-items: center;
+}
+
+.sharebar {
+  height: 6px;
+  background: var(--row-line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.sharebar i {
+  display: block;
+  height: 100%;
+  background: var(--lime);
+  box-shadow: 0 0 8px rgba(184, 255, 61, 0.4);
+}
+
+/* ---- Feed ---- */
+
+.feedgrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 760px) {
+  .feedgrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.post {
+  border: 1px solid var(--row-line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: all 0.3s ease;
+}
+
+.post:hover {
+  border-color: var(--line-strong);
+  background: rgba(22, 24, 22, 0.5);
+}
+
+.post .m {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.post p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--white);
+}
+
+.when {
+  font-size: 12px;
+  color: var(--white);
+  font-weight: 500;
+}
+
+.badge {
+  background: var(--badge);
+  border: 1.5px solid var(--line-badge);
+  border-radius: 6px;
+  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--white);
+  min-width: 74px;
+  justify-content: center;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+/* Animated wallet mark (ported from Lucide Animated): a short bob-and-tilt that
+   plays every few seconds on its own and continuously while the host is hovered. */
+.wallet-ico {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: block;
+  color: var(--lime);
+  transform-origin: 12px 12px;
+  animation: wallet-bob 3s ease-in-out infinite;
+}
+
+.wallet-chip .wallet-ico { margin-right: -2px; }
+
+.ico-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Animated boxes mark (ported from AnimateIcons) on the Rails card: the icon
+   breathes and the three crates hop in sequence, top crate first. Plays on its
+   own every few seconds and continuously while the header is hovered. */
+.boxes-ico {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: block;
+  color: var(--lime);
+  transform-origin: 12px 12px;
+  animation: boxes-breathe 3s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.boxes-ico .bx {
+  animation: boxes-hop 3s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.boxes-ico .bx-0 { --hop: -2px; animation-delay: 0s; }
+.boxes-ico .bx-1 { --hop: -3px; animation-delay: 0.08s; }
+.boxes-ico .bx-2 { --hop: -4px; animation-delay: 0.16s; }
+
+.rails-head:hover .boxes-ico { animation-duration: 0.6s; }
+.rails-head:hover .boxes-ico .bx { animation-duration: 0.6s; }
+
+@keyframes boxes-breathe {
+  0%, 20%, 100% { transform: scale(1); }
+  10% { transform: scale(1.04); }
+}
+
+@keyframes boxes-hop {
+  0%, 18%, 100% { transform: translateY(0); }
+  9% { transform: translateY(var(--hop)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boxes-ico, .boxes-ico .bx { animation: none; }
+}
+
+/* Animated chart mark (ported from Heroicons Animated) on the Performance, Desk
+   and Positions cards:
+   the three bars grow up from the baseline one after another. Plays on its own
+   every few seconds and continuously while the header is hovered. */
+.chart-ico {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: block;
+  color: var(--lime);
+}
+
+.chart-ico .bar {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: chart-grow 3s ease-out infinite;
+}
+
+.chart-ico .bar-0 { animation-delay: 0s; }
+.chart-ico .bar-1 { animation-delay: 0.1s; }
+.chart-ico .bar-2 { animation-delay: 0.2s; }
+
+.chart-head:hover .chart-ico .bar { animation-duration: 0.9s; }
+
+@keyframes chart-grow {
+  0% { transform: scaleY(0); opacity: 0; }
+  3.3% { opacity: 1; }
+  6.7% { transform: scaleY(1.1); }
+  13.3%, 100% { transform: scaleY(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chart-ico .bar { animation: none; }
+}
+
+/* Animated bitcoin mark (ported from AnimateIcons) on the Market card: the glyph
+   sways, its strokes redraw over a dimmed base and three sparks pop along the
+   way. Plays on its own every few seconds and continuously while hovered. */
+.btc-ico {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: block;
+  color: var(--lime);
+  overflow: visible;
+}
+
+.btc-ico .btc-sway {
+  transform-box: view-box;
+  transform-origin: 12px 12px;
+  animation: btc-sway 3s ease-in-out infinite;
+}
+
+.btc-ico .btc-base { opacity: 0.4; }
+
+.btc-ico .btc-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: btc-draw 3s ease-in-out infinite;
+}
+
+.btc-ico .btc-spark {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  opacity: 0;
+  animation: btc-spark 3s ease-out infinite;
+}
+
+.market-head:hover .btc-ico .btc-sway,
+.market-head:hover .btc-ico .btc-draw,
+.market-head:hover .btc-ico .btc-spark {
+  animation-duration: 1.2s;
+}
+
+@keyframes btc-sway {
+  0%, 30%, 100% { transform: scale(1) rotate(0deg) translateY(0); }
+  10% { transform: scale(1.03) rotate(-2deg) translateY(-1px); }
+  15% { transform: scale(1.055) rotate(0deg) translateY(-1px); }
+  20% { transform: scale(1.03) rotate(2deg) translateY(-0.5px); }
+}
+
+@keyframes btc-draw {
+  0% { stroke-dashoffset: 1; }
+  20%, 100% { stroke-dashoffset: 0; }
+}
+
+@keyframes btc-spark {
+  0% { transform: scale(0.6); opacity: 0; }
+  6% { transform: scale(1.25); opacity: 0.9; }
+  12%, 100% { transform: scale(1); opacity: 0; }
+}
+
+/* Animated message mark (ported from Lucide Animated) on the Feed card: the
+   three dots blink out together and come back one after another, twice per
+   pass. Plays on its own every few seconds and continuously while hovered. */
+.feed-ico {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: block;
+  color: var(--lime);
+}
+
+.feed-ico .dot { animation: 3s linear infinite; }
+.feed-ico .dot-0 { animation-name: feed-dot-0; }
+.feed-ico .dot-1 { animation-name: feed-dot-1; }
+.feed-ico .dot-2 { animation-name: feed-dot-2; }
+
+.feed-head:hover .feed-ico .dot { animation-duration: 1.5s; }
+
+@keyframes feed-dot-0 {
+  0% { opacity: 1; } 5% { opacity: 0; } 10% { opacity: 1; }
+  25% { opacity: 1; } 30% { opacity: 0; } 35%, 100% { opacity: 1; }
+}
+
+@keyframes feed-dot-1 {
+  0% { opacity: 1; } 5%, 10% { opacity: 0; } 15% { opacity: 1; }
+  25% { opacity: 1; } 30%, 35% { opacity: 0; } 40%, 100% { opacity: 1; }
+}
+
+@keyframes feed-dot-2 {
+  0% { opacity: 1; } 5%, 15% { opacity: 0; } 20% { opacity: 1; }
+  25% { opacity: 1; } 30%, 40% { opacity: 0; } 45%, 100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed-ico .dot { animation: none; }
+}
+
+/* Animated terminal mark (ported from Lucide Animated) on the Terminal card:
+   the prompt stays put and the cursor line blinks like a live shell. */
+.term-ico {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: block;
+  color: var(--lime);
+}
+
+.term-ico .cursor {
+  animation: term-blink 0.8s linear infinite;
+}
+
+@keyframes term-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .term-ico .cursor { animation: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btc-ico .btc-sway, .btc-ico .btc-draw, .btc-ico .btc-spark { animation: none; }
+  .btc-ico .btc-base { opacity: 1; }
+  .btc-ico .btc-draw { stroke-dashoffset: 0; }
+}
+
+.wallet-chip:hover .wallet-ico,
+.wallet-head:hover .wallet-ico {
+  animation: wallet-bob-fast 0.55s ease-in-out infinite;
+}
+
+@keyframes wallet-bob {
+  0%, 18.4%, 100% { transform: translateY(0) rotate(0deg); }
+  8.3% { transform: translateY(-3px) rotate(-4deg); }
+}
+
+@keyframes wallet-bob-fast {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  45% { transform: translateY(-3px) rotate(-4deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wallet-ico { animation: none; }
+}
+
+/* Reply marker in the feed: speech bubble + label, sitting next to the mode badge. */
+.reply-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1.5px solid rgba(184, 255, 61, 0.35);
+  background: rgba(184, 255, 61, 0.08);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--lime);
+  line-height: 1;
+}
+
+.reply-tag svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  display: block;
+}
+
+.badge.lime {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: var(--lime-ink);
+  box-shadow: 0 2px 8px rgba(184, 255, 61, 0.4);
+}
+
+/* ---- Foot ---- */
+
+.foot {
+  margin-top: 20px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--white);
+  font-weight: 500;
+}
+
+/* ---- ETH-to-PnL marquee ---- */
+
+.marquee {
+  margin-top: 18px;
+}
+
+/* The strip and its info mark share one box, so the mark can sit in the
+   strip's top-right corner outside the fade mask. */
+.marquee-box {
+  position: relative;
+  margin: 0 auto;
+  width: 640px;
+  max-width: 100%;
+}
+
+.m-info {
+  position: absolute;
+  top: -10px;
+  right: -12px;
+  z-index: 3;
+}
+
+.m-info-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1.5px solid rgba(184, 255, 61, 0.45);
+  border-radius: 50%;
+  background: #161816;
+  color: var(--lime);
+  box-shadow: 0 0 14px rgba(184, 255, 61, 0.2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.m-info-btn svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.m-info:hover .m-info-btn,
+.m-info-btn:focus-visible {
+  border-color: var(--lime);
+  box-shadow: 0 0 20px rgba(184, 255, 61, 0.4);
+  outline: none;
+}
+
+.m-info-tip {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 300px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #161816;
+  color: var(--white);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.m-info:hover .m-info-tip,
+.m-info-btn:focus-visible + .m-info-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.marquee-viewport {
+  position: relative;
+  margin: 0 auto;
+  width: 640px;
+  max-width: 100%;
+  height: 88px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+}
+
+/* Slot step = 92px box + 12px gap = 104px. At rest slot 8 sits dead centre
+   (-(8 * 104 + 46) = -878px); a step slides the whole track one slot right. */
+.marquee-track {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  display: flex;
+  gap: 12px;
+  transform: translateX(-878px);
+}
+
+.marquee-track.stepping {
+  transform: translateX(-774px);
+  transition: transform 0.9s cubic-bezier(0.6, 0.05, 0.35, 1);
+}
+
+.m-slot {
+  flex: 0 0 92px;
+  width: 92px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.m-eth {
+  height: 42px;
+  width: auto;
+  opacity: 0.9;
+}
+
+/* USDG, OBS and tokenized-stock coins ride the strip at the ETH mark's size. */
+.m-coin {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: contain;
+  opacity: 0.9;
+  display: block;
+}
+
+.m-stock {
+  width: 48px;
+  height: 48px;
+  filter: drop-shadow(0 0 8px rgba(184, 255, 61, 0.25));
+}
+
+.m-pnl {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--lime);
+  text-shadow: 0 0 14px rgba(184, 255, 61, 0.35);
+  white-space: nowrap;
+}
+
+/* The badge is wider than a slot, so the resting slot is fully hidden while
+   its content is swapped from an ETH mark to a PnL figure. */
+.marquee-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  width: 100px;
+  height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 20px;
+  border: 2px solid transparent;
+  background:
+    linear-gradient(#050505, #050505) padding-box,
+    linear-gradient(135deg, #2a2e2a 0%, #b8ff3d 50%, #2a2e2a 100%) border-box;
+  animation: marquee-breathe 4s ease-in-out infinite;
+}
+
+.marquee-center img {
+  width: 64px;
+  height: 64px;
+  display: block;
+}
+
+@keyframes marquee-breathe {
+  0%, 10%, 100% {
+    transform: translate(-50%, -50%) scale(1.05);
+    box-shadow: 0 0 22px rgba(184, 255, 61, 0.25);
+  }
+  40%, 60% {
+    transform: translate(-50%, -50%) scale(1);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-center {
+    animation: none;
+    transform: translate(-50%, -50%);
+  }
+
+  .marquee-track.stepping {
+    transition: none;
+  }
+}
