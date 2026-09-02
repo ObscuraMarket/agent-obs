@@ -79,7 +79,10 @@ public address, shown on purpose so balances and settlements can be checked.
             "rewards": { "swaps": 2, "volumeUsd": 480, "rewardsUsd": 1.2, "paidUsd": 0 } }
 ```
 Balances are read from the chains; `rewards` is Obscura's own
-`/rewards/{wallet}` for the address.
+`/rewards/{wallet}` for the address. `wallet.tokens` (additive) carries
+every registered token balance keyed `SYMBOL@network`, for example
+`"WBTC@erc20": 0.001, "DAI@erc20": 20, "NVDA@robinhood": 0.5`; a `null`
+value means that chain did not answer. The named fields above remain.
 
 `token` in `/api/obs/reads` carries, besides name, symbol, decimals, supply
 and `holders`, the explorer's own lagging figures `explorerPriceUsd`,

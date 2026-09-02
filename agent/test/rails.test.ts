@@ -5,7 +5,8 @@ import { resolveAsset, assetKey } from "../src/desk/assets.ts";
 
 const ETH = resolveAsset("ETH@robinhood")!;
 const USDG = resolveAsset("USDG@robinhood")!;
-const rails = railsFromEnv({ OBS_TRADING: "on", OBS_MAX_SWAP_USD: "25", OBS_DAILY_SWAP_USD: "100", OBS_MAX_OPEN_ORDERS: "1", OBS_GAS_RESERVE_ETH: "0.002" } as NodeJS.ProcessEnv);
+// These rails tests exercise the checks, not the default list, so USDG (registered, not routable today) is allowed here explicitly.
+const rails = railsFromEnv({ OBS_TRADING: "on", OBS_MAX_SWAP_USD: "25", OBS_DAILY_SWAP_USD: "100", OBS_MAX_OPEN_ORDERS: "1", OBS_GAS_RESERVE_ETH: "0.002", OBS_TRADE_ASSETS: "ETH@eth,USDC@erc20,ETH@robinhood,USDG@robinhood,NVDA@robinhood" } as NodeJS.ProcessEnv);
 const ctx = (over: Partial<RailContext> = {}): RailContext => ({ rails, balances: { "ETH@robinhood": 0.05, "USDG@robinhood": 40 }, nativeOnFromChain: 0.05, openOrders: 0, sentTodayUsd: 0, ...over });
 const intent = (over: Partial<Intent> = {}): Intent => ({ from: ETH, to: USDG, amount: 0.005, usd: 12, ...over });
 
@@ -16,6 +17,15 @@ test("the registry resolves symbols, defaults networks, and refuses strangers", 
   assert.equal(resolveAsset("DOGE"), null);
   assert.equal(resolveAsset("ETH@solana"), null);
   assert.equal(resolveAsset("ETH@base")!.deposit, false, "Obscura will not take ETH on Base as a deposit");
+  // The widened universe: majors and stables on Ethereum, the tokenized stock Obscura routes.
+  assert.equal(assetKey(resolveAsset("wbtc")!), "WBTC@erc20");
+  assert.equal(resolveAsset("WBTC@erc20")!.decimals, 8);
+  for (const s of ["LINK", "UNI", "AAVE", "DAI"]) assert.equal(assetKey(resolveAsset(s)!), `${s}@erc20`);
+  const rails = railsFromEnv({} as NodeJS.ProcessEnv);
+  for (const k of ["WBTC@erc20", "LINK@erc20", "DAI@erc20", "NVDA@robinhood", "ETH@robinhood"]) assert.ok(rails.allowedAssets.has(k), `${k} on the default allowlist`);
+  assert.ok(!rails.allowedAssets.has("ETH@base"), "withdraw-only assets are not on it");
+  assert.ok(!rails.allowedAssets.has("USDG@robinhood"), "registered but not routable today, so not on the default allowlist");
+  assert.ok(resolveAsset("USDG@robinhood"), "still in the registry: held, read, marked");
 });
 
 test("the rails pass a small, funded, allowlisted swap and refuse everything else in order", () => {

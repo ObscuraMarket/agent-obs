@@ -14,6 +14,7 @@ import { resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, DRY, dataPath } from "../config.ts";
 import { appendLedger, readLedger } from "../ledger.ts";
+import { ASSETS } from "../desk/assets.ts";
 import { UA, rpc, ethCall, rpcBlocked } from "./rpc.ts";
 import { obsMarket, poolRead, chainMemory, type MarketRead } from "./pools.ts";
 
@@ -88,6 +89,8 @@ export interface WalletRead {
   usdc: number | null;
   usdt: number | null;
   nvda: number | null;
+  /** Every registered token balance keyed SYMBOL@network, the named fields above included. Null = the chain did not answer. */
+  tokens?: Record<string, number | null>;
   /** Obscura's own cashback stats for this wallet (GET /rewards/{wallet}). */
   rewards: { swaps: number; volumeUsd: number; rewardsUsd: number; paidUsd: number } | null;
 }
@@ -110,6 +113,8 @@ export function walletBalances(w: WalletRead): { byKey: Record<string, number>; 
     ["NVDA@robinhood", "NVDA", w.nvda],
     ["OBS@robinhood", "OBS", w.obs],
   ];
+  const named = new Set(pairs.map(([k]) => k));
+  for (const [k, v] of Object.entries(w.tokens ?? {})) if (!named.has(k)) pairs.push([k, k.split("@")[0], v]);
   const byKey: Record<string, number> = {};
   const bySymbol: Record<string, number> = {};
   const unread: string[] = [];
@@ -128,16 +133,19 @@ export function walletBalances(w: WalletRead): { byKey: Record<string, number>; 
 export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead | null> {
   if (!address) return null;
   // Robinhood Chain reads one at a time (rate-limited RPC); the rest in parallel.
-  const mainnetP = Promise.all([
-    nativeBalance(ETH_RPC_URL, address),
-    mainnetTokenBalance("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", address, 6),
-    mainnetTokenBalance("0xdAC17F958D2ee523a2206206994597C13D831ec7", address, 6),
-  ]);
+  // Every registered erc20: Ethereum ones in parallel, Robinhood ones one at a time.
+  const registered = Object.values(ASSETS).filter((a) => a.kind === "erc20" && a.contract);
+  const mainnetTokens = registered.filter((a) => a.chain === "ethereum");
+  const mainnetP = Promise.all([nativeBalance(ETH_RPC_URL, address), ...mainnetTokens.map((a) => mainnetTokenBalance(a.contract as string, address, a.decimals))]);
+  const tokens: Record<string, number | null> = {};
   const ethRobinhood = await nativeBalance(RPC_URL, address);
   const usdg = await tokenBalance(USDG_CONTRACT, address, 6);
   const obs = await tokenBalance(OBS_CONTRACT, address, 18);
-  const nvda = await tokenBalance("0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec", address, 18);
-  const [[ethMainnet, usdc, usdt], rewards] = await Promise.all([
+  tokens["USDG@robinhood"] = usdg;
+  tokens["OBS@robinhood"] = obs;
+  for (const a of registered.filter((x) => x.chain === "robinhood" && x.symbol !== "USDG")) tokens[`${a.symbol}@${a.network}`] = await tokenBalance(a.contract as string, address, a.decimals);
+  const nvda = tokens["NVDA@robinhood"] ?? null;
+  const [[ethMainnet, ...mainnetBalances], rewards] = await Promise.all([
     mainnetP,
     (async () => {
       try {
@@ -150,7 +158,10 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
       }
     })(),
   ]);
-  return { address, ethRobinhood, ethMainnet, usdg, obs, usdc, usdt, nvda, rewards };
+  mainnetTokens.forEach((a, i) => (tokens[`${a.symbol}@${a.network}`] = mainnetBalances[i] ?? null));
+  const usdc = tokens["USDC@erc20"] ?? null;
+  const usdt = tokens["USDT@erc20"] ?? null;
+  return { address, ethRobinhood, ethMainnet, usdg, obs, usdc, usdt, nvda, tokens, rewards };
 }
 
 export interface TokenRead {
@@ -294,6 +305,9 @@ const COINGECKO_IDS: Record<string, string> = {
   HYPE: "hyperliquid",
   LINK: "chainlink",
   DOGE: "dogecoin",
+  WBTC: "wrapped-bitcoin",
+  UNI: "uniswap",
+  AAVE: "aave",
 };
 
 /** USD prices for a set of asset symbols. Missing or unfetchable = null, never zero.
@@ -405,7 +419,9 @@ const fmt = (v: number | null, digits: number) => (v == null ? "not read" : v.to
 /** PURE: the wallet lines as the prompt and the dashboard show them. */
 export function walletLines(w: WalletRead | null): string[] {
   if (!w) return [];
-  const extras = [w.usdc ? `${fmt(w.usdc, 2)} USDC` : "", w.usdt ? `${fmt(w.usdt, 2)} USDT` : "", w.nvda ? `${fmt(w.nvda, 6)} NVDA` : ""].filter(Boolean);
+  const extras = Object.entries(w.tokens ?? {})
+    .filter(([k, v]) => v != null && v > 0 && !["USDG@robinhood", "OBS@robinhood"].includes(k))
+    .map(([k, v]) => `${fmt(v as number, k.startsWith("USD") || k.startsWith("DAI") ? 2 : 6)} ${k.split("@")[0]}${k.endsWith("@erc20") ? " on Ethereum" : ""}`);
   const out = [`- The desk's wallet (on chain): ${fmt(w.ethRobinhood, 6)} ETH on Robinhood Chain, ${fmt(w.ethMainnet, 6)} ETH on Ethereum, ${fmt(w.usdg, 2)} USDG, ${fmt(w.obs, 2)} OBS${extras.length ? ", " + extras.join(", ") : ""}.`];
   if (w.rewards) out.push(`- Obscura cashback for this wallet: ${w.rewards.swaps} swaps, $${w.rewards.volumeUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} volume, $${w.rewards.rewardsUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} earned, $${w.rewards.paidUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} paid out.`);
   return out;

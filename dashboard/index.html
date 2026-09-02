@@ -459,9 +459,13 @@
       if (!w) { el("wallet").innerHTML = "<li class='none'>No wallet yet.</li>"; el("w-chain").textContent = ""; return; }
       var f = function (v, d) { return v == null ? "n/a" : Number(v).toLocaleString("en-US", { maximumFractionDigits: d }); };
       var rows = [["ETH · Robinhood Chain", f(w.ethRobinhood, 5)], ["ETH · Ethereum", f(w.ethMainnet, 5)], ["USDG", f(w.usdg, 2)], ["OBS", f(w.obs, 0)]];
-      if (w.nvda) rows.push(["NVDA", f(w.nvda, 5)]);
-      if (w.usdc) rows.push(["USDC", f(w.usdc, 2)]);
-      if (w.usdt) rows.push(["USDT", f(w.usdt, 2)]);
+      var named = { "USDG@robinhood": 1, "OBS@robinhood": 1 };
+      Object.keys(w.tokens || {}).forEach(function (k) {
+        var v = w.tokens[k]; if (named[k] || v == null || v <= 0) return;
+        var sym = k.split("@")[0];
+        rows.push([sym + (k.indexOf("@erc20") > 0 ? " · Ethereum" : ""), f(v, /^(USD|DAI)/.test(sym) ? 2 : 6)]);
+      });
+      if (!w.tokens) { if (w.nvda) rows.push(["NVDA", f(w.nvda, 5)]); if (w.usdc) rows.push(["USDC", f(w.usdc, 2)]); if (w.usdt) rows.push(["USDT", f(w.usdt, 2)]); }
       el("wallet").innerHTML = rows.map(function (kv) { return "<li><span class='k'>" + esc(kv[0]) + "</span><span class='v num'>" + esc(kv[1]) + "</span></li>"; }).join("");
       el("w-chain").textContent = "chain 4663";
       el("w-note").textContent = w.rewards ? "cashback · " + w.rewards.swaps + " swaps · " + usd(w.rewards.rewardsUsd) + " earned" : "settles non-custodially";

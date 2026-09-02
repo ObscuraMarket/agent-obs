@@ -53,6 +53,6 @@ test("the rails summary puts each cap next to what is used, from the latest row 
   assert.deepEqual([r.maxSwapUsd, r.dailySwapUsd, r.maxOpenOrders], [25, 100, 1]);
   assert.equal(r.openOrders, 1, "one pending; the proposal is not an order");
   assert.ok(r.sentTodayUsd >= 20, `today's sends counted, got ${r.sentTodayUsd}`);
-  assert.ok(r.allowedAssets.includes("USDG@robinhood"));
+  assert.ok(r.allowedAssets.includes("NVDA@robinhood"));
   assert.equal(r.allowedPartners, null);
 });

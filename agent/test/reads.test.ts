@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeString, decodeUint, formatSupply, readsBlock, balanceOfData, fromRaw, marketLine, usdPrice, marketSeries, change24h } from "../src/obscura/reads.ts";
+import { decodeString, decodeUint, formatSupply, readsBlock, balanceOfData, fromRaw, marketLine, usdPrice, marketSeries, change24h, walletBalances } from "../src/obscura/reads.ts";
 
 // ABI-encoded "Obscura" as returned by name() on the real contract.
 const NAME_HEX =
@@ -65,4 +65,16 @@ test("the price series is windowed, thinned and keeps its last sample; the day c
   assert.equal(change24h([rows[0]], now), null);
   const c = change24h(rows, now) as number;
   assert.ok(Math.abs(c - (rows[999].priceUsd - rows[0].priceUsd) / rows[0].priceUsd) < 1e-12);
+});
+
+test("wallet balances fold every registered token in, keep unread ones absent, and never double count the named ones", () => {
+  const w = { address: "0xabc", ethRobinhood: 0.4, ethMainnet: 0.01, usdg: 12, obs: null, usdc: 5, usdt: null, nvda: 0.5, rewards: null,
+    tokens: { "USDC@erc20": 5, "USDT@erc20": null, "NVDA@robinhood": 0.5, "WBTC@erc20": 0.001, "LINK@erc20": null, "DAI@erc20": 20 } };
+  const b = walletBalances(w);
+  assert.equal(b.byKey["USDC@erc20"], 5);
+  assert.equal(b.byKey["WBTC@erc20"], 0.001);
+  assert.equal(b.bySymbol.DAI, 20);
+  assert.ok(Math.abs(b.bySymbol.ETH - 0.41) < 1e-12, "ETH across both chains is one symbol");
+  assert.ok(b.unread.includes("USDT@erc20") && b.unread.includes("LINK@erc20") && b.unread.includes("OBS@robinhood"));
+  assert.equal(Object.keys(b.byKey).filter((k) => k === "USDC@erc20").length, 1);
 });

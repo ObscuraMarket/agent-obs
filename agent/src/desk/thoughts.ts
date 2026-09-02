@@ -9,6 +9,7 @@
 // is a separate, deliberate stage with its own rails, and until it exists a
 // proposal is exactly what the dashboard shows it as.
 import { appendLedger, readLedger } from "../ledger.ts";
+import { DEFAULT_TRADE_ASSETS } from "./rails.ts";
 import { forbiddenReason, stripDashes } from "../social/postGuards.ts";
 import { walletLines, marketLine, type Reads } from "../obscura/reads.ts";
 import type { BookSnapshot, Trade } from "./book.ts";
@@ -74,7 +75,7 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
 }
 
 /** The prompt for the operator persona. Public thoughts, private note. */
-export function buildThoughtPrompt(observation: string[], recent: Thought[], journal: string, nowIso: string, canExecute: boolean): string {
+export function buildThoughtPrompt(observation: string[], recent: Thought[], journal: string, nowIso: string, canExecute: boolean, assets: string[] = DEFAULT_TRADE_ASSETS.split(",")): string {
   const past = recent
     .slice(0, 4)
     .map((t) => `- (${new Date(t.at).toISOString().slice(5, 16).replace("T", " ")} UTC) ${t.thoughts.join(" ")} [decision: ${t.decision.kind}${t.decision.kind === "propose-swap" ? ` ${t.decision.amount} ${t.decision.from} to ${t.decision.to}` : ""}]`)
@@ -99,7 +100,7 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     "REASON: <one sentence>",
     "NOTE: <one private sentence to yourself, fed back next cycle>",
     "",
-    "For a swap the DECISION line is: DECISION: swap <amount> <FROM> -> <TO>, where an asset is a symbol with an optional network, for example ETH@robinhood or USDG@robinhood or USDC@erc20. Assets you may name: ETH@eth, USDC@erc20, ETH@robinhood, USDG@robinhood, NVDA@robinhood.",
+    `For a swap the DECISION line is: DECISION: swap <amount> <FROM> -> <TO>, where an asset is a symbol with an optional network, for example ETH@robinhood or USDG@robinhood or USDC@erc20. Assets you may name: ${assets.join(", ")}. A from-leg on Ethereum (@eth, @erc20) pays mainnet gas, real money at this desk's size, and needs ETH there to pay it; a from-leg on Robinhood Chain costs almost nothing to send.`,
   ]
     .filter((s) => s !== undefined)
     .join("\n");

@@ -171,9 +171,22 @@ separate decision.
 
 **The execution stage** (`desk/assets.ts`, `desk/rails.ts`,
 `desk/signer.ts`, `desk/execute.ts`). The model decides what; code decides
-whether. A swap decision names two registry assets (`ETH@robinhood`,
-`USDG@robinhood`, `USDC@erc20`, `ETH@eth`, `NVDA@robinhood`; nothing
-inferred, nothing outside the table) and an amount. In order, the rails
+whether. A swap decision names two registry assets and an amount; nothing
+inferred, nothing outside the table. The table is the desk's mandate, the
+high-volume majors, the dollar stables and the tokenized stocks Obscura
+routes, each verified on chain (symbol, decimals, contract) against
+Obscura's own currency list: on Ethereum `ETH@eth`, `WBTC@erc20`,
+`LINK@erc20`, `UNI@erc20`, `AAVE@erc20`, `USDC@erc20`, `USDT@erc20`,
+`DAI@erc20`; on Robinhood Chain `ETH@robinhood` and `NVDA@robinhood` (the
+one tokenized stock Obscura lists there today; CASHCAT and PIPEDOG are
+listed too and deliberately left out). `USDG@robinhood` is registered and
+read but off the default allowlist: probed 2026-09-02, Obscura quoted no
+USDG leg in any direction, while every ETH and NVDA leg on the Robinhood
+network quoted through Obscura's own pool route. `ETH@base` is
+withdraw-only. The prompt names exactly the allowlisted keys, and tells
+him that an Ethereum from-leg pays mainnet gas. `OBS_TRADE_ASSETS` narrows
+the allowlist; the quote watchlist (`OBS_QUOTE_WATCHLIST`) covers the same
+universe so every cycle sees those markets. In order, the rails
 refuse: trading off; same asset; either side off the allowlist; a from-leg
 Obscura will not accept or a to-leg it will not pay out; an unpriced
 from-leg; more than `OBS_MAX_SWAP_USD` (default $25); more than

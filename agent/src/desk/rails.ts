@@ -23,7 +23,12 @@ export interface Rails {
   minFillRatio: number;
 }
 
-export const DEFAULT_TRADE_ASSETS = "ETH@eth,USDC@erc20,ETH@robinhood,USDG@robinhood,NVDA@robinhood";
+// The mandate: high-volume majors, dollar stables, and the tokenized stocks
+// Obscura routes. Ethereum legs pay mainnet gas, which the rails price in
+// through the gas reserve; the operator narrows this with OBS_TRADE_ASSETS.
+// USDG@robinhood stays in the registry but off this list: probed 2026-09-02,
+// Obscura quoted no USDG leg in any direction. Put it back when it does.
+export const DEFAULT_TRADE_ASSETS = "ETH@eth,WBTC@erc20,USDC@erc20,USDT@erc20,DAI@erc20,LINK@erc20,UNI@erc20,AAVE@erc20,ETH@robinhood,NVDA@robinhood";
 
 export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
   const partners = (env.OBS_ALLOWED_PARTNERS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
