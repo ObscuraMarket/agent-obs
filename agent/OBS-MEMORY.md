@@ -13,6 +13,11 @@ loop.
   this file is why the account reads like one continuous mind instead of a
   fresh boot pretending.
 - **His decision ledger** (`obs-decisions.jsonl`): what he chose and why.
+- **The desk itself** (`obs-thoughts.jsonl`, `obs-trades.jsonl`,
+  `obs-capital.jsonl`, `obs-book.jsonl`, `obs-market.jsonl`): every public
+  thought, every trade and its status, what was deposited, every equity
+  mark, the $OBS price he sampled. This is the track record; losing it
+  would mean starting the book's history from zero.
 - **His action ledgers** (`x-posts.jsonl`, `x-replies.jsonl`, the engage
   cursor): everything he has said and to whom, so he never double-replies and
   never repeats a claim thinking it is new.
@@ -24,11 +29,12 @@ separation the split exists to create.
 
 ## The self-commit loop
 
-`scripts/_obs-backup.sh` runs after each posting tick: copy the files,
-`git add -A`, commit as `obs memory <date>`, `git push`. Throttled to about
-once a day. If nothing changed, no commit. If the memory checkout
-(`OBS_MEMORY_REPO_DIR`) is not set up yet, the step is skipped quietly and
-says so once per run.
+`scripts/_obs-backup.sh` runs after each desk cycle (and after each posting
+tick, when the voice is on a timer): copy the files, `git add -A`, commit
+as `obs memory <date>`, `git push`. Throttled to about once a day. If
+nothing changed, no commit. The checkout is `OBS_MEMORY_REPO_DIR`, a clone
+of the private `obscura-memory` repo; if it is not set up, the step is
+skipped quietly and says so once per run.
 
 ## Why the contents are private
 

@@ -15,10 +15,15 @@ fi
 if [ "$FORCE" != "1" ] && [ -f "$STAMP" ] && [ $(( $(date +%s) - $(cat "$STAMP" 2>/dev/null || echo 0) )) -lt 72000 ]; then
   exit 0
 fi
-# The journal is the one that matters most: it holds every note OBS has
-# written to himself, and the voice generates its callbacks out of it. The
-# others cost a duplicate reply if lost; this one costs continuity.
-cp -f "$DATA"/*-journal.jsonl "$DATA/obs-decisions.jsonl" "$DATA/x-posts.jsonl" "$DATA/x-replies.jsonl" "$DATA/obs-engage-state.json" "$MEM/" 2>/dev/null
+# Two kinds of memory ride along. The journal holds every note OBS has
+# written to himself and the voice generates its callbacks out of it: losing
+# it costs continuity. The desk ledgers hold the book itself, what was
+# deposited, every trade and its status, every public thought and every
+# equity mark: losing them costs the track record. The X ledgers cost a
+# duplicate reply if lost. Copy whatever exists; a missing file is fine.
+for f in "$DATA"/*-journal.jsonl "$DATA"/obs-decisions.jsonl "$DATA"/obs-thoughts.jsonl "$DATA"/obs-trades.jsonl "$DATA"/obs-capital.jsonl "$DATA"/obs-book.jsonl "$DATA"/obs-market.jsonl "$DATA"/x-posts.jsonl "$DATA"/x-replies.jsonl "$DATA"/obs-engage-state.json; do
+  [ -f "$f" ] && cp -f "$f" "$MEM/"
+done
 cd "$MEM" || exit 1
 git add -A >/dev/null 2>&1
 if ! git diff --cached --quiet; then

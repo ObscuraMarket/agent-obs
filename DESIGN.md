@@ -281,8 +281,9 @@ drafts with a filter once it has. Fields are only added, never renamed.
   up on the board with their transactions.
 - **O4, the account goes live.** Supply the OAuth 1.0a keys for @ObscuraCEX,
   read a day of drafts on the dashboard, set `X_LIVE=true`.
-- **O5, the memory repo.** Create a private `obscura-memory` repo, set
-  `OBS_MEMORY_REPO_DIR`, and the self-commit loop starts.
+- **O5, the memory repo.** Done 2026-09-02: the private `obscura-memory`
+  repo exists, `OBS_MEMORY_REPO_DIR` points at its checkout, and the desk
+  timer carries the daily self-commit of journals and desk ledgers.
 - **O6, rewards narration.** Read `/rewards/{wallet}` for the desk's own
   wallet once it exists and let OBS talk about cashback that actually
   landed, by transaction.
