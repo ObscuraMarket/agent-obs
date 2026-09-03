@@ -235,6 +235,11 @@ persona is told plainly that the rebate is not a reason to trade.
 - **Remember** (`_obs-backup.sh`): journals and ledgers to a private repo,
   once a day.
 - **Show** (`server.ts`): the dashboard API, cached reads, CORS, GET only.
+- **Host** (`scripts/run.sh`, `Dockerfile`, `docker-compose.yml`, DEPLOY.md):
+  the same desk as one container on a box the operator owns: restore the
+  ledgers from the memory repo on first boot, provision the personas, serve
+  the API, run the desk on an interval with the backup behind it. The
+  voice loops stay off unless asked; nothing in the image can arm execution.
 
 ---
 

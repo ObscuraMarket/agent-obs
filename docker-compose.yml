@@ -1,0 +1,30 @@
+# OBS on a box you own. `docker compose up -d` after filling agent/.env.
+#
+# What it needs from you: an OpenHermit gateway the container can reach
+# (OPENHERMIT_GATEWAY_URL below; host.docker.internal:4000 if it runs on the
+# same host), the private memory repo URL with a token that can push
+# (OBS_MEMORY_REPO_URL in agent/.env), and, only when you decide to arm
+# execution, the wallet directory mounted read-only at /wallet.
+services:
+  obs:
+    build: ./agent
+    env_file: ./agent/.env
+    environment:
+      OPENHERMIT_GATEWAY_URL: ${OPENHERMIT_GATEWAY_URL:-http://host.docker.internal:4000}
+      OBS_DATA_DIR: /app/data
+      OBS_MEMORY_REPO_DIR: /memory
+      OBS_WALLET_DIR: /wallet
+      OBS_DASHBOARD_PORT: "4671"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "4671:4671"
+    volumes:
+      - obs-data:/app/data
+      - obs-memory:/memory
+      # Uncomment to make arming possible. Read-only; the key never leaves this mount.
+      # - ${OBS_WALLET_HOST_DIR:-~/.obs/wallet}:/wallet:ro
+    restart: unless-stopped
+volumes:
+  obs-data:
+  obs-memory:

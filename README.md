@@ -57,6 +57,10 @@ dashboard/
 
 ## Run
 
+On a box you own, the whole desk is one container: see [DEPLOY.md](DEPLOY.md)
+(`docker compose up -d --build`; the private memory repo seeds the ledgers).
+On a Mac with launchd:
+
 ```
 cd agent
 npm install
