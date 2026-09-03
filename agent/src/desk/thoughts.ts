@@ -29,7 +29,8 @@ export interface Thought {
   observation: string[];
   /** The model's public reasoning, guarded. */
   thoughts: string[];
-  decision: Decision;
+  decision: Decision;  /** Set when the cycle ran as a paper session. */
+  paper?: boolean;
 }
 
 export interface QuoteRead {
@@ -45,7 +46,7 @@ const usd = (v: number) => `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en
 const qty = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: 6 });
 
 /** PURE: the measured observation. Every number the model may use is here. */
-export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number; unread?: string[]; candidates?: Array<{ symbol: string; hour: number; volUsd: number; movePct: number; senders: number; tierPct: number; ageH: number; trail: string }>; heldCandidates?: Array<{ symbol: string; qty: number; costUsd: number | null; valueUsd: number | null; pnlPct: number | null; ageH: number; trail: string }> }): string[] {
+export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number; unread?: string[]; candidates?: Array<{ symbol: string; hour: number; volUsd: number; movePct: number; senders: number; tierPct: number; ageH: number; trail: string }>; heldCandidates?: Array<{ symbol: string; qty: number; costUsd: number | null; valueUsd: number | null; pnlPct: number | null; ageH: number; trail: string }>; paper?: boolean }): string[] {
   const lines: string[] = [];
   if (i.unread?.length) lines.push(`Balances the chain did not answer for this cycle, excluded from equity, not zero: ${i.unread.join(", ")}. Do not size anything against them.`);
   const h = Object.entries(i.book.holdings);
@@ -62,6 +63,7 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
   if (proposed.length) lines.push(`Proposed and awaiting the operator: ${proposed.map((t) => `${qty(t.from.amount)} ${t.from.asset} to ${t.to.asset}`).join("; ")}.`);
   if (i.quotes.length) {
     lines.push(
+      ...(i.paper ? ["PAPER SESSION: the book above includes simulated trades at full size; nothing has been sent on chain."] : []),
       `Quotes this cycle: ${i.quotes.map((q) => `${qty(q.amountIn)} ${q.from} to ${q.amountOut == null ? "no quote" : `${qty(q.amountOut)} ${q.to}`}${q.partner ? ` (${q.partner})` : ""}`).join("; ")}.`,
       ...(i.candidates?.length
         ? [`Launch candidates from the watcher, newest first: ${i.candidates.map((c) => `${c.symbol}@robinhood (hour ${c.hour}, ${c.ageH.toFixed(1)}h ago, $${Math.round(c.volUsd).toLocaleString("en-US")} prior-hour volume, ${c.movePct >= 0 ? "+" : ""}${c.movePct.toFixed(1)}% move, ${c.senders} senders, ${c.tierPct}% fee each way; since then ${c.trail})`).join("; ")}.`]
@@ -81,7 +83,7 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
 }
 
 /** The prompt for the operator persona. Public thoughts, private note. */
-export function buildThoughtPrompt(observation: string[], recent: Thought[], journal: string, nowIso: string, canExecute: boolean, assets: string[] = DEFAULT_TRADE_ASSETS.split(","), venue: "pool" | "obscura" = "pool", candidates: string[] = []): string {
+export function buildThoughtPrompt(observation: string[], recent: Thought[], journal: string, nowIso: string, canExecute: boolean, assets: string[] = DEFAULT_TRADE_ASSETS.split(","), venue: "pool" | "obscura" = "pool", candidates: string[] = [], paper = false): string {
   const past = recent
     .slice(0, 4)
     .map((t) => `- (${new Date(t.at).toISOString().slice(5, 16).replace("T", " ")} UTC) ${t.thoughts.join(" ")} [decision: ${t.decision.kind}${t.decision.kind === "propose-swap" ? ` ${t.decision.amount} ${t.decision.from} to ${t.decision.to}` : ""}]`)
@@ -101,6 +103,7 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
         : `Then decide. A swap you decide on is executed through Obscura from the desk's own wallet, inside the rails in code (a per-swap cap, a daily cap, one open order at a time, an asset allowlist, a gas reserve). Size small; the rails refuse anything else and the refusal is public. Every swap through Obscura earns the desk cashback in tokenized stocks, which is the earning leg: trade only when the route and the reason are real, never to farm the rebate.`
       : `Then decide. You cannot execute anything yet: a swap decision is a proposal the operator sees on the dashboard, and you say so nowhere except in the DECISION line.`,
     "",
+    paper ? "This is a paper session: a swap you decide on is priced against the live pools and recorded as a paper trade at full size, and nothing is sent on chain. Decide exactly as you would with real money; the point is to see what you would do." : "",
     "Reply in exactly this shape, one item per line:",
     "THOUGHT: <a line>",
     "THOUGHT: <another line>",

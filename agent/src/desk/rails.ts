@@ -173,3 +173,13 @@ export function checkCandidate(i: Intent, known: CandidateKnowledge | null, held
   return { ok: true };
 }
 
+/**
+ * PURE: an amount the model named against the balance the wallet holds. The
+ * observation prints balances rounded, so "sell all of it" comes back a hair
+ * above the true balance; anything within a hundredth of a percent over is
+ * the whole balance, anything further over is still a refusal downstream.
+ */
+export function clampToBalance(amount: number, have: number): number {
+  return amount > have && amount <= have * (1 + 1e-4) ? have : amount;
+}
+

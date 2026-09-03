@@ -23,7 +23,11 @@
     "wallet": "node scripts/wallet.mjs",
     "wallet:balances": "tsx src/obscura/walletBalances.ts",
     "capital": "tsx src/desk/capital.ts",
-    "swap:probe": "tsx scripts/probeSwap.ts"
+    "swap:probe": "tsx scripts/probeSwap.ts",
+    "paper": "OBS_PAPER=on OBS_MIN_THOUGHT_GAP_MIN=0 tsx src/desk/cycle.ts",
+    "paper:report": "tsx scripts/paperReport.ts",
+    "paper:reset": "node -e \"for (const f of ['obs-paper.jsonl','obs-paper-book.jsonl']) { try { require('fs').unlinkSync(require('path').join(process.env.OBS_DATA_DIR || 'data', f)); console.log('removed', f) } catch {} }\"",
+    "paper:trade": "tsx scripts/paperTrade.ts"
   },
   "dependencies": {
     "@openhermit/sdk": "^0.7.0",

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseFeed, deriveTickSpacing, poolIdFor, exitSignal, candidateAsset, dynamicPoolSpec, resolveAny } from "../src/desk/candidates.ts";
 import { checkCandidate, railsFromEnv, checkRails, type Intent } from "../src/desk/rails.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
-import { routeFor } from "../src/desk/onchain.ts";
+import { routeFor, costFloorPct } from "../src/desk/onchain.ts";
 
 const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as const;
 const NVDA = "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec" as const;
@@ -88,4 +88,13 @@ test("candidate rails: probe first, proven sizes up, blacklisted never, one at a
   assert.deepEqual(checkRails(sell, ctx), { ok: true }, "an exit passes the caps and the open-order limit");
   const off = railsFromEnv({ OBS_TRADING: "on", OBS_CANDIDATES: "off" } as NodeJS.ProcessEnv);
   assert.match((checkRails(buy, { ...ctx, rails: off }) as { reason: string }).reason, /allowlist/, "with candidates off, a launch token is just not on the allowlist");
+});
+
+test("the cost floor is the ordinary allowance for the majors and the pool's own tier on top for a launch token", () => {
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true });
+  const tok = candidateAsset(snap.candidates[0]);
+  const eth = resolveAsset("ETH@robinhood")!;
+  assert.ok(Math.abs(costFloorPct({ from: eth, to: resolveAsset("NVDA@robinhood")!, amount: 1, usd: 1 }, 0.97) - 3) < 1e-9);
+  assert.ok(Math.abs(costFloorPct({ from: eth, to: tok, amount: 1, usd: 1 }, 0.97) - 7) < 1e-9, "a 4% tier plus the 3% allowance");
+  assert.ok(Math.abs(costFloorPct({ from: tok, to: eth, amount: 1, usd: 1 }, 0.97) - 7) < 1e-9, "selling it costs the tier too");
 });

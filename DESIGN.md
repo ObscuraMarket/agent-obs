@@ -203,7 +203,19 @@ be sized to the ordinary cap; one launch position at a time
 model thinks, back to ETH, when volume rolls over two hours running, when
 the position falls through the floor (default 40%), or at the time stop
 (default 8 hours). Exits skip the caps: an exit is never blocked. What the
-desk learns about each token lives in `data/obs-tokens.json`. A swap decision names two registry assets and an amount; nothing
+desk learns about each token lives in `data/obs-tokens.json`.
+
+**Paper sessions** (`desk/paper.ts`). `OBS_PAPER=on` runs a cycle at full
+size with nothing sent: the real wallet is read, the model decides, the
+rails check the intent, the route is priced from live pool state, the exact
+call is simulated from the real wallet when the wallet holds the from-leg,
+and the trade is recorded in `obs-paper.jsonl`, never in the real book.
+Later cycles see the paper positions as held, the launch-token exits apply
+to them, the thought carries `paper: true`, and the equity mark goes to
+`obs-paper-book.jsonl`. `npm run paper` runs one such cycle, `npm run
+paper:report` marks the paper book against the real one at current prices
+(what the trades changed, route cost included), `npm run paper:reset`
+clears it. Paper is ignored while execution is armed. A swap decision names two registry assets and an amount; nothing
 inferred, nothing outside the table. The mandate is Robinhood Chain only:
 a rail refuses any leg on another chain (`OBS_TRADE_CHAINS`, default
 `robinhood`), in public, before the allowlist is even consulted. On that

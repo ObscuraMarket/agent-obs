@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkRails, railsFromEnv, sentTodayUsd, mapStatus, partnerAllowed, depositAddressLooksRight, type Intent, type RailContext } from "../src/desk/rails.ts";
+import { checkRails, railsFromEnv, sentTodayUsd, mapStatus, partnerAllowed, depositAddressLooksRight, clampToBalance, type Intent, type RailContext } from "../src/desk/rails.ts";
 import { resolveAsset, assetKey } from "../src/desk/assets.ts";
 
 const ETH = resolveAsset("ETH@robinhood")!;
@@ -71,4 +71,11 @@ test("partners and deposit addresses are checked", () => {
   assert.equal(depositAddressLooksRight("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", ETH), true);
   assert.equal(depositAddressLooksRight("bc1qxyz", ETH), false);
   assert.equal(depositAddressLooksRight(null, ETH), false);
+});
+
+test("an amount a hair over the balance means the whole balance; further over stays what was asked", () => {
+  assert.equal(clampToBalance(1166.732246, 1166.73224555185), 1166.73224555185);
+  assert.equal(clampToBalance(0.41, 0.41), 0.41);
+  assert.equal(clampToBalance(0.5, 0.41), 0.5, "a real overask is left for the rails to refuse");
+  assert.equal(clampToBalance(0.4, 0.41), 0.4);
 });

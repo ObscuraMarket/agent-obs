@@ -33,6 +33,7 @@ agent/
     desk/thoughts.ts       the observation, the prompt, the parser, the guards on public thoughts
     desk/onchain.ts        the pool lane: a swap in the USDG pools on Robinhood Chain from his own wallet
     desk/candidates.ts     launch candidates from a watcher's feed: gate, probe rule, proven sells, forced exits
+    desk/paper.ts          paper sessions: the desk at full size with nothing sent, marked against the real book
     obscura/orders.ts      Obscura's swap API: currencies, quotes, order status; order creation gated
     autopilot.ts           the posting cycle: reads + journal + recent posts -> one decision
     engage.ts              mention replies, cursor-driven, capped, paced like a person

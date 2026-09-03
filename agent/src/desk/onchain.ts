@@ -221,6 +221,13 @@ export async function ensureAllowancesNeeded(from: Asset, amountRaw: bigint, now
   return need;
 }
 
+/** PURE: the most a route may cost against the pool mark, in percent. A launch token's pool charges its own tier each way, so its floor is that tier plus the ordinary allowance; everything else gets the ordinary allowance alone. */
+export function costFloorPct(i: Intent, minFillRatio: number): number {
+  const allowance = (1 - minFillRatio) * 100;
+  const tier = Math.max(i.from.candidate?.tierPct ?? 0, i.to.candidate?.tierPct ?? 0);
+  return allowance + tier;
+}
+
 export type OnChainResult = { ok: true; trade: Trade } | { ok: false; reason: string; trade?: Trade };
 
 const balanceOf = (a: Asset): Promise<bigint> => (a.kind === "native" ? readNativeBalance(a) : readTokenBalance(a, a.contract as `0x${string}`));
@@ -231,7 +238,8 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   if (!gate.ok) return { ok: false, reason: gate.reason };
   const q = await quoteOnChain(i.from, i.to, i.amount);
   if (!q) return { ok: false, reason: `no pool route from ${assetKey(i.from)} to ${assetKey(i.to)}, or the pools did not answer` };
-  if (q.costPct != null && q.costPct > (1 - c.rails.minFillRatio) * 100) return { ok: false, reason: `the pool route costs ${q.costPct.toFixed(2)}% against the mark; the floor is ${((1 - c.rails.minFillRatio) * 100).toFixed(1)}%` };
+  const floor = costFloorPct(i, c.rails.minFillRatio);
+  if (!i.exit && q.costPct != null && q.costPct > floor) return { ok: false, reason: `the pool route costs ${q.costPct.toFixed(2)}% against the mark; the floor is ${floor.toFixed(1)}%` };
   const deadline = BigInt(Math.floor(now / 1000) + 20 * 60);
   const tx = encodeSwap(q.route, q.amountInRaw, q.minOutRaw, WALLET_ADDRESS as `0x${string}`, deadline);
   let approvals: string[] = [];
@@ -329,27 +337,28 @@ export async function proveSellable(token: Asset, amountRaw: bigint, now = Date.
  * checked against the time stop, the floor and the volume roll-over, and sold
  * back to ETH when one trips. Exits skip the caps; they are never blocked.
  */
-export async function exitCandidates(balances: Record<string, number>, prices: Record<string, number | null>, ctx: RailContext, feed: FeedSnapshot = readFeed(), now = Date.now()): Promise<Trade[]> {
+export async function exitCandidates(balances: Record<string, number>, prices: Record<string, number | null>, ctx: RailContext, feed: FeedSnapshot = readFeed(), now = Date.now(), exec: (i: Intent, c: RailContext, now: number) => Promise<OnChainResult> = executeOnChain, extraTrades: Trade[] = []): Promise<Trade[]> {
   const out: Trade[] = [];
   const eth = ASSETS["ETH@robinhood"];
   const dyn = dynamicAssets(feed);
   const book = readBook();
-  const pos = positions(book.flows, book.trades, balances, prices).positions;
+  const allTrades = [...book.trades, ...extraTrades];
+  const pos = positions(book.flows, allTrades, balances, prices).positions;
   for (const a of Object.values(dyn)) {
     const held = balances[a.symbol] ?? 0;
     if (!(held > 0) || !a.candidate) continue;
     const p = pos.find((x) => x.asset === a.symbol);
     const hourly = feed.hourly[a.candidate.poolId.toLowerCase()] ?? [];
-    const firstBuy = book.trades.filter((t) => t.to.asset === a.symbol && (t.status === "settled" || t.status === "pending")).map((t) => t.at).sort()[0] ?? a.candidate.seenAt;
+    const firstBuy = allTrades.filter((t) => t.to.asset === a.symbol && (t.status === "settled" || t.status === "pending")).map((t) => t.at).sort()[0] ?? a.candidate.seenAt;
     const why = exitSignal({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly }, ctx.rails);
     if (!why) continue;
     const usd = prices[a.symbol] != null ? held * (prices[a.symbol] as number) : null;
-    const r = await executeOnChain({ from: a, to: eth, amount: held, usd, exit: true }, ctx, now);
+    const r = await exec({ from: a, to: eth, amount: held, usd, exit: true }, ctx, now);
     if (r.ok) {
       const row: Trade = { ...r.trade, note: `exit, ${why}; ${r.trade.note ?? ""}` };
-      recordTrade(row);
+      if (exec === executeOnChain) recordTrade(row);
       out.push(row);
-    } else if (r.trade) out.push(r.trade);
+    } else if ("trade" in r && r.trade) out.push(r.trade);
     else console.error(`[desk] exit of ${a.symbol} refused: ${r.reason}`);
   }
   return out;
