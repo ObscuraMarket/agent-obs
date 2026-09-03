@@ -70,7 +70,7 @@ export async function execute(i: Intent, c: RailContext, now = Date.now()): Prom
 /** Poll every open order and move it to settled or failed when Obscura says so. */
 export async function settleOpenOrders(now = Date.now()): Promise<Trade[]> {
   const updated: Trade[] = [];
-  for (const t of latestTrades(readAll()).filter((x) => x.status === "pending")) {
+  for (const t of latestTrades(readAll()).filter((x) => x.status === "pending" && x.venue !== "pool")) {
     const s = await orderStatus(t.id);
     if (!s) continue;
     const next = mapStatus(s.status);

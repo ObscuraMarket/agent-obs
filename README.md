@@ -31,6 +31,7 @@ agent/
     desk/cycle.ts          the desk cycle: reads, quotes, the book, public thoughts, a decision
     desk/book.ts           capital flows, trades, holdings, mark-to-market PnL (pure arithmetic)
     desk/thoughts.ts       the observation, the prompt, the parser, the guards on public thoughts
+    desk/onchain.ts        the pool lane: a swap in the USDG pools on Robinhood Chain from his own wallet
     obscura/orders.ts      Obscura's swap API: currencies, quotes, order status; order creation gated
     autopilot.ts           the posting cycle: reads + journal + recent posts -> one decision
     engage.ts              mention replies, cursor-driven, capped, paced like a person

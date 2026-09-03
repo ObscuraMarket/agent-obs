@@ -139,7 +139,11 @@ reader can check the thinking against it. `decision.kind` is `hold` or
 }
 ```
 One row per trade, latest status. `status` is one of `proposed`, `pending`,
-`settled`, `failed`, `cancelled`. Executed swaps also carry `depositTx` and
+`settled`, `failed`, `cancelled`. `venue` (additive) says where the swap
+ran: `pool` for the Uniswap v4 pools on Robinhood Chain from the desk's own
+wallet (`partner` is `"pool"`, `settlementTx` and `explorerUrl` are the swap
+transaction, `note` carries the route, the expected and received amounts
+and the all-in cost), or `obscura` for a swap routed through Obscura. Executed swaps also carry `depositTx` and
 `depositTxUrl` (the desk's transfer into the route), `trackUrl` (Obscura's
 public order page, `https://obscura.market/exchange/{id}`), and once settled
 `settlementTx` / `explorerUrl` (the payout). The ledger never holds a deposit

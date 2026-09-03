@@ -75,7 +75,7 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
 }
 
 /** The prompt for the operator persona. Public thoughts, private note. */
-export function buildThoughtPrompt(observation: string[], recent: Thought[], journal: string, nowIso: string, canExecute: boolean, assets: string[] = DEFAULT_TRADE_ASSETS.split(",")): string {
+export function buildThoughtPrompt(observation: string[], recent: Thought[], journal: string, nowIso: string, canExecute: boolean, assets: string[] = DEFAULT_TRADE_ASSETS.split(","), venue: "pool" | "obscura" = "pool"): string {
   const past = recent
     .slice(0, 4)
     .map((t) => `- (${new Date(t.at).toISOString().slice(5, 16).replace("T", " ")} UTC) ${t.thoughts.join(" ")} [decision: ${t.decision.kind}${t.decision.kind === "propose-swap" ? ` ${t.decision.amount} ${t.decision.from} to ${t.decision.to}` : ""}]`)
@@ -90,7 +90,9 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     `Think out loud, in public. Two to five short lines that a person on obscura.market will read as your reasoning: what you see, what it means, what you would do and why not yet. Plain first-person sentences. Every figure must appear in the observation above; anything else is "not measured". No addresses of any kind, no advice, no price predictions, no dates, no em dashes, no quotation marks.`,
     "",
     canExecute
-      ? `Then decide. A swap you decide on is executed through Obscura from the desk's own wallet, inside the rails in code (a per-swap cap, a daily cap, one open order at a time, an asset allowlist, a gas reserve). Size small; the rails refuse anything else and the refusal is public. Every swap through Obscura earns the desk cashback in tokenized stocks, which is the earning leg: trade only when the route and the reason are real, never to farm the rebate.`
+      ? venue === "pool"
+        ? `Then decide. A swap you decide on is executed on chain from the desk's own wallet, in the USDG pools on Robinhood Chain, inside the rails in code (a per-swap cap, a daily cap, one open order at a time, an asset allowlist, a gas reserve, a cost floor against the pool mark). The pool quotes in the observation are the prices you actually get. Size small; the rails refuse anything else and the refusal is public. Trade only when the reason is real: a dislocation you can name, a risk you are cutting, a position you want at this price.`
+        : `Then decide. A swap you decide on is executed through Obscura from the desk's own wallet, inside the rails in code (a per-swap cap, a daily cap, one open order at a time, an asset allowlist, a gas reserve). Size small; the rails refuse anything else and the refusal is public. Every swap through Obscura earns the desk cashback in tokenized stocks, which is the earning leg: trade only when the route and the reason are real, never to farm the rebate.`
       : `Then decide. You cannot execute anything yet: a swap decision is a proposal the operator sees on the dashboard, and you say so nowhere except in the DECISION line.`,
     "",
     "Reply in exactly this shape, one item per line:",

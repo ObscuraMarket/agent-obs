@@ -40,6 +40,8 @@ export interface Trade {
   /** The desk's stated reason, public. */
   note?: string;
   updatedAt?: number;
+  /** Where the swap ran: through Obscura's routes, or in the pools on chain from the desk's own wallet. */
+  venue?: "obscura" | "pool";
 }
 
 export interface CapitalFlow {

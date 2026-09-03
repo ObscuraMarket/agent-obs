@@ -8,16 +8,20 @@
 import { GatewayClient } from "@openhermit/sdk";
 import { AGENT_ID, DRY } from "../config.ts";
 import { liveReads, assetPrices, walletBalances } from "../obscura/reads.ts";
-import { quoteWatchlist } from "../obscura/orders.ts";
+import { quoteWatchlist, parseWatchlist, DEFAULT_WATCHLIST } from "../obscura/orders.ts";
 import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, type Trade } from "./book.ts";
 import { observationLines, buildThoughtPrompt, parseThoughtReply, guardThoughts, readThoughts, recordThought, type QuoteRead, type Thought } from "./thoughts.ts";
 import { recallForPrompt, remember } from "../journal.ts";
 import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset } from "./rails.ts";
 import { assetKey } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
+import { executeOnChain, settleOnChain, poolQuotes } from "./onchain.ts";
 
 const MIN_GAP_MIN = Number(process.env.OBS_MIN_THOUGHT_GAP_MIN ?? 25);
 const ARMED = tradingArmed() && !DRY;
+// Where a decided swap runs: the pools on Robinhood Chain from the desk's own
+// wallet (the default), or Obscura's routes. Both sit behind the same rails.
+const VENUE: "pool" | "obscura" = (process.env.OBS_VENUE ?? "pool").toLowerCase() === "obscura" ? "obscura" : "pool";
 
 const baseUrl = process.env.OPENHERMIT_GATEWAY_URL;
 const token = process.env.GATEWAY_ADMIN_TOKEN;
@@ -31,7 +35,7 @@ const now = Date.now();
 // Settle first, so the book the persona sees is current. Skipped in DRY_RUN
 // because settling writes rows.
 if (!DRY) {
-  const settled = await settleOpenOrders(now);
+  const settled = [...(await settleOpenOrders(now)), ...(await settleOnChain(now))];
   for (const t of settled) console.log(`[desk] ${t.id} -> ${t.status}${t.settlementTx ? ` (${t.settlementTx})` : ""}`);
 }
 
@@ -50,12 +54,17 @@ const symbols = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.
 const prices = await assetPrices(symbols, { OBS: reads.market?.priceUsd ?? null });
 const mark = chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now);
 const open = latestTrades(book.trades).filter((t) => t.status === "pending" || t.status === "proposed");
-const quotes: QuoteRead[] = await quoteWatchlist(now);
+const obscuraQuotes: QuoteRead[] = await quoteWatchlist(now);
+// The same legs priced in the pools, so he sees the venue he actually trades on beside Obscura's routes.
+const legs = parseWatchlist(process.env.OBS_QUOTE_WATCHLIST ?? DEFAULT_WATCHLIST)
+  .map((w) => ({ from: resolveAsset(`${w.from.code}@${w.from.network}`), to: resolveAsset(`${w.to.code}@${w.to.network}`), amount: w.amount }))
+  .filter((l): l is { from: NonNullable<typeof l.from>; to: NonNullable<typeof l.to>; amount: number } => !!l.from && !!l.to && l.from.chain === "robinhood" && l.to.chain === "robinhood");
+const quotes: QuoteRead[] = [...obscuraQuotes, ...(await poolQuotes(legs, now))];
 const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread });
 console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  - " + l).join("\n")}`);
 
 // The persona thinks.
-const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED, [...railsFromEnv().allowedAssets]);
+const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED, [...railsFromEnv().allowedAssets], VENUE);
 const sessionId = "desk-cycle";
 await gw.agent(AGENT_ID).openSession({ sessionId, source: { kind: "api", interactive: true, type: "direct" } }).catch(() => {});
 const resp = await gw.agent(AGENT_ID).postMessageSync(sessionId, { text: prompt }, { timeout: 90_000 });
@@ -94,10 +103,10 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
       sentTodayUsd: sentTodayUsd(book.trades, now),
     };
     if (ARMED) {
-      const r = await execute({ from, to, amount: decision.amount, usd }, ctx, now);
+      const r = VENUE === "obscura" ? await execute({ from, to, amount: decision.amount, usd }, ctx, now) : await executeOnChain({ from, to, amount: decision.amount, usd }, ctx, now);
       if (r.ok) {
         executed = r.trade;
-        decision = { ...decision, from: assetKey(from), to: assetKey(to), reason: `${decision.reason || "executing"}; sent ${decision.amount} ${from.symbol} via ${r.trade.partner}` };
+        decision = { ...decision, from: assetKey(from), to: assetKey(to), reason: `${decision.reason || "executing"}; ${r.trade.venue === "pool" ? `swapped ${decision.amount} ${from.symbol} on chain, ${r.trade.status}` : `sent ${decision.amount} ${from.symbol} via ${r.trade.partner}`}` };
       } else {
         decision = { kind: "hold", reason: `wanted ${decision.amount} ${assetKey(from)} to ${assetKey(to)}, refused: ${r.reason}` };
       }
@@ -133,4 +142,4 @@ recordThought(entry);
 recordSnapshot(mark);
 if (proposal) recordTrade(proposal);
 remember(AGENT_ID, { decision: decision.kind === "hold" ? "hold" : "post", note: parsed.note });
-console.log(`[desk] recorded${proposal ? `, proposal ${proposal.id} on the board` : ""}${executed ? `, order ${executed.id} pending (${executed.trackUrl})` : ""}.`);
+console.log(`[desk] recorded${proposal ? `, proposal ${proposal.id} on the board` : ""}${executed ? (executed.venue === "pool" ? `, swap ${executed.id} ${executed.status} (${executed.explorerUrl ?? "no receipt yet"})` : `, order ${executed.id} pending (${executed.trackUrl})`) : ""}.`);

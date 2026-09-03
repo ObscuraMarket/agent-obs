@@ -170,8 +170,18 @@ Bitcoin, Solana and other non-EVM legs would need their own keys and are a
 separate decision.
 
 **The execution stage** (`desk/assets.ts`, `desk/rails.ts`,
-`desk/signer.ts`, `desk/execute.ts`). The model decides what; code decides
-whether. A swap decision names two registry assets and an amount; nothing
+`desk/signer.ts`, `desk/onchain.ts`, `desk/execute.ts`). The model decides
+what; code decides whether. Two lanes sit behind the same rails, chosen by
+`OBS_VENUE`: the pools on Robinhood Chain from the desk's own wallet (the
+default, `onchain.ts`: the route through USDG, the output estimated from
+live pool state exactly within the active tick, the router call in the
+shape this chain's fork accepts, simulated from the wallet before it is
+signed, a cost floor against the pool mark, one-time Permit2 approvals for
+an ERC-20 from-leg, the receipt and the balance delta as the settled row),
+and Obscura's routes (`execute.ts`, the cashback lane). Measured 2026-09-03:
+the pool lane costs about 0.31% all in on ETH to NVDA; Obscura's route on
+the same pair costs 7 to 11% round trip, so the pools are where he trades
+and Obscura is where he demonstrates the rebate. A swap decision names two registry assets and an amount; nothing
 inferred, nothing outside the table. The mandate is Robinhood Chain only:
 a rail refuses any leg on another chain (`OBS_TRADE_CHAINS`, default
 `robinhood`), in public, before the allowlist is even consulted. On that

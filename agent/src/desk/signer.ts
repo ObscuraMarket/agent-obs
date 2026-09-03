@@ -3,7 +3,7 @@
 // returned, or kept on a module-level variable. The address derived from it
 // must match OBS_WALLET_ADDRESS, or nothing is sent.
 import { readFileSync } from "node:fs";
-import { createPublicClient, createWalletClient, defineChain, encodeFunctionData, erc20Abi, http, parseUnits, type Hex } from "viem";
+import { createPublicClient, createWalletClient, defineChain, encodeFunctionData, erc20Abi, http, parseAbi, parseUnits, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { WALLET_ADDRESS } from "../config.ts";
 import { walletFile } from "./rails.ts";
@@ -66,3 +66,78 @@ export async function sendDeposit(asset: Asset, to: `0x${string}`, amount: numbe
   if (receipt.status !== "success") throw new Error(`deposit transaction ${hash} reverted`);
   return hash;
 }
+
+// ---- The on-chain lane's needs: reads without a key, one raw send with it. ----
+
+export interface RawTx {
+  to: `0x${string}`;
+  data: Hex;
+  value: bigint;
+}
+
+const PERMIT2_ABI = parseAbi([
+  "function allowance(address owner, address token, address spender) view returns (uint160 amount, uint48 expiration, uint48 nonce)",
+  "function approve(address token, address spender, uint160 amount, uint48 expiration)",
+]);
+
+const shortError = (e: unknown): string => {
+  const m = (e as { shortMessage?: string; message?: string })?.shortMessage ?? (e instanceof Error ? e.message : String(e));
+  return m.split("\n")[0].slice(0, 220);
+};
+
+/** eth_call of the exact transaction, from the desk's address, with its value. No key involved. */
+export async function simulateFromWallet(asset: Asset, tx: RawTx): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!WALLET_ADDRESS) return { ok: false, reason: "no wallet address configured" };
+  try {
+    const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
+    await pub.call({ account: WALLET_ADDRESS as `0x${string}`, to: tx.to, data: tx.data, value: tx.value });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: shortError(e) };
+  }
+}
+
+export async function readNativeBalance(asset: Asset, holder = WALLET_ADDRESS): Promise<bigint> {
+  const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
+  return pub.getBalance({ address: holder as `0x${string}` });
+}
+export async function readTokenBalance(asset: Asset, token: `0x${string}`, holder = WALLET_ADDRESS): Promise<bigint> {
+  const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
+  return pub.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [holder as `0x${string}`] });
+}
+export async function readErc20Allowance(asset: Asset, token: `0x${string}`, spender: `0x${string}`): Promise<bigint> {
+  const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
+  return pub.readContract({ address: token, abi: erc20Abi, functionName: "allowance", args: [WALLET_ADDRESS as `0x${string}`, spender] });
+}
+export async function readPermit2Allowance(asset: Asset, permit2: `0x${string}`, token: `0x${string}`, spender: `0x${string}`): Promise<{ amount: bigint; expiration: number }> {
+  const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
+  const [amount, expiration] = await pub.readContract({ address: permit2, abi: PERMIT2_ABI, functionName: "allowance", args: [WALLET_ADDRESS as `0x${string}`, token, spender] });
+  return { amount, expiration: Number(expiration) };
+}
+
+/** Calldata for the two one-time approvals the sell leg needs. Pure. */
+export function approveErc20Data(spender: `0x${string}`): Hex {
+  return encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, 2n ** 256n - 1n] });
+}
+export function approvePermit2Data(token: `0x${string}`, spender: `0x${string}`, expiration: number): Hex {
+  return encodeFunctionData({ abi: PERMIT2_ABI, functionName: "approve", args: [token, spender, 2n ** 160n - 1n, expiration] });
+}
+
+/** Sign and send one raw transaction from the desk's wallet; the hash, immediately. */
+export async function sendTx(asset: Asset, tx: RawTx): Promise<`0x${string}`> {
+  const account = loadAccount();
+  const wallet = createWalletClient({ account, chain: viemChain(asset), transport: transport(asset) });
+  return wallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value });
+}
+
+/** The receipt, or null if it has not landed within the timeout. */
+export async function waitReceipt(asset: Asset, hash: `0x${string}`, timeoutMs = 120_000): Promise<{ status: "success" | "reverted"; gasCostWei: bigint } | null> {
+  try {
+    const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
+    const r = await pub.waitForTransactionReceipt({ hash, timeout: timeoutMs });
+    return { status: r.status, gasCostWei: r.gasUsed * r.effectiveGasPrice };
+  } catch {
+    return null;
+  }
+}
+

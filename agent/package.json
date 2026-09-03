@@ -22,7 +22,8 @@
     "desk:dry": "DRY_RUN=1 tsx src/desk/cycle.ts",
     "wallet": "node scripts/wallet.mjs",
     "wallet:balances": "tsx src/obscura/walletBalances.ts",
-    "capital": "tsx src/desk/capital.ts"
+    "capital": "tsx src/desk/capital.ts",
+    "swap:probe": "tsx scripts/probeSwap.ts"
   },
   "dependencies": {
     "@openhermit/sdk": "^0.7.0",

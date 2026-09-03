@@ -28,12 +28,14 @@ export interface PoolSpec {
   usdToken: 0 | 1;
   feePct: number;
   tickSpacing: number;
+  /** True when the pool has a hook contract; the desk trades hookless pools only. */
+  hooks?: boolean;
 }
 
 export interface ChainMemory {
   verifiedAt: string;
   chain: { id: number; name: string; publicRpc: string; explorer: string };
-  contracts: { uniswapV4: { poolManager: string; stateView: string }; ramsesV3: { factory: string } };
+  contracts: { uniswapV4: { poolManager: string; stateView: string; positionManager: string; universalRouter: string; quoter: string; permit2: string }; ramsesV3: { factory: string } };
   tokens: Record<string, { address?: string; decimals?: number } | Record<string, string>>;
   obsMarket: {
     primary: PoolSpec & { measured: { at: string; priceUsd: number; usdgDepth2pct: number } };
@@ -119,6 +121,8 @@ export interface PoolRead {
   depthUsd2pct: number;
   liquidity: string;
   tick: number;
+  /** The raw Q64.96 square-root price, for exact swap arithmetic. */
+  sqrtPriceX96: string;
   at: number;
 }
 
@@ -138,7 +142,7 @@ export async function poolRead(spec: PoolSpec, stateView = chainMemory().contrac
   const usdIs0 = spec.usdToken === 0;
   const priceUsd = usdIs0 ? (token1PerToken0 > 0 ? 1 / token1PerToken0 : 0) : token1PerToken0;
   const depthUsd2pct = usdIs0 ? depthToken0At2pct(liquidity, slot.sqrtPriceX96, spec.decimals0) : depthToken1At2pct(liquidity, slot.sqrtPriceX96, spec.decimals1);
-  return { venue: spec.venue, feePct: spec.feePct, priceUsd, depthUsd2pct, liquidity: liquidity.toString(), tick: slot.tick, at: Date.now() };
+  return { venue: spec.venue, feePct: spec.feePct, priceUsd, depthUsd2pct, liquidity: liquidity.toString(), tick: slot.tick, sqrtPriceX96: slot.sqrtPriceX96.toString(), at: Date.now() };
 }
 
 export interface MarketRead {
