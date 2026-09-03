@@ -34,6 +34,8 @@ export interface Asset {
   /** Obscura will accept this as the from-leg (deposit) / pay it out as the to-leg (withdrawal). */
   deposit: boolean;
   withdrawal: boolean;
+  /** Set on a launch candidate from the watcher's feed: its hookless USDG pool, for the pool lane only. */
+  candidate?: { poolId: `0x${string}`; feePips: number; tierPct: number; tickSpacing: number; usdgIs0: boolean; seenAt: number };
 }
 
 /** Keyed by SYMBOL@network. */

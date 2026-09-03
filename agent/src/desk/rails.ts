@@ -23,6 +23,15 @@ export interface Rails {
   allowedChains: Set<string>;
   /** Refuse a route whose output is below this fraction of the best quote seen. */
   minFillRatio: number;
+  /** Launch candidates from the watcher's feed may be traded in the pool lane. */
+  candidatesOn: boolean;
+  /** The first buy of any launch token is capped here until a sell is proven to work. */
+  probeUsd: number;
+  /** Launch positions held at once. */
+  maxCandidates: number;
+  candidateMaxHoldH: number;
+  candidateFloorPct: number;
+  candidateVolumeDropPct: number;
 }
 
 // The mandate: this desk trades on Robinhood Chain only, in the majors,
@@ -46,6 +55,12 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     allowedAssets: new Set((env.OBS_TRADE_ASSETS ?? DEFAULT_TRADE_ASSETS).split(",").map((s) => s.trim()).filter(Boolean)),
     allowedChains: new Set((env.OBS_TRADE_CHAINS ?? DEFAULT_TRADE_CHAINS).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)),
     minFillRatio: Number(env.OBS_MIN_FILL_RATIO ?? 0.97),
+    candidatesOn: (env.OBS_CANDIDATES ?? "on") !== "off",
+    probeUsd: Number(env.OBS_PROBE_USD ?? 5),
+    maxCandidates: Number(env.OBS_MAX_CANDIDATES ?? 1),
+    candidateMaxHoldH: Number(env.OBS_CANDIDATE_MAX_HOLD_H ?? 8),
+    candidateFloorPct: Number(env.OBS_CANDIDATE_FLOOR_PCT ?? 40),
+    candidateVolumeDropPct: Number(env.OBS_CANDIDATE_VOLUME_DROP_PCT ?? 30),
   };
 }
 
@@ -62,6 +77,8 @@ export interface Intent {
   amount: number;
   /** Dollar value of the from-leg at decision time; null means unpriced, which the rails refuse. */
   usd: number | null;
+  /** An exit from a held position: the caps and the open-order limit do not apply, because an exit is never blocked. */
+  exit?: boolean;
 }
 
 export interface RailContext {
@@ -82,14 +99,17 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   if (!(i.amount > 0)) return { ok: false, reason: "amount must be positive" };
   if (assetKey(i.from) === assetKey(i.to)) return { ok: false, reason: "from and to are the same asset" };
   for (const leg of [i.from, i.to]) if (!r.allowedChains.has(leg.chain)) return { ok: false, reason: `${assetKey(leg)} is on ${leg.chain}; this desk trades on Robinhood Chain only` };
-  if (!r.allowedAssets.has(assetKey(i.from))) return { ok: false, reason: `${assetKey(i.from)} is not on the trade allowlist` };
-  if (!r.allowedAssets.has(assetKey(i.to))) return { ok: false, reason: `${assetKey(i.to)} is not on the trade allowlist` };
-  if (!i.from.deposit) return { ok: false, reason: `Obscura does not accept ${assetKey(i.from)} as a deposit` };
-  if (!i.to.withdrawal) return { ok: false, reason: `Obscura does not pay out ${assetKey(i.to)}` };
+  const allowed = (a: Asset) => r.allowedAssets.has(assetKey(a)) || (r.candidatesOn && !!a.candidate);
+  if (!allowed(i.from)) return { ok: false, reason: `${assetKey(i.from)} is not on the trade allowlist` };
+  if (!allowed(i.to)) return { ok: false, reason: `${assetKey(i.to)} is not on the trade allowlist` };
+  if (!i.from.candidate && !i.from.deposit) return { ok: false, reason: `Obscura does not accept ${assetKey(i.from)} as a deposit` };
+  if (!i.to.candidate && !i.to.withdrawal) return { ok: false, reason: `Obscura does not pay out ${assetKey(i.to)}` };
   if (i.usd == null) return { ok: false, reason: `${i.from.symbol} is unpriced; refusing to size a swap blind` };
-  if (i.usd > r.maxSwapUsd) return { ok: false, reason: `$${i.usd.toFixed(2)} exceeds the per-swap cap of $${r.maxSwapUsd}` };
-  if (c.sentTodayUsd + i.usd > r.dailySwapUsd) return { ok: false, reason: `$${(c.sentTodayUsd + i.usd).toFixed(2)} would exceed the daily cap of $${r.dailySwapUsd}` };
-  if (c.openOrders >= r.maxOpenOrders) return { ok: false, reason: `${c.openOrders} order(s) already open; the limit is ${r.maxOpenOrders}` };
+  if (!i.exit) {
+    if (i.usd > r.maxSwapUsd) return { ok: false, reason: `$${i.usd.toFixed(2)} exceeds the per-swap cap of $${r.maxSwapUsd}` };
+    if (c.sentTodayUsd + i.usd > r.dailySwapUsd) return { ok: false, reason: `$${(c.sentTodayUsd + i.usd).toFixed(2)} would exceed the daily cap of $${r.dailySwapUsd}` };
+    if (c.openOrders >= r.maxOpenOrders) return { ok: false, reason: `${c.openOrders} order(s) already open; the limit is ${r.maxOpenOrders}` };
+  }
   const have = c.balances[assetKey(i.from)] ?? 0;
   if (have + 1e-12 < i.amount) return { ok: false, reason: `the wallet holds ${have} ${assetKey(i.from)}, less than ${i.amount}` };
   if (i.from.kind === "native") {
@@ -132,3 +152,24 @@ export function depositAddressLooksRight(address: string | null, from: Asset): b
 }
 
 export { resolveAsset };
+
+export interface CandidateKnowledge {
+  proven: boolean | null;
+  blacklisted: boolean;
+}
+/**
+ * PURE: the launch-token rules on top of the rails. A buy of a launch token
+ * is refused when the token could not be sold before, when another launch
+ * position is already held, or when candidates are off; until a sell has been
+ * proven the buy is capped at the probe size. Sells (exits) always pass.
+ */
+export function checkCandidate(i: Intent, known: CandidateKnowledge | null, heldCandidates: string[], r: Rails): { ok: true; maxUsd?: number } | { ok: false; reason: string } {
+  if (!i.to.candidate) return { ok: true };
+  if (!r.candidatesOn) return { ok: false, reason: "launch candidates are switched off" };
+  if (known?.blacklisted) return { ok: false, reason: `${i.to.symbol} could not be sold when probed; it is blacklisted` };
+  const others = heldCandidates.filter((s) => s !== i.to.symbol);
+  if (others.length >= r.maxCandidates) return { ok: false, reason: `already holding ${others.join(", ")}; ${r.maxCandidates === 1 ? "one" : r.maxCandidates} launch position${r.maxCandidates === 1 ? "" : "s"} at a time` };
+  if (known?.proven !== true) return { ok: true, maxUsd: r.probeUsd };
+  return { ok: true };
+}
+

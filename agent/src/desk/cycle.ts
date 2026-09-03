@@ -15,7 +15,10 @@ import { recallForPrompt, remember } from "../journal.ts";
 import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset } from "./rails.ts";
 import { assetKey } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
-import { executeOnChain, settleOnChain, poolQuotes } from "./onchain.ts";
+import { executeOnChain, settleOnChain, poolQuotes, exitCandidates } from "./onchain.ts";
+import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens } from "./candidates.ts";
+import { checkCandidate } from "./rails.ts";
+import { positions } from "./book.ts";
 
 const MIN_GAP_MIN = Number(process.env.OBS_MIN_THOUGHT_GAP_MIN ?? 25);
 const ARMED = tradingArmed() && !DRY;
@@ -39,6 +42,23 @@ if (!DRY) {
   for (const t of settled) console.log(`[desk] ${t.id} -> ${t.status}${t.settlementTx ? ` (${t.settlementTx})` : ""}`);
 }
 
+// The rails' own exits, before the model thinks: a held launch token past
+// its time stop, through its floor, or with volume rolling over is sold
+// back to ETH here, and the reason is public. Only when armed.
+if (ARMED && readTokens().length) {
+  const readsForExit = await liveReads();
+  const chainForExit = readsForExit.wallet ? walletBalances(readsForExit.wallet) : null;
+  if (chainForExit) {
+    const bookForExit = readBook();
+    const heldNames = Object.values(dynamicAssets()).filter((a) => (chainForExit.bySymbol[a.symbol] ?? 0) > 0).map((a) => a.symbol);
+    if (heldNames.length) {
+      const exitPrices = await assetPrices(heldNames, {});
+      const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookForExit.trades, now) }, undefined, now);
+      for (const t of exits) console.log(`[desk] forced exit ${t.id} ${t.status}: ${t.note}`);
+    }
+  }
+}
+
 // Cadence floor, before any model call.
 const last = readThoughts(1)[0];
 if (last && !DRY && (now - last.at) / 60000 < MIN_GAP_MIN) {
@@ -60,11 +80,26 @@ const legs = parseWatchlist(process.env.OBS_QUOTE_WATCHLIST ?? DEFAULT_WATCHLIST
   .map((w) => ({ from: resolveAsset(`${w.from.code}@${w.from.network}`), to: resolveAsset(`${w.to.code}@${w.to.network}`), amount: w.amount }))
   .filter((l): l is { from: NonNullable<typeof l.from>; to: NonNullable<typeof l.to>; amount: number } => !!l.from && !!l.to && l.from.chain === "robinhood" && l.to.chain === "robinhood");
 const quotes: QuoteRead[] = [...obscuraQuotes, ...(await poolQuotes(legs, now))];
-const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread });
+// The launch watcher's feed: candidates the desk may trade, and what each pool did since.
+const feed = readFeed(now);
+const trailOf = (poolId: string) => {
+  const h = feed.hourly[poolId.toLowerCase()] ?? [];
+  return h.length ? h.slice(-4).map((x) => `$${Math.round(x.usd)}${x.px != null ? ` at ${x.px.toPrecision(3)}` : ""}`).join(", ") + " per hour" : "no hourly rows yet";
+};
+const candidates = feed.candidates.slice(0, 4).map((cnd) => ({ symbol: cnd.symbol, hour: cnd.hour, volUsd: cnd.volUsd, movePct: cnd.movePct, senders: cnd.senders, tierPct: cnd.tierPct, ageH: (now - cnd.at) / 3600e3, trail: trailOf(cnd.poolId) }));
+const dyn = dynamicAssets(feed);
+const heldDyn = Object.values(dyn).filter((a) => (chain?.bySymbol[a.symbol] ?? 0) > 0);
+const pos = positions(book.flows, book.trades, chain?.bySymbol ?? mark.holdings, prices).positions;
+const heldCandidates = heldDyn.map((a) => {
+  const p = pos.find((x) => x.asset === a.symbol);
+  const firstBuy = book.trades.filter((t) => t.to.asset === a.symbol && t.status === "settled").map((t) => t.at).sort()[0] ?? a.candidate?.seenAt ?? now;
+  return { symbol: a.symbol, qty: chain?.bySymbol[a.symbol] ?? 0, costUsd: p?.costUsd ?? null, valueUsd: p?.valueUsd ?? null, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, ageH: (now - firstBuy) / 3600e3, trail: a.candidate ? trailOf(a.candidate.poolId) : "unknown" };
+});
+const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, heldCandidates });
 console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  - " + l).join("\n")}`);
 
 // The persona thinks.
-const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED, [...railsFromEnv().allowedAssets], VENUE);
+const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED, [...railsFromEnv().allowedAssets], VENUE, candidates.map((cnd) => `${cnd.symbol}@robinhood`));
 const sessionId = "desk-cycle";
 await gw.agent(AGENT_ID).openSession({ sessionId, source: { kind: "api", interactive: true, type: "direct" } }).catch(() => {});
 const resp = await gw.agent(AGENT_ID).postMessageSync(sessionId, { text: prompt }, { timeout: 90_000 });
@@ -87,8 +122,8 @@ let decision = parsed.decision;
 let proposal: Trade | null = null;
 let executed: Trade | null = null;
 if (decision.kind === "propose-swap" && decision.from && decision.to && decision.amount) {
-  const from = resolveAsset(decision.from);
-  const to = resolveAsset(decision.to);
+  const from = resolveAny(decision.from, feed);
+  const to = resolveAny(decision.to, feed);
   if (!from || !to) {
     decision = { kind: "hold", reason: `proposed ${decision.amount} ${decision.from} to ${decision.to} but one of them is not a registered asset; held instead` };
   } else {
@@ -102,24 +137,34 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
       openOrders: open.filter((t) => t.status === "pending").length,
       sentTodayUsd: sentTodayUsd(book.trades, now),
     };
-    if (ARMED) {
-      const r = VENUE === "obscura" ? await execute({ from, to, amount: decision.amount, usd }, ctx, now) : await executeOnChain({ from, to, amount: decision.amount, usd }, ctx, now);
+    const gate = checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails);
+    if (!gate.ok) {
+      decision = { kind: "hold", reason: `wanted ${decision.amount} ${assetKey(from)} to ${assetKey(to)}, refused: ${gate.reason}` };
+    } else if (gate.maxUsd != null && usd != null && usd > gate.maxUsd) {
+      const clamped = Number(((decision.amount * gate.maxUsd) / usd).toPrecision(6));
+      decision = { ...decision, amount: clamped, reason: `${decision.reason || ""} (sized down to a $${gate.maxUsd} probe: ${to.symbol} has no proven sell yet)`.trim() };
+    }
+    const amt = decision.kind === "propose-swap" ? (decision.amount as number) : 0;
+    const intentUsd = usd != null && px != null ? amt * px : usd;
+    if (decision.kind === "propose-swap" && ARMED) {
+      const isExit = !!from.candidate;
+      const r = VENUE === "obscura" && !from.candidate && !to.candidate ? await execute({ from, to, amount: amt, usd: intentUsd }, ctx, now) : await executeOnChain({ from, to, amount: amt, usd: intentUsd, exit: isExit }, ctx, now);
       if (r.ok) {
         executed = r.trade;
-        decision = { ...decision, from: assetKey(from), to: assetKey(to), reason: `${decision.reason || "executing"}; ${r.trade.venue === "pool" ? `swapped ${decision.amount} ${from.symbol} on chain, ${r.trade.status}` : `sent ${decision.amount} ${from.symbol} via ${r.trade.partner}`}` };
+        decision = { ...decision, from: assetKey(from), to: assetKey(to), reason: `${decision.reason || "executing"}; ${r.trade.venue === "pool" ? `swapped ${amt} ${from.symbol} on chain, ${r.trade.status}` : `sent ${amt} ${from.symbol} via ${r.trade.partner}`}` };
       } else {
-        decision = { kind: "hold", reason: `wanted ${decision.amount} ${assetKey(from)} to ${assetKey(to)}, refused: ${r.reason}` };
+        decision = { kind: "hold", reason: `wanted ${amt} ${assetKey(from)} to ${assetKey(to)}, refused: ${r.reason}` };
       }
-    } else {
-      const have = chain ? (chain.byKey[assetKey(from)] ?? 0) : (mark.holdings[from.symbol] ?? 0);
-      if (have + 1e-12 < decision.amount) {
-        decision = { kind: "hold", reason: `proposed ${decision.amount} ${assetKey(from)} to ${assetKey(to)} but the desk holds ${have}; held instead` };
+    } else if (decision.kind === "propose-swap") {
+      const have = chain ? (chain.bySymbol[from.symbol] ?? chain.byKey[assetKey(from)] ?? 0) : (mark.holdings[from.symbol] ?? 0);
+      if (have + 1e-12 < amt) {
+        decision = { kind: "hold", reason: `proposed ${amt} ${assetKey(from)} to ${assetKey(to)} but the desk holds ${have}; held instead` };
       } else {
         proposal = {
           at: now,
           id: `prop-${now}`,
           status: "proposed",
-          from: { asset: from.symbol, network: from.network, amount: decision.amount, usd },
+          from: { asset: from.symbol, network: from.network, amount: amt, usd: intentUsd },
           to: { asset: to.symbol, network: to.network, amount: 0, usd: null },
           partner: null,
           note: decision.reason || undefined,

@@ -15,8 +15,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, DRY, dataPath } from "../config.ts";
 import { appendLedger, readLedger } from "../ledger.ts";
 import { ASSETS } from "../desk/assets.ts";
+import { readTokens, dynamicPoolSpec, dynamicAssets } from "../desk/candidates.ts";
 import { UA, rpc, ethCall, rpcBlocked } from "./rpc.ts";
-import { obsMarket, poolRead, chainMemory, type MarketRead } from "./pools.ts";
+import { obsMarket, poolRead, chainMemory, type MarketRead, type PoolSpec } from "./pools.ts";
 
 export { rpcBlocked };
 export type { MarketRead };
@@ -144,6 +145,8 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
   tokens["USDG@robinhood"] = usdg;
   tokens["OBS@robinhood"] = obs;
   for (const a of registered.filter((x) => x.chain === "robinhood" && x.symbol !== "USDG")) tokens[`${a.symbol}@${a.network}`] = await tokenBalance(a.contract as string, address, a.decimals);
+  // Launch tokens the desk has traded (data/obs-tokens.json): read too, so a held one is on the book.
+  for (const t of readTokens()) if (!ASSETS[`${t.symbol}@robinhood`]) tokens[`${t.symbol}@robinhood`] = await tokenBalance(t.contract, address, t.decimals);
   const nvda = tokens["NVDA@robinhood"] ?? null;
   const [[ethMainnet, ...mainnetBalances], rewards] = await Promise.all([
     mainnetP,
@@ -331,10 +334,17 @@ export async function assetPrices(symbols: string[], known: Record<string, numbe
     }
   }
   // Tokenized stocks, and anything else CoinGecko does not carry: the asset's
-  // own USDG pool on Robinhood Chain, from the chain memory, one at a time.
+  // own USDG pool on Robinhood Chain, from the chain memory or, for a launch
+  // token, from the candidate feed or the token file. One at a time.
+  let dyn: ReturnType<typeof dynamicAssets> | null = null;
   for (const s of want) {
     if (s in out) continue;
-    const spec = chainMemory().referencePools[`${s}/USDG`];
+    let spec: PoolSpec | undefined = chainMemory().referencePools[`${s}/USDG`];
+    if (!spec) {
+      dyn ??= dynamicAssets();
+      const a = dyn[`${s}@robinhood`];
+      spec = (a && dynamicPoolSpec(a)) ?? undefined;
+    }
     if (!spec) continue;
     const r = await poolRead(spec);
     if (r && r.priceUsd > 0) out[s] = r.priceUsd;

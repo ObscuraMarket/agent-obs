@@ -181,7 +181,29 @@ an ERC-20 from-leg, the receipt and the balance delta as the settled row),
 and Obscura's routes (`execute.ts`, the cashback lane). Measured 2026-09-03:
 the pool lane costs about 0.31% all in on ETH to NVDA; Obscura's route on
 the same pair costs 7 to 11% round trip, so the pools are where he trades
-and Obscura is where he demonstrates the rebate. A swap decision names two registry assets and an amount; nothing
+and Obscura is where he demonstrates the rebate.
+
+**Launch candidates** (`desk/candidates.ts`). The desk also trades the
+tokens a launch watcher finds on the chain. The watcher is the operator's;
+the desk reads its feed as a generic JSONL (`OBS_CANDIDATE_FEED`): rows of
+kind `candidate` (pool id, token, symbol, fee tier, gate verdict, hour after
+launch, prior-hour volume, move, senders) and `hourly` (per-pool volume and
+price). A row becomes a tradable asset only if the watcher's gate passed,
+the pool is hookless and USDG-paired at a tier the desk accepts (default at
+most 5%), and it is recent (default 6 hours); the pool's tick spacing is
+derived from the pool id, so the watcher's state is never read. The
+observation names the candidates with their fee tier and the hourly trail
+since, and the prompt lets him name them. Rules in code, on top of the
+rails: the first buy of any launch token is a probe (`OBS_PROBE_USD`,
+default $5); right after it lands the desk grants the two Permit2
+approvals and simulates selling what it got, and a token whose sell reverts
+is blacklisted for good (bounded cost, the probe) while a proven one may
+be sized to the ordinary cap; one launch position at a time
+(`OBS_MAX_CANDIDATES`); and exits the rails run themselves before the
+model thinks, back to ETH, when volume rolls over two hours running, when
+the position falls through the floor (default 40%), or at the time stop
+(default 8 hours). Exits skip the caps: an exit is never blocked. What the
+desk learns about each token lives in `data/obs-tokens.json`. A swap decision names two registry assets and an amount; nothing
 inferred, nothing outside the table. The mandate is Robinhood Chain only:
 a rail refuses any leg on another chain (`OBS_TRADE_CHAINS`, default
 `robinhood`), in public, before the allowlist is even consulted. On that

@@ -45,7 +45,7 @@ const usd = (v: number) => `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en
 const qty = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: 6 });
 
 /** PURE: the measured observation. Every number the model may use is here. */
-export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number; unread?: string[] }): string[] {
+export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number; unread?: string[]; candidates?: Array<{ symbol: string; hour: number; volUsd: number; movePct: number; senders: number; tierPct: number; ageH: number; trail: string }>; heldCandidates?: Array<{ symbol: string; qty: number; costUsd: number | null; valueUsd: number | null; pnlPct: number | null; ageH: number; trail: string }> }): string[] {
   const lines: string[] = [];
   if (i.unread?.length) lines.push(`Balances the chain did not answer for this cycle, excluded from equity, not zero: ${i.unread.join(", ")}. Do not size anything against them.`);
   const h = Object.entries(i.book.holdings);
@@ -63,6 +63,12 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
   if (i.quotes.length) {
     lines.push(
       `Quotes this cycle: ${i.quotes.map((q) => `${qty(q.amountIn)} ${q.from} to ${q.amountOut == null ? "no quote" : `${qty(q.amountOut)} ${q.to}`}${q.partner ? ` (${q.partner})` : ""}`).join("; ")}.`,
+      ...(i.candidates?.length
+        ? [`Launch candidates from the watcher, newest first: ${i.candidates.map((c) => `${c.symbol}@robinhood (hour ${c.hour}, ${c.ageH.toFixed(1)}h ago, $${Math.round(c.volUsd).toLocaleString("en-US")} prior-hour volume, ${c.movePct >= 0 ? "+" : ""}${c.movePct.toFixed(1)}% move, ${c.senders} senders, ${c.tierPct}% fee each way; since then ${c.trail})`).join("; ")}.`]
+        : i.candidates ? ["Launch candidates from the watcher: none in the window."] : []),
+      ...(i.heldCandidates?.length
+        ? i.heldCandidates.map((h) => `Held launch token ${h.symbol}: ${qty(h.qty)}, cost ${h.costUsd == null ? "unknown" : usd(h.costUsd)}, now ${h.valueUsd == null ? "unpriced" : usd(h.valueUsd)}${h.pnlPct == null ? "" : ` (${h.pnlPct >= 0 ? "+" : ""}${h.pnlPct.toFixed(1)}%)`}, held ${h.ageH.toFixed(1)}h; hourly volume ${h.trail}.`)
+        : []),
     );
   }
   if (i.reads.prices.btcUsd != null) lines.push(`BTC ${usd(i.reads.prices.btcUsd)}.`);
@@ -75,7 +81,7 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
 }
 
 /** The prompt for the operator persona. Public thoughts, private note. */
-export function buildThoughtPrompt(observation: string[], recent: Thought[], journal: string, nowIso: string, canExecute: boolean, assets: string[] = DEFAULT_TRADE_ASSETS.split(","), venue: "pool" | "obscura" = "pool"): string {
+export function buildThoughtPrompt(observation: string[], recent: Thought[], journal: string, nowIso: string, canExecute: boolean, assets: string[] = DEFAULT_TRADE_ASSETS.split(","), venue: "pool" | "obscura" = "pool", candidates: string[] = []): string {
   const past = recent
     .slice(0, 4)
     .map((t) => `- (${new Date(t.at).toISOString().slice(5, 16).replace("T", " ")} UTC) ${t.thoughts.join(" ")} [decision: ${t.decision.kind}${t.decision.kind === "propose-swap" ? ` ${t.decision.amount} ${t.decision.from} to ${t.decision.to}` : ""}]`)
@@ -102,7 +108,7 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     "REASON: <one sentence>",
     "NOTE: <one private sentence to yourself, fed back next cycle>",
     "",
-    `For a swap the DECISION line is: DECISION: swap <amount> <FROM> -> <TO>, where an asset is a symbol with an optional network, for example ETH@robinhood or USDG@robinhood or USDC@erc20. Assets you may name: ${assets.join(", ")}. Both legs of every swap stay on Robinhood Chain; the rails refuse anything else, in public.`,
+    `For a swap the DECISION line is: DECISION: swap <amount> <FROM> -> <TO>, where an asset is a symbol with an optional network, for example ETH@robinhood or USDG@robinhood or USDC@erc20. Assets you may name: ${assets.join(", ")}${candidates.length ? `, and the launch candidates listed in the observation (${candidates.join(", ")})` : ""}. Both legs of every swap stay on Robinhood Chain; the rails refuse anything else, in public.${candidates.length ? " A launch token is bought from ETH and sold back to ETH through its own pool; its fee tier is paid each way. The first buy of any launch token is a small probe, and only a token whose sell has been proven can be sized up; one launch position at a time; the rails sell it for you when volume rolls over two hours running, when it falls through the floor, or at the time stop, and those exits are never blocked." : ""}`,
   ]
     .filter((s) => s !== undefined)
     .join("\n");

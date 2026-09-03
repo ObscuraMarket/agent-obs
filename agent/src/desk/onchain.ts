@@ -19,6 +19,8 @@ import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { recordTrade, readBook, latestTrades, type Trade } from "./book.ts";
 import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx } from "./signer.ts";
 import { WALLET_ADDRESS } from "../config.ts";
+import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitSignal, type FeedSnapshot } from "./candidates.ts";
+import { positions } from "./book.ts";
 import type { QuoteRead } from "./thoughts.ts";
 
 export const NATIVE = "0x0000000000000000000000000000000000000000" as const;
@@ -48,29 +50,42 @@ export interface Route {
 export function currencyOf(a: Asset): `0x${string}` {
   return a.kind === "native" ? NATIVE : (a.contract as `0x${string}`);
 }
-const robinhood = (symbol: string): Asset | null => ASSETS[`${symbol}@robinhood`] ?? null;
+const robinhood = (symbol: string, dyn: Record<string, Asset>): Asset | null => ASSETS[`${symbol}@robinhood`] ?? dyn[`${symbol}@robinhood`] ?? null;
 
-/** PURE: the hop that sells `from` for `to` in the pool `<X>/USDG`, or null. */
-function hop(from: string, to: string, pools: Record<string, PoolSpec>): Hop | null {
+/** PURE: the hop that sells `from` for `to` in the pool `<X>/USDG`, or null. Dynamic tokens bring their own pool. */
+function hop(from: string, to: string, pools: Record<string, PoolSpec>, dyn: Record<string, Asset>): Hop | null {
   const key = from === "USDG" ? `${to}/USDG` : `${from}/USDG`;
-  const spec = pools[key];
-  const out = robinhood(to);
+  const dynAsset = dyn[`${key.split("/")[0]}@robinhood`];
+  const spec = pools[key] ?? (dynAsset ? dynamicPoolSpec(dynAsset) : null) ?? undefined;
+  const out = robinhood(to, dyn);
   if (!spec || spec.venue !== "uniswap-v4" || spec.hooks || !out) return null;
   if (spec.token0 !== from && spec.token1 !== from) return null;
   return { key, spec, zeroForOne: spec.token0 === from, currencyOut: currencyOf(out), fee: Math.round(spec.feePct * 10000), tickSpacing: spec.tickSpacing };
 }
 
 /** PURE: the route from A to B through USDG: one hop when either side is USDG, two otherwise. Null when a leg has no pool. */
-export function routeFor(from: Asset, to: Asset, pools: Record<string, PoolSpec> = chainMemory().referencePools): Route | null {
+export function routeFor(from: Asset, to: Asset, pools: Record<string, PoolSpec> = chainMemory().referencePools, dyn: Record<string, Asset> = dynamicFor(from, to)): Route | null {
   if (from.chain !== "robinhood" || to.chain !== "robinhood" || from.symbol === to.symbol) return null;
   const legs = from.symbol === "USDG" || to.symbol === "USDG" ? [[from.symbol, to.symbol]] : [[from.symbol, "USDG"], ["USDG", to.symbol]];
   const hops: Hop[] = [];
   for (const [a, b] of legs) {
-    const h = hop(a, b, pools);
+    const h = hop(a, b, pools, dyn);
     if (!h) return null;
     hops.push(h);
   }
   return { from, to, currencyIn: currencyOf(from), hops };
+}
+
+/** The dynamic assets a route may need: the legs themselves when they are candidates, else whatever the feed and the token file know. */
+function dynamicFor(from: Asset, to: Asset): Record<string, Asset> {
+  const own: Record<string, Asset> = {};
+  for (const a of [from, to]) if (a.candidate) own[`${a.symbol}@robinhood`] = a;
+  if (Object.keys(own).length) return own;
+  try {
+    return dynamicAssets();
+  } catch {
+    return {};
+  }
 }
 
 /** PURE: exact-in output inside the active tick. Raw units; sqrtP is Q64.96; fee in pips of a million. */
@@ -272,7 +287,72 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     note: `${base.note}; received ${got} ${i.to.symbol}`,
   };
   recordTrade(settled);
+  if (i.to.candidate && got > 0) {
+    const proof = await proveSellable(i.to, gotRaw > 0n ? gotRaw : q.amountOutRaw, now);
+    const withProof: Trade = { ...settled, note: `${settled.note}; ${proof}` };
+    recordTrade(withProof);
+    return { ok: true, trade: withProof };
+  }
   return { ok: true, trade: settled };
+}
+
+/**
+ * The probe rule's second half. Right after the first buy of a launch token
+ * the desk grants the two approvals and simulates selling what it just got.
+ * A token whose sell reverts is blacklisted (bounded cost: the probe) and
+ * never bought again; one whose sell simulates is proven and may be sized
+ * up to the ordinary cap on later cycles.
+ */
+export async function proveSellable(token: Asset, amountRaw: bigint, now = Date.now()): Promise<string> {
+  const eth = ASSETS["ETH@robinhood"];
+  const known = tokenInfo(token.contract as string);
+  const c = token.candidate as NonNullable<Asset["candidate"]>;
+  const base = known ?? { symbol: token.symbol, contract: token.contract as `0x${string}`, decimals: token.decimals, poolId: c.poolId, feePct: c.tierPct, tickSpacing: c.tickSpacing, usdgIs0: c.usdgIs0, firstSeen: now, proven: null, blacklisted: false };
+  if (base.proven === true) return "sell already proven";
+  try {
+    await ensureAllowances(token, amountRaw, now);
+    const route = routeFor(token, eth);
+    if (!route) throw new Error("no route back to ETH");
+    const sim = await simulateFromWallet(token, encodeSwap(route, amountRaw, 1n, WALLET_ADDRESS as `0x${string}`, BigInt(Math.floor(now / 1000) + 1200)));
+    if (!sim.ok) throw new Error(sim.reason);
+    upsertToken({ ...base, proven: true, blacklisted: false, note: `sell proven ${new Date(now).toISOString()}` });
+    return "sell proven: the token can be sold back through its pool";
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    upsertToken({ ...base, proven: false, blacklisted: true, note: `sell failed in simulation: ${why}` });
+    return `sell NOT proven (${why}); ${token.symbol} is blacklisted, no further buys`;
+  }
+}
+
+/**
+ * Exits the rails force, before the model thinks: every held launch token is
+ * checked against the time stop, the floor and the volume roll-over, and sold
+ * back to ETH when one trips. Exits skip the caps; they are never blocked.
+ */
+export async function exitCandidates(balances: Record<string, number>, prices: Record<string, number | null>, ctx: RailContext, feed: FeedSnapshot = readFeed(), now = Date.now()): Promise<Trade[]> {
+  const out: Trade[] = [];
+  const eth = ASSETS["ETH@robinhood"];
+  const dyn = dynamicAssets(feed);
+  const book = readBook();
+  const pos = positions(book.flows, book.trades, balances, prices).positions;
+  for (const a of Object.values(dyn)) {
+    const held = balances[a.symbol] ?? 0;
+    if (!(held > 0) || !a.candidate) continue;
+    const p = pos.find((x) => x.asset === a.symbol);
+    const hourly = feed.hourly[a.candidate.poolId.toLowerCase()] ?? [];
+    const firstBuy = book.trades.filter((t) => t.to.asset === a.symbol && (t.status === "settled" || t.status === "pending")).map((t) => t.at).sort()[0] ?? a.candidate.seenAt;
+    const why = exitSignal({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly }, ctx.rails);
+    if (!why) continue;
+    const usd = prices[a.symbol] != null ? held * (prices[a.symbol] as number) : null;
+    const r = await executeOnChain({ from: a, to: eth, amount: held, usd, exit: true }, ctx, now);
+    if (r.ok) {
+      const row: Trade = { ...r.trade, note: `exit, ${why}; ${r.trade.note ?? ""}` };
+      recordTrade(row);
+      out.push(row);
+    } else if (r.trade) out.push(r.trade);
+    else console.error(`[desk] exit of ${a.symbol} refused: ${r.reason}`);
+  }
+  return out;
 }
 
 /** Rows the lane sent but could not wait for: settle them by their receipt. */
