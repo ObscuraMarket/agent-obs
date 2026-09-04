@@ -40,8 +40,9 @@ git push -q -f origin "$BRANCH"
 BODY="Relayed from louz514/agent-obs at $SHA.
 
 Files: \`$APP/pages/agent/\`, \`$APP/service/obs-desk.service.ts\`, the page's images and video under \`$SITE_ASSETS/\` (added, never removed), \`$DOCS/INTEGRATION.md\` (the API contract), \`$DOCS/reference.html\` (the dependency-free reference page). Environments, routing and the app module are yours and are not touched. Fields in \`/api/obs/*\` are only ever added, never renamed or removed."
-if gh pr view "$BRANCH" --repo "$REPO" --json url >/dev/null 2>&1; then
-  echo "pull request updated: $(gh pr view "$BRANCH" --repo "$REPO" --json url --jq .url)"
+OPEN="$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json url --jq '.[0].url // ""')"
+if [ -n "$OPEN" ]; then
+  echo "pull request updated: $OPEN"
 else
   gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" --title "OBS Agent page update from louz514/agent-obs" --body "$BODY"
 fi
