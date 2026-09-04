@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseFeed, deriveTickSpacing, poolIdFor, exitSignal, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs } from "../src/desk/candidates.ts";
 import { checkCandidate, railsFromEnv, checkRails, type Intent } from "../src/desk/rails.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
-import { routeFor, costFloorPct } from "../src/desk/onchain.ts";
+import { routeFor, costFloorPct, encodeSwap } from "../src/desk/onchain.ts";
 
 const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as const;
 const NVDA = "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec" as const;
@@ -172,4 +172,33 @@ test("early launches: seconds and milliseconds both read as time, ignition and a
   assert.equal(c.hour, 0);
   assert.equal(earlyAsCandidate(snap.early.find((e) => e.symbol === "SC69")!, now), null, "not ignited, no side pool: watched, not tradable");
   assert.equal(earlyAsCandidate(snap.early.find((e) => e.symbol === "TAXY")!, now), null, "a 5% creator tax is never a probe");
+});
+
+test("an ignited launch with no side pool trades through its curve: the key from chain, the quote hub, hooked hops with fee 0", () => {
+  const t0 = now - 20 * 60e3;
+  const feedEarly = [
+    { kind: "launch", token: "0xeb1f90633946139ccdcb3b1bf53aa815b5a52b45", source: "pons-v2", ts: t0 / 1000, symbol: "SC69", gate: { ok: true, standard: "PonsV2LauncherToken" }, creatorTaxBps: 100, curvePoolId: "0xef6ae4928c618edc9c67bfdd285e9e2a96b8c69dc4f47c898561fe191c498451", pair: "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC", pairSymbol: "NVDA", ignitionTs: (t0 + 6 * 60e3) / 1000 },
+  ].map((r) => JSON.stringify(r)).join("\n");
+  const snap = parseFeed(feedEarly, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
+  const l = snap.early[0];
+  assert.equal(l.pairSymbol, "NVDA");
+  assert.equal(l.ignitedAfterMin, 6);
+  assert.equal(earlyAsCandidate(l, now, true, null), null, "no side pool and no curve key: not yet");
+  const key = { poolId: "0xef6ae4928c618edc9c67bfdd285e9e2a96b8c69dc4f47c898561fe191c498451" as const, currency0: "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec" as const, currency1: "0xeb1f90633946139ccdcb3b1bf53aa815b5a52b45" as const, fee: 0, tickSpacing: 200, hooks: "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044" as const };
+  const c = earlyAsCandidate(l, now, true, key, 2)!;
+  assert.equal(c.curve!.quote, "NVDA");
+  assert.equal(c.curve!.quoteIs0, true, "NVDA is currency0 of that curve");
+  assert.equal(c.feePips, 0);
+  assert.equal(c.tickSpacing, 200);
+  assert.ok(Math.abs(c.tierPct - 3) < 1e-9, "2% assumed hook fee plus 1% creator tax");
+  const a = candidateAsset(c);
+  const spec = dynamicPoolSpec(a)!;
+  assert.deepEqual([spec.token0, spec.token1, spec.hookAddress, spec.feePips, spec.quote, spec.usdToken], ["NVDA", "SC69", key.hooks, 0, "NVDA", 0]);
+  const eth = resolveAsset("ETH@robinhood")!;
+  const buy = routeFor(eth, a)!;
+  assert.deepEqual(buy.hops.map((h) => [h.key, h.fee, h.tickSpacing, h.spec.hookAddress ?? null]), [["ETH/USDG", 100, 1, null], ["NVDA/USDG", 3000, 60, null], ["NVDA/SC69", 0, 200, key.hooks]], "ETH to USDG to NVDA to the token, the last hop hooked with fee 0");
+  const sell = routeFor(a, eth)!;
+  assert.deepEqual(sell.hops.map((h) => h.key), ["NVDA/SC69", "NVDA/USDG", "ETH/USDG"]);
+  const tx = encodeSwap(buy, 10n ** 16n, 1n, "0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", 1n, "0x8876789976dEcBfCbBbe364623C63652db8C0904");
+  assert.ok(tx.data.toLowerCase().includes(key.hooks.slice(2)), "the hook address rides in the path");
 });

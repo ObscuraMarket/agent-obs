@@ -30,6 +30,12 @@ export interface PoolSpec {
   tickSpacing: number;
   /** True when the pool has a hook contract; the desk trades hookless pools only. */
   hooks?: boolean;
+  /** A hooked pool's hook contract (a launch curve), when the desk trades through it. */
+  hookAddress?: string;
+  /** The exact fee field of the pool key in pips; a launch curve carries 0 and lets its hook charge. */
+  feePips?: number;
+  /** The symbol on the other side of the pool, when it is not the dollar: "NVDA" or "ETH" for a launch curve. */
+  quote?: string;
 }
 
 export interface ChainMemory {

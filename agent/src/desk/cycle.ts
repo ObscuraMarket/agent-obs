@@ -16,7 +16,7 @@ import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity,
 import { assetKey } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates } from "./onchain.ts";
-import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate } from "./candidates.ts";
+import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate, curveKey } from "./candidates.ts";
 import { checkCandidate, clampToBalance } from "./rails.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute, PAPER_BOOK } from "./paper.ts";
 import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCheck, basisSignal } from "./analysis.ts";
@@ -114,12 +114,16 @@ for (const cnd of feed.candidates.slice(0, 4)) {
 }
 // Early launches: minute one onward. Tradable as a probe once ignited with a hookless side pool; watched otherwise.
 const requireIgnition = (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off";
-const early = feed.early.slice(0, 6).map((l) => {
-  const asCand = earlyAsCandidate(l, now, requireIgnition);
-  const why = !l.gateOk ? "gate failed, never" : l.creatorTaxBps != null && l.creatorTaxBps > 100 ? `creator tax ${(l.creatorTaxBps / 100).toFixed(1)}%, too high` : !l.sidePools.length ? "no hookless side pool yet, watch" : l.ignitedAfterMin == null && requireIgnition ? "not ignited yet, watch" : "";
-  if (asCand && !graded.has(asCand.symbol)) graded.set(asCand.symbol, { grade: "C", capUsd: gradeRules.capUsd.C, why: `ignited launch at +${l.ignitedAfterMin ?? 0} min with a side pool, probe only`, depthUsd: null, drawdownPct: null, trend: "unknown" });
-  return { symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, standard: l.standard, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null, tradable: !!asCand, why };
-});
+const early = [];
+for (const l of feed.early.slice(0, 6)) {
+  // An ignited launch with no side pool trades through its own curve, whose key is read from chain once and kept.
+  const wantsCurve = l.gateOk && (l.creatorTaxBps == null || l.creatorTaxBps <= 100) && !l.sidePools.length && (!requireIgnition || l.ignitedAfterMin != null) && !!l.curvePoolId;
+  const key = wantsCurve ? await curveKey(l.curvePoolId as `0x${string}`) : null;
+  const asCand = earlyAsCandidate(l, now, requireIgnition, key);
+  const why = !l.gateOk ? "gate failed, never" : l.creatorTaxBps != null && l.creatorTaxBps > 100 ? `creator tax ${(l.creatorTaxBps / 100).toFixed(1)}%, too high` : l.ignitedAfterMin == null && requireIgnition ? "not ignited yet, watch" : !asCand ? (wantsCurve && !key ? "curve key not read yet, watch" : `curve pair ${l.pairSymbol ?? "unknown"} is out of reach, watch`) : "";
+  if (asCand && !graded.has(asCand.symbol)) graded.set(asCand.symbol, { grade: "C", capUsd: gradeRules.capUsd.C, why: `ignited launch at +${l.ignitedAfterMin ?? 0} min, ${asCand.curve ? `through its ${asCand.curve.quote} curve (hook fee assumed ${Number(process.env.OBS_CURVE_FEE_PCT ?? 2)}% plus ${((l.creatorTaxBps ?? 0) / 100).toFixed(1)}% tax)` : "through its side pool"}, probe only`, depthUsd: null, drawdownPct: null, trend: "unknown" });
+  early.push({ symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, standard: l.standard, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null, tradable: !!asCand, why, via: asCand ? (asCand.curve ? `${asCand.curve.quote} curve` : "side pool") : null });
+}
 const dyn = dynamicAssets(feed);
 const heldDyn = Object.values(dyn).filter((a) => (chain?.bySymbol[a.symbol] ?? 0) > 0);
 const pos = positions(book.flows, bookTrades, chain?.bySymbol ?? mark.holdings, prices).positions;

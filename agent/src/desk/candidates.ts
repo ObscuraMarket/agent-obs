@@ -10,8 +10,9 @@
 // the desk learned about them: whether a sell was proven to work (the probe
 // rule), or whether the token could not be sold and is blacklisted.
 import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync, writeFileSync } from "node:fs";
-import { encodeAbiParameters, keccak256 } from "viem";
-import { dataPath, USDG_CONTRACT } from "../config.ts";
+import { encodeAbiParameters, keccak256, createPublicClient, http, parseAbi, decodeEventLog } from "viem";
+import { dataPath, USDG_CONTRACT, RPC_URL } from "../config.ts";
+import { chainMemory } from "../obscura/pools.ts";
 import { ASSETS, type Asset } from "./assets.ts";
 import type { PoolSpec } from "../obscura/pools.ts";
 
@@ -38,6 +39,8 @@ export interface Candidate {
   /** USDG per token at the candidate mark, when the feed had one. */
   px: number | null;
   usdgIs0: boolean;
+  /** Set when the candidate trades through its launch curve rather than a hookless side pool. */
+  curve?: { hookAddress: `0x${string}`; feePips: number; quote: string; quoteAddress: `0x${string}`; quoteIs0: boolean; creatorTaxBps: number | null };
 }
 export interface HourlyStat {
   hour: number;
@@ -61,6 +64,9 @@ export interface EarlyLaunch {
   ignitedAfterMin: number | null;
   /** Hookless USDG side pools seen for the token, cheapest tier first. */
   sidePools: Array<{ poolId: `0x${string}`; feePips: number; tierPct: number; tickSpacing: number }>;
+  /** The launch curve's pair, as the feed names it. */
+  pairSymbol: string | null;
+  pairAddress: `0x${string}` | null;
 }
 export interface FeedSnapshot {
   candidates: Candidate[];
@@ -139,6 +145,8 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
         firstSwapAt: toMs(r.firstSwapTs) || null,
         ignitedAfterMin: toMs(r.ignitionTs) ? Math.max(0, Math.round((toMs(r.ignitionTs) - at) / 60e3)) : null,
         sidePools: [],
+        pairSymbol: typeof r.pairSymbol === "string" ? r.pairSymbol.toUpperCase() : null,
+        pairAddress: typeof r.pair === "string" && /^0x[0-9a-fA-F]{40}$/.test(r.pair) ? (r.pair.toLowerCase() as `0x${string}`) : null,
       });
     } else if (kind === "ignition" && typeof r.token === "string") {
       const m = Number(r.minutesAfterLaunch);
@@ -203,13 +211,85 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
   return { candidates, early, hourly };
 }
 
-/** PURE: an early launch as a tradable candidate row, when it has ignited and a hookless side pool exists; null otherwise. */
-export function earlyAsCandidate(l: EarlyLaunch, now: number, requireIgnition = true): Candidate | null {
-  if (!l.gateOk || !l.sidePools.length) return null;
+export interface CurveKey {
+  poolId: `0x${string}`;
+  currency0: `0x${string}`;
+  currency1: `0x${string}`;
+  fee: number;
+  tickSpacing: number;
+  hooks: `0x${string}`;
+}
+const CURVES_FILE = "obs-curves.json";
+function readCurves(): Record<string, CurveKey> {
+  const p = dataPath(CURVES_FILE);
+  if (!existsSync(p)) return {};
+  try {
+    return JSON.parse(readFileSync(p, "utf8")) as Record<string, CurveKey>;
+  } catch {
+    return {};
+  }
+}
+const INIT_ABI = parseAbi(["event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)"]);
+const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+/** A pool's exact key from its Initialize event, read once and kept in data/obs-curves.json. Null when the chain did not answer. */
+export async function curveKey(poolId: `0x${string}`): Promise<CurveKey | null> {
+  const id = poolId.toLowerCase() as `0x${string}`;
+  const known = readCurves();
+  if (known[id]) return known[id];
+  try {
+    const pub = createPublicClient({ transport: http(RPC_URL, { fetchOptions: { headers: { "User-Agent": UA } } }) });
+    const logs = await pub.getLogs({ address: chainMemory().contracts.uniswapV4.poolManager as `0x${string}`, event: INIT_ABI[0], args: { id }, fromBlock: 0n, toBlock: "latest" });
+    if (!logs.length) return null;
+    const d = decodeEventLog({ abi: INIT_ABI, data: logs[0].data, topics: logs[0].topics }).args as { currency0: `0x${string}`; currency1: `0x${string}`; fee: number; tickSpacing: number; hooks: `0x${string}` };
+    const key: CurveKey = { poolId: id, currency0: d.currency0.toLowerCase() as `0x${string}`, currency1: d.currency1.toLowerCase() as `0x${string}`, fee: Number(d.fee), tickSpacing: Number(d.tickSpacing), hooks: d.hooks.toLowerCase() as `0x${string}` };
+    known[id] = key;
+    writeFileSync(dataPath(CURVES_FILE), JSON.stringify(known, null, 2) + "\n");
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+/** The quote symbols a launch curve may be paired with, and how to price them. */
+const CURVE_QUOTES: Record<string, { decimals: number }> = { USDG: { decimals: 6 }, NVDA: { decimals: 18 }, ETH: { decimals: 18 } };
+
+/**
+ * PURE: an early launch as a tradable candidate row: through its hookless
+ * side pool when one exists, else through its launch curve when the curve's
+ * key is known and its pair is one the desk can reach. Null when it has not
+ * ignited (if required), failed the gate, or taxes above 1%.
+ */
+export function earlyAsCandidate(l: EarlyLaunch, now: number, requireIgnition = true, curve: CurveKey | null = null, curveFeePct = Number(process.env.OBS_CURVE_FEE_PCT ?? 2)): Candidate | null {
+  if (!l.gateOk) return null;
   if (requireIgnition && l.ignitedAfterMin == null) return null;
   if (l.creatorTaxBps != null && l.creatorTaxBps > 100) return null;
-  const sp = l.sidePools[0];
-  return { at: now, poolId: sp.poolId, token: l.token, symbol: l.symbol, tierPct: sp.tierPct, feePips: sp.feePips, tickSpacing: sp.tickSpacing, gateOk: true, source: l.source, hour: 0, volUsd: 0, movePct: 0, senders: 0, swaps: 0, px: null, usdgIs0: usdgIsToken0(l.token) };
+  if (l.sidePools.length) {
+    const sp = l.sidePools[0];
+    return { at: now, poolId: sp.poolId, token: l.token, symbol: l.symbol, tierPct: sp.tierPct, feePips: sp.feePips, tickSpacing: sp.tickSpacing, gateOk: true, source: l.source, hour: 0, volUsd: 0, movePct: 0, senders: 0, swaps: 0, px: null, usdgIs0: usdgIsToken0(l.token) };
+  }
+  if (!curve || !l.pairSymbol || !CURVE_QUOTES[l.pairSymbol]) return null;
+  const quoteIs0 = curve.currency1.toLowerCase() === l.token.toLowerCase();
+  const quoteAddress = quoteIs0 ? curve.currency0 : curve.currency1;
+  const taxPct = (l.creatorTaxBps ?? 0) / 100;
+  return {
+    at: now,
+    poolId: curve.poolId,
+    token: l.token,
+    symbol: l.symbol,
+    tierPct: curveFeePct + taxPct,
+    feePips: curve.fee,
+    tickSpacing: curve.tickSpacing,
+    gateOk: true,
+    source: l.source,
+    hour: 0,
+    volUsd: 0,
+    movePct: 0,
+    senders: 0,
+    swaps: 0,
+    px: null,
+    usdgIs0: l.pairSymbol === "USDG" && quoteIs0,
+    curve: { hookAddress: curve.hooks, feePips: curve.fee, quote: l.pairSymbol, quoteAddress, quoteIs0, creatorTaxBps: l.creatorTaxBps },
+  };
 }
 
 export function feedOptions(env: NodeJS.ProcessEnv = process.env): FeedOptions {
@@ -263,6 +343,7 @@ export interface DynamicToken {
   proven: boolean | null;
   blacklisted: boolean;
   note?: string;
+  curve?: Candidate["curve"];
 }
 export function readTokens(): DynamicToken[] {
   const p = dataPath(TOKENS_FILE);
@@ -293,7 +374,7 @@ export function candidateAsset(c: Candidate): Asset {
     decimals: 18,
     deposit: false,
     withdrawal: false,
-    candidate: { poolId: c.poolId, feePips: c.feePips, tierPct: c.tierPct, tickSpacing: c.tickSpacing as number, usdgIs0: c.usdgIs0, seenAt: c.at },
+    candidate: { poolId: c.poolId, feePips: c.feePips, tierPct: c.tierPct, tickSpacing: c.tickSpacing as number, usdgIs0: c.usdgIs0, seenAt: c.at, ...(c.curve ? { curve: c.curve } : {}) },
   };
 }
 function tokenAsset(t: DynamicToken): Asset {
@@ -307,7 +388,7 @@ function tokenAsset(t: DynamicToken): Asset {
     decimals: t.decimals,
     deposit: false,
     withdrawal: false,
-    candidate: { poolId: t.poolId, feePips: Math.round(t.feePct * 10000), tierPct: t.feePct, tickSpacing: t.tickSpacing, usdgIs0: t.usdgIs0, seenAt: t.firstSeen },
+    candidate: { poolId: t.poolId, feePips: t.curve ? t.curve.feePips : Math.round(t.feePct * 10000), tierPct: t.feePct, tickSpacing: t.tickSpacing, usdgIs0: t.usdgIs0, seenAt: t.firstSeen, ...(t.curve ? { curve: t.curve } : {}) },
   };
 }
 
@@ -340,6 +421,25 @@ export function resolveAny(spec: string, feed?: FeedSnapshot): Asset | null {
 export function dynamicPoolSpec(a: Asset): PoolSpec | null {
   if (!a.candidate) return null;
   const c = a.candidate;
+  if (c.curve) {
+    const q = c.curve.quote;
+    const qd = CURVE_QUOTES[q]?.decimals ?? 18;
+    return {
+      venue: "uniswap-v4",
+      id: c.poolId,
+      token0: c.curve.quoteIs0 ? q : a.symbol,
+      token1: c.curve.quoteIs0 ? a.symbol : q,
+      decimals0: c.curve.quoteIs0 ? qd : a.decimals,
+      decimals1: c.curve.quoteIs0 ? a.decimals : qd,
+      usdToken: c.curve.quoteIs0 ? 0 : 1,
+      feePct: c.tierPct,
+      tickSpacing: c.tickSpacing,
+      hooks: true,
+      hookAddress: c.curve.hookAddress,
+      feePips: c.curve.feePips,
+      quote: q,
+    };
+  }
   return {
     venue: "uniswap-v4",
     id: c.poolId,
@@ -351,6 +451,7 @@ export function dynamicPoolSpec(a: Asset): PoolSpec | null {
     feePct: c.tierPct,
     tickSpacing: c.tickSpacing,
     hooks: false,
+    quote: "USDG",
   };
 }
 

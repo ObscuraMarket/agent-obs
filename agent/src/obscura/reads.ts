@@ -347,7 +347,18 @@ export async function assetPrices(symbols: string[], known: Record<string, numbe
     }
     if (!spec) continue;
     const r = await poolRead(spec);
-    if (r && r.priceUsd > 0) out[s] = r.priceUsd;
+    if (!r || !(r.priceUsd > 0)) continue;
+    // A launch curve quoted in NVDA or ETH prices the token in that quote; convert through the quote's dollar price.
+    if (spec.quote && spec.quote !== "USDG") {
+      let qp = out[spec.quote] ?? null;
+      if (qp == null) {
+        const qs = chainMemory().referencePools[`${spec.quote}/USDG`];
+        const qr = qs ? await poolRead(qs) : null;
+        qp = qr && qr.priceUsd > 0 ? qr.priceUsd : null;
+      }
+      if (qp == null) continue;
+      out[s] = r.priceUsd * qp;
+    } else out[s] = r.priceUsd;
   }
   if (want.includes("OBS") && out.OBS == null) out.OBS = (await explorerToken()).priceUsd;
   for (const s of want) if (!(s in out)) out[s] = null;

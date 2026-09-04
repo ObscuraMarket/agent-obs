@@ -52,28 +52,58 @@ export function currencyOf(a: Asset): `0x${string}` {
 }
 const robinhood = (symbol: string, dyn: Record<string, Asset>): Asset | null => ASSETS[`${symbol}@robinhood`] ?? dyn[`${symbol}@robinhood`] ?? null;
 
-/** PURE: the hop that sells `from` for `to` in the pool `<X>/USDG`, or null. Dynamic tokens bring their own pool. */
-function hop(from: string, to: string, pools: Record<string, PoolSpec>, dyn: Record<string, Asset>): Hop | null {
-  const key = from === "USDG" ? `${to}/USDG` : `${from}/USDG`;
-  const dynAsset = dyn[`${key.split("/")[0]}@robinhood`];
-  const spec = pools[key] ?? (dynAsset ? dynamicPoolSpec(dynAsset) : null) ?? undefined;
-  const out = robinhood(to, dyn);
-  if (!spec || spec.venue !== "uniswap-v4" || spec.hooks || !out) return null;
-  if (spec.token0 !== from && spec.token1 !== from) return null;
-  return { key, spec, zeroForOne: spec.token0 === from, currencyOut: currencyOf(out), fee: Math.round(spec.feePct * 10000), tickSpacing: spec.tickSpacing };
+/** The pool a dynamic token trades in, and the symbol on the other side of it. */
+function dynamicSpec(symbol: string, dyn: Record<string, Asset>): { spec: PoolSpec; quote: string } | null {
+  const a = dyn[`${symbol}@robinhood`];
+  const spec = a ? dynamicPoolSpec(a) : null;
+  return spec ? { spec, quote: spec.quote ?? "USDG" } : null;
 }
 
-/** PURE: the route from A to B through USDG: one hop when either side is USDG, two otherwise. Null when a leg has no pool. */
+/** PURE: the hop that sells `from` for `to`: a reference pool, a dynamic token's side pool, or its launch curve. Null when there is none. */
+function hop(from: string, to: string, pools: Record<string, PoolSpec>, dyn: Record<string, Asset>): Hop | null {
+  const out = robinhood(to, dyn);
+  if (!out) return null;
+  // A dynamic token's own pool wins over any reference pool: named "<token>/USDG" for a side pool, "<quote>/<token>" for a launch curve.
+  const dynSym = dynamicSpec(to, dyn) ? to : dynamicSpec(from, dyn) ? from : null;
+  const d = dynSym ? dynamicSpec(dynSym, dyn) : null;
+  let key: string;
+  let spec: PoolSpec | undefined;
+  if (d && dynSym) {
+    spec = d.spec;
+    key = d.spec.hookAddress ? `${d.quote}/${dynSym}` : `${dynSym}/USDG`;
+  } else {
+    key = from === "USDG" ? `${to}/USDG` : `${from}/USDG`;
+    spec = pools[key];
+  }
+  if (!spec || spec.venue !== "uniswap-v4") return null;
+  if (spec.hooks && !spec.hookAddress) return null;
+  if (spec.token0 !== from && spec.token1 !== from) return null;
+  if (spec.token0 !== to && spec.token1 !== to) return null;
+  return { key, spec, zeroForOne: spec.token0 === from, currencyOut: currencyOf(out), fee: spec.feePips ?? Math.round(spec.feePct * 10000), tickSpacing: spec.tickSpacing };
+}
+
+/** PURE: the legs from A to B. The hub is USDG; a launch token quoted in NVDA or ETH is reached through that quote first. */
+function legsFor(from: string, to: string, dyn: Record<string, Asset>): string[][] {
+  const quoteOf = (sym: string) => dynamicSpec(sym, dyn)?.quote ?? null;
+  const qFrom = quoteOf(from);
+  const qTo = quoteOf(to);
+  if (qFrom && from !== "USDG") return [[from, qFrom], ...(qFrom === to ? [] : legsFor(qFrom, to, dyn))];
+  if (qTo && to !== "USDG") return [...(from === qTo ? [] : legsFor(from, qTo, dyn)), [qTo, to]];
+  if (from === to) return [];
+  if (from === "USDG" || to === "USDG") return [[from, to]];
+  return [[from, "USDG"], ["USDG", to]];
+}
+
+/** PURE: the route from A to B. Null when a leg has no pool. */
 export function routeFor(from: Asset, to: Asset, pools: Record<string, PoolSpec> = chainMemory().referencePools, dyn: Record<string, Asset> = dynamicFor(from, to)): Route | null {
   if (from.chain !== "robinhood" || to.chain !== "robinhood" || from.symbol === to.symbol) return null;
-  const legs = from.symbol === "USDG" || to.symbol === "USDG" ? [[from.symbol, to.symbol]] : [[from.symbol, "USDG"], ["USDG", to.symbol]];
   const hops: Hop[] = [];
-  for (const [a, b] of legs) {
+  for (const [a, b] of legsFor(from.symbol, to.symbol, dyn)) {
     const h = hop(a, b, pools, dyn);
     if (!h) return null;
     hops.push(h);
   }
-  return { from, to, currencyIn: currencyOf(from), hops };
+  return hops.length ? { from, to, currencyIn: currencyOf(from), hops } : null;
 }
 
 /** The dynamic assets a route may need: the legs themselves when they are candidates, else whatever the feed and the token file know. */
@@ -131,14 +161,23 @@ export async function quoteOnChain(from: Asset, to: Asset, amountIn: number, sli
     const read = await poolRead(h.spec);
     if (!read) return null;
     pools.push({ key: h.key, read });
-    raw = exactInWithinTick(raw, BigInt(read.sqrtPriceX96), BigInt(read.liquidity), h.fee, h.zeroForOne).out;
+    const feeForEstimate = h.spec.hookAddress ? Math.round(h.spec.feePct * 10000) : h.fee;
+    raw = exactInWithinTick(raw, BigInt(read.sqrtPriceX96), BigInt(read.liquidity), feeForEstimate, h.zeroForOne).out;
   }
   const amountOutRaw = raw;
-  const minOutRaw = (amountOutRaw * BigInt(Math.round((100 - slippagePct) * 1000))) / 100_000n;
+  // A curve's hook prices in ways the tick math cannot see; the floor sits wider there.
+  const slip = route.hops.some((h) => h.spec.hookAddress) ? Math.max(slippagePct, Number(process.env.OBS_CURVE_SLIPPAGE_PCT ?? 8)) : slippagePct;
+  const minOutRaw = (amountOutRaw * BigInt(Math.round((100 - slip) * 1000))) / 100_000n;
   const usdOf = (a: Asset): number | null => {
     if (a.symbol === "USDG") return 1;
     const p = pools.find((x) => x.key === `${a.symbol}/USDG`);
-    return p ? p.read.priceUsd : null;
+    if (p) return p.read.priceUsd;
+    // A launch token quoted in NVDA or ETH: its pool price times that quote's dollar price from the same route.
+    const own = pools.find((x) => x.key.split("/").includes(a.symbol) && x.key !== `${a.symbol}/USDG`);
+    if (!own) return null;
+    const quote = own.key.split("/").find((k) => k !== a.symbol) ?? "USDG";
+    const qp = quote === "USDG" ? 1 : (pools.find((x) => x.key === `${quote}/USDG`)?.read.priceUsd ?? null);
+    return qp == null ? null : own.read.priceUsd * qp;
   };
   const priceInUsd = usdOf(from);
   const priceOutUsd = usdOf(to);
@@ -150,7 +189,7 @@ export async function quoteOnChain(from: Asset, to: Asset, amountIn: number, sli
 
 /** PURE: the router call for a route, in the shape this chain's fork accepts. */
 export function encodeSwap(route: Route, amountIn: bigint, minOut: bigint, recipient: `0x${string}`, deadline: bigint, router: `0x${string}` = chainMemory().contracts.uniswapV4.universalRouter as `0x${string}`): RawTx {
-  const path = route.hops.map((h) => ({ intermediateCurrency: h.currencyOut, fee: h.fee, tickSpacing: h.tickSpacing, hooks: NATIVE, hookData: "0x" as Hex }));
+  const path = route.hops.map((h) => ({ intermediateCurrency: h.currencyOut, fee: h.fee, tickSpacing: h.tickSpacing, hooks: (h.spec.hookAddress ?? NATIVE) as `0x${string}`, hookData: "0x" as Hex }));
   const swap = encodeAbiParameters(
     [
       {
@@ -316,7 +355,7 @@ export async function proveSellable(token: Asset, amountRaw: bigint, now = Date.
   const eth = ASSETS["ETH@robinhood"];
   const known = tokenInfo(token.contract as string);
   const c = token.candidate as NonNullable<Asset["candidate"]>;
-  const base = known ?? { symbol: token.symbol, contract: token.contract as `0x${string}`, decimals: token.decimals, poolId: c.poolId, feePct: c.tierPct, tickSpacing: c.tickSpacing, usdgIs0: c.usdgIs0, firstSeen: now, proven: null, blacklisted: false };
+  const base = known ?? { symbol: token.symbol, contract: token.contract as `0x${string}`, decimals: token.decimals, poolId: c.poolId, feePct: c.tierPct, tickSpacing: c.tickSpacing, usdgIs0: c.usdgIs0, firstSeen: now, proven: null, blacklisted: false, ...(c.curve ? { curve: c.curve } : {}) };
   if (base.proven === true) return "sell already proven";
   try {
     await ensureAllowances(token, amountRaw, now);

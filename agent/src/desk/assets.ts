@@ -35,7 +35,7 @@ export interface Asset {
   deposit: boolean;
   withdrawal: boolean;
   /** Set on a launch candidate from the watcher's feed: its hookless USDG pool, for the pool lane only. */
-  candidate?: { poolId: `0x${string}`; feePips: number; tierPct: number; tickSpacing: number; usdgIs0: boolean; seenAt: number };
+  candidate?: { poolId: `0x${string}`; feePips: number; tierPct: number; tickSpacing: number; usdgIs0: boolean; seenAt: number; curve?: { hookAddress: `0x${string}`; feePips: number; quote: string; quoteAddress: `0x${string}`; quoteIs0: boolean; creatorTaxBps: number | null } };
 }
 
 /** Keyed by SYMBOL@network. */
