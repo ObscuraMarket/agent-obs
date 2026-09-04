@@ -94,6 +94,10 @@ export interface Intent {
   usd: number | null;
   /** An exit from a held position: the caps and the open-order limit do not apply, because an exit is never blocked. */
   exit?: boolean;
+  /** A per-position ceiling that replaces the per-swap cap for this intent, set from a launch token's grade. */
+  capUsd?: number;
+  /** Adding to a held, proven token: a continuation, not a new entry, so the spacing rule does not apply. */
+  addOn?: boolean;
 }
 
 export interface RailContext {
@@ -125,7 +129,7 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
     const halt = dailyLossHalt(c.dayStartEquityUsd ?? null, c.equityUsd ?? null, r);
     if (halt) return { ok: false, reason: halt };
     const now = c.now ?? Date.now();
-    if (c.lastEntryAt != null && now - c.lastEntryAt < r.minHoursBetweenEntries * 3600e3) return { ok: false, reason: `the last entry was ${((now - c.lastEntryAt) / 3600e3).toFixed(1)}h ago; entries are at least ${r.minHoursBetweenEntries}h apart` };
+    if (!i.addOn && c.lastEntryAt != null && now - c.lastEntryAt < r.minHoursBetweenEntries * 3600e3) return { ok: false, reason: `the last entry was ${((now - c.lastEntryAt) / 3600e3).toFixed(1)}h ago; entries are at least ${r.minHoursBetweenEntries}h apart` };
     if ((c.entriesToday ?? 0) >= r.maxEntriesPerDay) return { ok: false, reason: `${c.entriesToday} entries in the last 24h; the limit is ${r.maxEntriesPerDay}` };
   }
   const allowed = (a: Asset) => r.allowedAssets.has(assetKey(a)) || (r.candidatesOn && !!a.candidate);
@@ -135,7 +139,8 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   if (!i.to.candidate && !i.to.withdrawal) return { ok: false, reason: `Obscura does not pay out ${assetKey(i.to)}` };
   if (i.usd == null) return { ok: false, reason: `${i.from.symbol} is unpriced; refusing to size a swap blind` };
   if (!i.exit) {
-    if (i.usd > r.maxSwapUsd) return { ok: false, reason: `$${i.usd.toFixed(2)} exceeds the per-swap cap of $${r.maxSwapUsd}` };
+    const cap = i.capUsd ?? r.maxSwapUsd;
+    if (i.usd > cap) return { ok: false, reason: `$${i.usd.toFixed(2)} exceeds the ${i.capUsd != null ? "grade" : "per-swap"} cap of $${cap}` };
     if (c.sentTodayUsd + i.usd > r.dailySwapUsd) return { ok: false, reason: `$${(c.sentTodayUsd + i.usd).toFixed(2)} would exceed the daily cap of $${r.dailySwapUsd}` };
     if (c.openOrders >= r.maxOpenOrders) return { ok: false, reason: `${c.openOrders} order(s) already open; the limit is ${r.maxOpenOrders}` };
   }
@@ -192,14 +197,18 @@ export interface CandidateKnowledge {
  * position is already held, or when candidates are off; until a sell has been
  * proven the buy is capped at the probe size. Sells (exits) always pass.
  */
-export function checkCandidate(i: Intent, known: CandidateKnowledge | null, heldCandidates: string[], r: Rails): { ok: true; maxUsd?: number } | { ok: false; reason: string } {
+export function checkCandidate(i: Intent, known: CandidateKnowledge | null, heldCandidates: string[], r: Rails, graded?: { grade: "A" | "B" | "C" | null; capUsd: number; why: string } | null, heldUsd = 0): { ok: true; maxUsd?: number; addOn?: boolean } | { ok: false; reason: string } {
   if (!i.to.candidate) return { ok: true };
   if (!r.candidatesOn) return { ok: false, reason: "launch candidates are switched off" };
   if (known?.blacklisted) return { ok: false, reason: `${i.to.symbol} could not be sold when probed; it is blacklisted` };
+  if (graded && !graded.grade) return { ok: false, reason: `${i.to.symbol} is ${graded.why}` };
   const others = heldCandidates.filter((s) => s !== i.to.symbol);
   if (others.length >= r.maxCandidates) return { ok: false, reason: `already holding ${others.join(", ")}; ${r.maxCandidates === 1 ? "one" : r.maxCandidates} launch position${r.maxCandidates === 1 ? "" : "s"} at a time` };
   if (known?.proven !== true) return { ok: true, maxUsd: r.probeUsd };
-  return { ok: true };
+  const cap = graded ? graded.capUsd : r.probeUsd;
+  const room = Math.max(0, cap - heldUsd);
+  if (room <= 0) return { ok: false, reason: `${i.to.symbol} is at its grade ${graded?.grade ?? "C"} ceiling of $${cap}` };
+  return { ok: true, maxUsd: room, addOn: heldUsd > 0 };
 }
 
 /**

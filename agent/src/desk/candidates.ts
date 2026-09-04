@@ -291,3 +291,65 @@ export function exitSignal(input: { ageH: number; pnlPct: number | null; hourly:
   }
   return null;
 }
+
+// ---- The bar. Which candidates are worth a probe, which are worth size. ----
+
+export type Grade = "A" | "B" | "C";
+export interface GradeRules {
+  gradeA: { minVolUsd: number; minSenders: number; maxMovePct: number; maxTierPct: number; minDepthUsd: number; maxDrawdownPct: number; maxHour: number };
+  gradeB: { minVolUsd: number; minSenders: number; maxMovePct: number; maxTierPct: number; maxDrawdownPct: number };
+  /** Dollars a position may reach by grade; C is the probe size. */
+  capUsd: Record<Grade, number>;
+  /** An hour whose volume fell below this share of the hour before counts as rolling over. */
+  trendFloor: number;
+}
+export function gradeRulesFromEnv(env: NodeJS.ProcessEnv = process.env): GradeRules {
+  const n = (k: string, d: number) => Number(env[k] ?? d);
+  return {
+    gradeA: { minVolUsd: n("OBS_GRADE_A_MIN_VOL_USD", 250_000), minSenders: n("OBS_GRADE_A_MIN_SENDERS", 40), maxMovePct: n("OBS_GRADE_A_MAX_MOVE_PCT", 30), maxTierPct: n("OBS_GRADE_A_MAX_TIER_PCT", 3), minDepthUsd: n("OBS_GRADE_A_MIN_DEPTH_USD", 20_000), maxDrawdownPct: n("OBS_GRADE_A_MAX_DRAWDOWN_PCT", 25), maxHour: n("OBS_GRADE_A_MAX_HOUR", 3) },
+    gradeB: { minVolUsd: n("OBS_GRADE_B_MIN_VOL_USD", 100_000), minSenders: n("OBS_GRADE_B_MIN_SENDERS", 20), maxMovePct: n("OBS_GRADE_B_MAX_MOVE_PCT", 50), maxTierPct: n("OBS_GRADE_B_MAX_TIER_PCT", 4), maxDrawdownPct: n("OBS_GRADE_B_MAX_DRAWDOWN_PCT", 40) },
+    capUsd: { A: n("OBS_CANDIDATE_MAX_USD_A", 75), B: n("OBS_CANDIDATE_MAX_USD_B", 25), C: n("OBS_CANDIDATE_MAX_USD_C", 5) },
+    trendFloor: 1 - n("OBS_CANDIDATE_VOLUME_DROP_PCT", 30) / 100,
+  };
+}
+
+export interface Graded {
+  grade: Grade | null;
+  /** Dollars a position in this token may reach; the probe size until a sell is proven. */
+  capUsd: number;
+  /** Why it is where it is, for the observation. */
+  why: string;
+  /** Measured inputs beyond the candidate row. */
+  depthUsd: number | null;
+  drawdownPct: number | null;
+  trend: "holding" | "rolling over" | "unknown";
+}
+
+/** PURE: the grade of a candidate from its row, its hourly trail and its pool depth. Null is below the bar. */
+export function gradeCandidate(c: Candidate, trail: HourlyStat[], depthUsd: number | null, r: GradeRules): Graded {
+  const px = trail.map((h) => h.px).filter((v): v is number => v != null && v > 0);
+  const peak = px.length ? Math.max(...px) : null;
+  const last = px.length ? px[px.length - 1] : null;
+  const drawdownPct = peak != null && last != null && peak > 0 ? ((peak - last) / peak) * 100 : null;
+  const t = trail.slice(-2);
+  const trend: Graded["trend"] = t.length === 2 ? (t[1].usd < t[0].usd * r.trendFloor ? "rolling over" : "holding") : "unknown";
+  const move = Math.abs(c.movePct);
+  const fails: string[] = [];
+  const a = r.gradeA;
+  if (c.volUsd < a.minVolUsd) fails.push(`prior-hour volume $${Math.round(c.volUsd).toLocaleString("en-US")} under $${a.minVolUsd.toLocaleString("en-US")}`);
+  if (c.senders < a.minSenders) fails.push(`${c.senders} senders under ${a.minSenders}`);
+  if (move > a.maxMovePct) fails.push(`move ${c.movePct.toFixed(1)}% past ${a.maxMovePct}%`);
+  if (c.tierPct > a.maxTierPct) fails.push(`tier ${c.tierPct}% over ${a.maxTierPct}%`);
+  if (c.hour > a.maxHour) fails.push(`hour ${c.hour} past hour ${a.maxHour}`);
+  if (depthUsd == null || depthUsd < a.minDepthUsd) fails.push(depthUsd == null ? "depth not read" : `depth $${Math.round(depthUsd).toLocaleString("en-US")} under $${a.minDepthUsd.toLocaleString("en-US")}`);
+  if (trend !== "holding") fails.push(trend === "rolling over" ? "volume rolling over" : "no hourly trail yet");
+  if (drawdownPct != null && drawdownPct > a.maxDrawdownPct) fails.push(`${drawdownPct.toFixed(0)}% off its peak`);
+  if (!fails.length) return { grade: "A", capUsd: r.capUsd.A, why: "clears every bar for size", depthUsd, drawdownPct, trend };
+  const b = r.gradeB;
+  const bOk = c.volUsd >= b.minVolUsd && c.senders >= b.minSenders && move <= b.maxMovePct && c.tierPct <= b.maxTierPct && trend !== "rolling over" && (drawdownPct == null || drawdownPct <= b.maxDrawdownPct);
+  if (bOk) return { grade: "B", capUsd: r.capUsd.B, why: `short of A: ${fails.slice(0, 2).join(", ")}`, depthUsd, drawdownPct, trend };
+  const cOk = trend !== "rolling over" && (drawdownPct == null || drawdownPct <= b.maxDrawdownPct);
+  if (cOk) return { grade: "C", capUsd: r.capUsd.C, why: `probe only: ${fails.slice(0, 2).join(", ")}`, depthUsd, drawdownPct, trend };
+  return { grade: null, capUsd: 0, why: `below the bar: ${trend === "rolling over" ? "volume rolling over" : `${drawdownPct?.toFixed(0)}% off its peak`}`, depthUsd, drawdownPct, trend };
+}
+

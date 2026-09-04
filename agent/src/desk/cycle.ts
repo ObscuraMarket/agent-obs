@@ -16,7 +16,7 @@ import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity,
 import { assetKey } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates } from "./onchain.ts";
-import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens } from "./candidates.ts";
+import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset } from "./candidates.ts";
 import { checkCandidate, clampToBalance } from "./rails.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute, PAPER_BOOK } from "./paper.ts";
 import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCheck } from "./analysis.ts";
@@ -97,7 +97,17 @@ const trailOf = (poolId: string) => {
   const h = feed.hourly[poolId.toLowerCase()] ?? [];
   return h.length ? h.slice(-4).map((x) => `$${Math.round(x.usd)}${x.px != null ? ` at ${x.px.toPrecision(3)}` : ""}`).join(", ") + " per hour" : "no hourly rows yet";
 };
-const candidates = feed.candidates.slice(0, 4).map((cnd) => ({ symbol: cnd.symbol, hour: cnd.hour, volUsd: cnd.volUsd, movePct: cnd.movePct, senders: cnd.senders, tierPct: cnd.tierPct, ageH: (now - cnd.at) / 3600e3, trail: trailOf(cnd.poolId) }));
+// Each candidate graded against the bar: its row, its hourly trail, and its pool's depth read live.
+const gradeRules = gradeRulesFromEnv();
+const graded = new Map<string, ReturnType<typeof gradeCandidate>>();
+const candidates = [];
+for (const cnd of feed.candidates.slice(0, 4)) {
+  const spec = dynamicPoolSpec(candidateAsset(cnd));
+  const depth = spec ? await (async () => { try { return (await poolRead(spec))?.depthUsd2pct ?? null; } catch { return null; } })() : null;
+  const g = gradeCandidate(cnd, feed.hourly[cnd.poolId.toLowerCase()] ?? [], depth, gradeRules);
+  graded.set(cnd.symbol, g);
+  candidates.push({ symbol: cnd.symbol, hour: cnd.hour, volUsd: cnd.volUsd, movePct: cnd.movePct, senders: cnd.senders, tierPct: cnd.tierPct, ageH: (now - cnd.at) / 3600e3, trail: trailOf(cnd.poolId), grade: g.grade, capUsd: g.capUsd, why: g.why, depthUsd: g.depthUsd });
+}
 const dyn = dynamicAssets(feed);
 const heldDyn = Object.values(dyn).filter((a) => (chain?.bySymbol[a.symbol] ?? 0) > 0);
 const pos = positions(book.flows, bookTrades, chain?.bySymbol ?? mark.holdings, prices).positions;
@@ -172,21 +182,30 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
     };
     // A swap must be argued for. An exit of a held position is exempt: leaving is never blocked on paperwork.
     const argued = from.candidate ? { ok: true as const, cited: 0 } : evidenceCheck(parsed.analysis, observation, { minEvidence: rails.minEvidence, minConviction: rails.minConviction });
-    const gate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails);
+    const heldPos = to.candidate ? pos.find((x) => x.asset === to.symbol) : undefined;
+    const gate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails, to.candidate ? (graded.get(to.symbol) ?? null) : null, heldPos?.valueUsd ?? 0);
+    let capUsd: number | undefined;
+    let addOn = false;
     if (!gate.ok) {
       decision = { kind: "hold", reason: `wanted ${decision.amount} ${assetKey(from)} to ${assetKey(to)}, refused: ${gate.reason}` };
-    } else if (gate.maxUsd != null && usd != null && usd > gate.maxUsd) {
-      const clamped = Number(((decision.amount * gate.maxUsd) / usd).toPrecision(6));
-      decision = { ...decision, amount: clamped, reason: `${decision.reason || ""} (sized down to a $${gate.maxUsd} probe: ${to.symbol} has no proven sell yet)`.trim() };
+    } else if ("maxUsd" in gate && gate.maxUsd != null) {
+      capUsd = gate.maxUsd;
+      addOn = !!gate.addOn;
+      if (usd != null && usd > gate.maxUsd) {
+        const clamped = Number(((decision.amount * gate.maxUsd) / usd).toPrecision(6));
+        const known = to.contract ? tokenInfo(to.contract) : null;
+        decision = { ...decision, amount: clamped, reason: `${decision.reason || ""} (sized to $${gate.maxUsd}: ${known?.proven === true ? `${to.symbol}'s grade ${graded.get(to.symbol)?.grade ?? "C"} ceiling` : `${to.symbol} has no proven sell yet, so a probe`})`.trim() };
+      }
     }
     const haveNow = chain ? (chain.bySymbol[from.symbol] ?? chain.byKey[assetKey(from)] ?? 0) : (mark.holdings[from.symbol] ?? 0);
     const amt = decision.kind === "propose-swap" ? clampToBalance(decision.amount as number, haveNow) : 0;
     const intentUsd = usd != null && px != null ? amt * px : usd;
     if (decision.kind === "propose-swap" && (ARMED || PAPER)) {
       const isExit = !!from.candidate;
+      const intent = { from, to, amount: amt, usd: intentUsd, exit: isExit, ...(capUsd != null ? { capUsd } : {}), ...(addOn ? { addOn: true } : {}) };
       const r = PAPER
-        ? await paperExecute({ from, to, amount: amt, usd: intentUsd, exit: isExit }, ctx, real?.bySymbol ?? {}, now)
-        : VENUE === "obscura" && !from.candidate && !to.candidate ? await execute({ from, to, amount: amt, usd: intentUsd }, ctx, now) : await executeOnChain({ from, to, amount: amt, usd: intentUsd, exit: isExit }, ctx, now);
+        ? await paperExecute(intent, ctx, real?.bySymbol ?? {}, now)
+        : VENUE === "obscura" && !from.candidate && !to.candidate ? await execute(intent, ctx, now) : await executeOnChain(intent, ctx, now);
       if (r.ok) {
         executed = r.trade;
         decision = { ...decision, from: assetKey(from), to: assetKey(to), reason: `${decision.reason || "executing"}; ${PAPER ? `paper: swapped ${amt} ${from.symbol} for ${r.trade.to.amount} ${to.symbol} at full size, nothing sent` : r.trade.venue === "pool" ? `swapped ${amt} ${from.symbol} on chain, ${r.trade.status}` : `sent ${amt} ${from.symbol} via ${r.trade.partner}`}` };

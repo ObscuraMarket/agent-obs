@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseFeed, deriveTickSpacing, poolIdFor, exitSignal, candidateAsset, dynamicPoolSpec, resolveAny } from "../src/desk/candidates.ts";
+import { parseFeed, deriveTickSpacing, poolIdFor, exitSignal, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv } from "../src/desk/candidates.ts";
 import { checkCandidate, railsFromEnv, checkRails, type Intent } from "../src/desk/rails.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 import { routeFor, costFloorPct } from "../src/desk/onchain.ts";
@@ -78,10 +78,10 @@ test("candidate rails: probe first, proven sizes up, blacklisted never, one at a
   const eth = resolveAsset("ETH@robinhood")!;
   const buy: Intent = { from: eth, to: tok, amount: 0.01, usd: 24 };
   assert.deepEqual(checkCandidate(buy, null, [], rails), { ok: true, maxUsd: 5 }, "unknown token: a $5 probe");
-  assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, [], rails), { ok: true });
+  assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, [], rails), { ok: true, maxUsd: 5, addOn: false }, "proven but ungraded: the probe size is the ceiling");
   assert.match((checkCandidate(buy, { proven: false, blacklisted: true }, [], rails) as { reason: string }).reason, /blacklisted/);
   assert.match((checkCandidate(buy, { proven: true, blacklisted: false }, ["HOTDOG"], rails) as { reason: string }).reason, /one launch position at a time/);
-  assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, ["BLOKKS"], rails), { ok: true }, "adding to the one held is fine");
+  assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, ["BLOKKS"], rails), { ok: true, maxUsd: 5, addOn: false }, "adding to the one held is fine, at the ungraded ceiling");
   const ctx = { rails, balances: { "ETH@robinhood": 0.4, "BLOKKS@robinhood": 50000 }, nativeOnFromChain: 0.4, openOrders: 1, sentTodayUsd: 99 };
   assert.deepEqual(checkRails(buy, ctx).ok, false, "a buy at the daily cap with an order open is refused");
   const sell: Intent = { from: tok, to: eth, amount: 50000, usd: 300, exit: true };
@@ -97,4 +97,51 @@ test("the cost floor is the ordinary allowance for the majors and the pool's own
   assert.ok(Math.abs(costFloorPct({ from: eth, to: resolveAsset("NVDA@robinhood")!, amount: 1, usd: 1 }, 0.97) - 3) < 1e-9);
   assert.ok(Math.abs(costFloorPct({ from: eth, to: tok, amount: 1, usd: 1 }, 0.97) - 7) < 1e-9, "a 4% tier plus the 3% allowance");
   assert.ok(Math.abs(costFloorPct({ from: tok, to: eth, amount: 1, usd: 1 }, 0.97) - 7) < 1e-9, "selling it costs the tier too");
+});
+
+test("the bar: grade A clears every threshold and earns size, B ordinary size, C a probe, and rolling over is below the bar", () => {
+  const r = gradeRulesFromEnv({} as NodeJS.ProcessEnv);
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true });
+  const base = snap.candidates[0];
+  const holding = [{ hour: 1, at: 1, usd: 300000, px: 0.001, senders: 50 }, { hour: 2, at: 2, usd: 280000, px: 0.00098, senders: 60 }];
+  const strong = { ...base, volUsd: 400000, senders: 60, movePct: 12, tierPct: 3, hour: 2 };
+  const a = gradeCandidate(strong, holding, 30000, r);
+  assert.equal(a.grade, "A");
+  assert.equal(a.capUsd, 75);
+  assert.equal(a.trend, "holding");
+  const b = gradeCandidate({ ...strong, tierPct: 4 }, holding, 30000, r);
+  assert.equal(b.grade, "B", "a 4% tier is short of A but fine for B");
+  assert.equal(b.capUsd, 25);
+  assert.match(b.why, /tier 4% over 3%/);
+  const shallow = gradeCandidate(strong, holding, 5000, r);
+  assert.equal(shallow.grade, "B", "thin depth is short of A");
+  const c = gradeCandidate({ ...strong, volUsd: 40000, senders: 8 }, holding, 30000, r);
+  assert.equal(c.grade, "C");
+  assert.equal(c.capUsd, 5);
+  const rolling = [{ hour: 1, at: 1, usd: 300000, px: 0.001, senders: 50 }, { hour: 2, at: 2, usd: 90000, px: 0.0006, senders: 60 }];
+  const dead = gradeCandidate(strong, rolling, 30000, r);
+  assert.equal(dead.grade, null);
+  assert.match(dead.why, /below the bar/);
+  const noTrail = gradeCandidate(strong, [], 30000, r);
+  assert.equal(noTrail.grade, "B", "without a trail there is no proof of holding volume, so no size yet");
+  const bled = gradeCandidate(strong, [{ hour: 1, at: 1, usd: 300000, px: 0.001, senders: 50 }, { hour: 2, at: 2, usd: 290000, px: 0.0005, senders: 60 }], 30000, r);
+  assert.equal(bled.grade, null, "50% off its peak is below the bar even with volume holding");
+});
+
+test("grade caps size the position, the probe comes first, and scaling into a proven token is a continuation", () => {
+  const rails = railsFromEnv({ OBS_TRADING: "on", OBS_PROBE_USD: "5" } as NodeJS.ProcessEnv);
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true });
+  const tok = candidateAsset(snap.candidates[0]);
+  const eth = resolveAsset("ETH@robinhood")!;
+  const buy: Intent = { from: eth, to: tok, amount: 0.05, usd: 120 };
+  const A = { grade: "A" as const, capUsd: 75, why: "clears every bar for size" };
+  assert.deepEqual(checkCandidate(buy, null, [], rails, A), { ok: true, maxUsd: 5 }, "unknown token: the probe first, whatever the grade");
+  assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, [], rails, A, 0), { ok: true, maxUsd: 75, addOn: false });
+  assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, ["BLOKKS"], rails, A, 5), { ok: true, maxUsd: 70, addOn: true }, "holding the probe: room to the cap, as a continuation");
+  assert.match((checkCandidate(buy, { proven: true, blacklisted: false }, ["BLOKKS"], rails, A, 75) as { reason: string }).reason, /ceiling of \$75/);
+  assert.match((checkCandidate(buy, { proven: true, blacklisted: false }, [], rails, { grade: null, capUsd: 0, why: "below the bar: volume rolling over" }) as { reason: string }).reason, /below the bar/);
+  const ctx = { rails, balances: { "ETH@robinhood": 0.4 }, nativeOnFromChain: 0.4, openOrders: 0, sentTodayUsd: 0, now, lastEntryAt: now - 30 * 60e3, entriesToday: 1 };
+  assert.deepEqual(checkRails({ from: eth, to: tok, amount: 0.03, usd: 70, capUsd: 75, addOn: true }, ctx), { ok: true }, "a $70 add-on passes under a $75 grade cap, and skips the spacing rule");
+  assert.match((checkRails({ from: eth, to: tok, amount: 0.03, usd: 70, capUsd: 75 }, ctx) as { reason: string }).reason, /at least 2h apart/, "a fresh entry is still spaced");
+  assert.match((checkRails({ from: eth, to: tok, amount: 0.04, usd: 96, capUsd: 75, addOn: true }, ctx) as { reason: string }).reason, /grade cap of \$75/);
 });

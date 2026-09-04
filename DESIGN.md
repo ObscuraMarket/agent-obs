@@ -205,6 +205,22 @@ the position falls through the floor (default 40%), or at the time stop
 (default 8 hours). Exits skip the caps: an exit is never blocked. What the
 desk learns about each token lives in `data/obs-tokens.json`.
 
+**The bar.** Not every candidate is worth a probe and few are worth size,
+so each is graded in code from its row, its hourly trail and its pool's
+depth read live (`gradeCandidate`, knobs `OBS_GRADE_*`). GRADE A clears
+every threshold: prior-hour volume of $250k or more, 40 or more distinct
+buyers, a move within 30%, a tier of 3% or less, hour 3 or earlier, $20k or
+more of 2% depth, volume holding hour over hour, and no more than 25% off
+its peak; it may be swung to `OBS_CANDIDATE_MAX_USD_A` (default $75).
+GRADE B ($100k, 20 buyers, 50%, 4%, 40% off peak, not rolling over) holds
+ordinary size ($25). GRADE C is probe only ($5). Volume rolling over or a
+deeper bleed is below the bar and cannot be bought at all. The first buy of
+any token is always the probe; a proven token scales to its grade cap on a
+later cycle as a continuation, which skips the entry spacing but not the
+count, the daily caps or the brake. The observation names each candidate's
+grade, cap and reason, and the prompt tells him to spend a thesis on A and
+B only.
+
 **How he decides** (`desk/analysis.ts`). The observation carries more than
 the book and the quotes: the desk samples every price it uses each cycle
 (`obs-prices.jsonl`) and reads back 24-hour moves, 7-day ranges and where the
