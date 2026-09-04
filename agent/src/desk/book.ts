@@ -212,6 +212,8 @@ export interface CostBasis {
   lots: Record<string, Lot>;
   /** Realized dollars per asset from settled sells, where the basis was known. */
   realized: Record<string, number>;
+  /** Each settled sell as a realized event: when, what, how many dollars against its average cost. */
+  events: Array<{ at: number; asset: string; usd: number; id: string }>;
   inFlight: Array<{ id: string; from: Leg; to: Leg; usd: number | null; costUsd: number | null }>;
 }
 
@@ -219,6 +221,7 @@ export interface CostBasis {
 export function costBasis(flows: CapitalFlow[], trades: Trade[]): CostBasis {
   const lots: Record<string, Lot> = {};
   const realized: Record<string, number> = {};
+  const realizedEvents: CostBasis["events"] = [];
   const inFlight: CostBasis["inFlight"] = [];
   const lot = (a: string): Lot => (lots[a.toUpperCase()] ??= { qty: 0, usd: 0, known: true });
   const avg = (a: string): number | null => {
@@ -265,10 +268,13 @@ export function costBasis(flows: CapitalFlow[], trades: Trade[]): CostBasis {
       continue;
     }
     const spent = t.from.usd ?? t.to.usd;
-    if (cost != null && spent != null) realized[t.from.asset.toUpperCase()] = (realized[t.from.asset.toUpperCase()] ?? 0) + (spent - cost);
+    if (cost != null && spent != null) {
+      realized[t.from.asset.toUpperCase()] = (realized[t.from.asset.toUpperCase()] ?? 0) + (spent - cost);
+      if (!STABLES.has(t.from.asset.toUpperCase())) realizedEvents.push({ at: t.updatedAt ?? t.at, asset: t.from.asset.toUpperCase(), usd: spent - cost, id: t.id });
+    }
     put(t.to.asset, t.to.amount, spent);
   }
-  return { lots, realized, inFlight };
+  return { lots, realized, events: realizedEvents, inFlight };
 }
 
 export interface Position {
@@ -291,11 +297,12 @@ export interface Positions {
   positions: Position[];
   realizedUsd: number;
   inFlight: CostBasis["inFlight"];
+  events: CostBasis["events"];
 }
 
 /** PURE: every holding as a position with its cost, its mark and its PnL, largest first. */
 export function positions(flows: CapitalFlow[], trades: Trade[], holdings: Record<string, number>, prices: Prices): Positions {
-  const { lots, realized, inFlight } = costBasis(flows, trades);
+  const { lots, realized, inFlight, events } = costBasis(flows, trades);
   const total = valueHoldings(holdings, prices).usd;
   const rows: Position[] = [];
   for (const [asset, qty] of Object.entries(holdings)) {
@@ -320,7 +327,7 @@ export function positions(flows: CapitalFlow[], trades: Trade[], holdings: Recor
     });
   }
   rows.sort((a, b) => (b.valueUsd ?? -1) - (a.valueUsd ?? -1));
-  return { positions: rows, realizedUsd: Object.values(realized).reduce((s, v) => s + v, 0), inFlight };
+  return { positions: rows, realizedUsd: Object.values(realized).reduce((s, v) => s + v, 0), inFlight, events };
 }
 
 export function readBook(): { flows: CapitalFlow[]; trades: Trade[]; snapshots: BookSnapshot[] } {

@@ -13,6 +13,10 @@ import { fileURLToPath } from "node:url";
 import { readLedger } from "./ledger.ts";
 import { liveReads, readsBlock, assetPrices, readMarketSamples, marketSeries, change24h, type Reads } from "./obscura/reads.ts";
 import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, type Trade, type BookSnapshot } from "./desk/book.ts";
+import { trackRecord, basisSignal, ratioStats, readPrices, usSession } from "./desk/analysis.ts";
+import { stockReference } from "./obscura/stockRef.ts";
+import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset } from "./desk/candidates.ts";
+import { poolRead } from "./obscura/pools.ts";
 import { readThoughts } from "./desk/thoughts.ts";
 import { tradingArmed, railsFromEnv, sentTodayUsd, type Rails } from "./desk/rails.ts";
 import { walletBalances } from "./obscura/reads.ts";
@@ -380,6 +384,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           positions: pos.positions,
           realizedUsd: pos.realizedUsd,
           inFlight: pos.inFlight,
+          track: trackRecord(pos.events, now),
           series: series(book.snapshots, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 90) : 168) * 3600e3, now),
           capital: { netUsd: live.netCapitalUsd, deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length },
           trades: { settled: t.filter((x) => x.status === "settled").length, pending: t.filter((x) => x.status === "pending").length, proposed: t.filter((x) => x.status === "proposed").length, failed: t.filter((x) => x.status === "failed" || x.status === "cancelled").length },
@@ -388,6 +393,28 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         });
       })
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "pnl unavailable" }));
+    return;
+  }
+  if (path === "/api/obs/signals") {
+    // What the desk is watching and how close each is to acting, for the page's signals strip.
+    cachedReads()
+      .then(async (r) => {
+        const prices = await cachedPrices(["ETH", "NVDA"]);
+        const ref = await stockReference("NVDA", now);
+        const nvda = prices.NVDA ?? null;
+        const basis = nvda ? basisSignal(nvda, ref, 0.62, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
+        const feed = readFeed(now);
+        const rules = gradeRulesFromEnv();
+        const candidates = [];
+        for (const c of feed.candidates.slice(0, 4)) {
+          const spec = dynamicPoolSpec(candidateAsset(c));
+          const depth = spec ? await poolRead(spec).then((p) => p?.depthUsd2pct ?? null).catch(() => null) : null;
+          const g = gradeCandidate(c, feed.hourly[c.poolId.toLowerCase()] ?? [], depth, rules);
+          candidates.push({ symbol: c.symbol, hour: c.hour, volUsd: c.volUsd, movePct: c.movePct, senders: c.senders, tierPct: c.tierPct, grade: g.grade, capUsd: g.capUsd, why: g.why, depthUsd: g.depthUsd, trend: g.trend });
+        }
+        json(res, 200, { basis, reference: { printStatus: ref.printStatus, printAt: ref.printAt, perpTradesDay: ref.perpTradesDay, perpChangeDayPct: ref.perpChangeDayPct }, ratio: ratioStats(readPrices(), "ETH", "NVDA", now), session: usSession(now), candidates, market: r.market ?? null, at: now });
+      })
+      .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "signals unavailable" }));
     return;
   }
   if (path === "/api/obs/market") {
@@ -407,7 +434,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/stream?limit=12 (server-sent events)"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/stream?limit=12 (server-sent events)"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in

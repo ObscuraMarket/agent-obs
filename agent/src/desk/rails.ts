@@ -44,12 +44,12 @@ export interface Rails {
 }
 
 // The mandate: this desk trades on Robinhood Chain only, in the majors,
-// the dollar stables and the tokenized stocks Obscura routes there. Today
-// Obscura quotes ETH and NVDA on that network; USDG@robinhood stays in the
-// registry but off this list (probed 2026-09-02, no USDG leg quoted in any
-// direction) and goes back on when it does. The Ethereum entries in the
-// registry are read and marked, never traded: the chain rail refuses them.
-export const DEFAULT_TRADE_ASSETS = "ETH@robinhood,NVDA@robinhood";
+// the dollar stables and the tokenized stocks. ETH, USDG and NVDA: the pool
+// lane routes all three (USDG is the dollar leg of the basis trade; Obscura
+// itself quotes no USDG leg, which only matters for the Obscura lane). The
+// Ethereum entries in the registry are read and marked, never traded: the
+// chain rail refuses them.
+export const DEFAULT_TRADE_ASSETS = "ETH@robinhood,USDG@robinhood,NVDA@robinhood";
 export const DEFAULT_TRADE_CHAINS = "robinhood";
 
 export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {

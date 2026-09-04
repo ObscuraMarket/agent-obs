@@ -19,7 +19,8 @@ import { executeOnChain, settleOnChain, poolQuotes, exitCandidates } from "./onc
 import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset } from "./candidates.ts";
 import { checkCandidate, clampToBalance } from "./rails.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute, PAPER_BOOK } from "./paper.ts";
-import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCheck } from "./analysis.ts";
+import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCheck, basisSignal } from "./analysis.ts";
+import { stockReference } from "../obscura/stockRef.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
 import { positions } from "./book.ts";
@@ -84,7 +85,9 @@ const symbols = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.
 const prices = await assetPrices(symbols, { OBS: reads.market?.priceUsd ?? null });
 const mark = chain ? snapshotFromChain(book.flows, bookTrades, chain.bySymbol, prices, now) : snapshot(book.flows, bookTrades, prices, now);
 const open = latestTrades(book.trades).filter((t) => t.status === "pending" || t.status === "proposed");
-const obscuraQuotes: QuoteRead[] = await quoteWatchlist(now);
+// Obscura quotes only the legs it routes (no USDG leg quotes there); the pools quote every Robinhood leg.
+const obscuraSpec = parseWatchlist(process.env.OBS_QUOTE_WATCHLIST ?? DEFAULT_WATCHLIST).filter((w) => w.from.code !== "usdg" && w.to.code !== "usdg").map((w) => `${w.from.code}/${w.from.network}->${w.to.code}/${w.to.network}:${w.amount}`).join(",");
+const obscuraQuotes: QuoteRead[] = obscuraSpec ? await quoteWatchlist(now, obscuraSpec) : [];
 const nvdaDepth = await (async () => { try { const r = await poolRead(chainMemory().referencePools["NVDA/USDG"]); return r?.depthUsd2pct ?? null; } catch { return null; } })();
 // The same legs priced in the pools, so he sees the venue he actually trades on beside Obscura's routes.
 const legs = parseWatchlist(process.env.OBS_QUOTE_WATCHLIST ?? DEFAULT_WATCHLIST)
@@ -128,13 +131,19 @@ const market = {
   nvdaDepthBaselineUsd: chainMemory().referencePools["NVDA/USDG"]?.measured?.usdgDepth2pct ?? null,
 };
 const session = usSession(now);
+// The basis: NVDA's pool against the 24-hour reference, net of what a round trip costs.
+const ref = await stockReference("NVDA", now);
+const nvdaPool = prices.NVDA ?? null;
+const usdgLeg = quotes.find((q) => q.partner?.startsWith("pool") && q.from === "USDG" && q.to === "NVDA");
+const roundTripCostPct = usdgLeg && usdgLeg.amountOut != null && nvdaPool ? Math.max(0.3, 2 * (1 - (usdgLeg.amountOut * nvdaPool) / usdgLeg.amountIn) * 100) : 0.62;
+const basis = nvdaPool ? basisSignal(nvdaPool, ref, roundTripCostPct, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
 // Paper exits: a paper-held launch token past its rails is sold on paper, before the model thinks.
 if (PAPER && chain && heldDyn.length) {
   const ctxP = { rails: railsFromEnv(), balances: chain.byKey, nativeOnFromChain: chain.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookTrades, now) };
   const exits = await exitCandidates(chain.bySymbol, prices, ctxP, feed, now, (i, c, t) => paperExecute(i, c, real?.bySymbol ?? {}, t), paperTrades);
   for (const t of exits) console.log(`[desk] paper exit ${t.id}: ${t.note}`);
 }
-const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, heldCandidates, paper: PAPER, market, session });
+const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, heldCandidates, paper: PAPER, market, session, basis, reference: { perpTradesDay: ref.perpTradesDay, printStatus: ref.printStatus, printAt: ref.printAt } });
 console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  - " + l).join("\n")}`);
 
 // The persona thinks.

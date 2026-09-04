@@ -13,7 +13,7 @@ import { DEFAULT_TRADE_ASSETS } from "./rails.ts";
 import { forbiddenReason, stripDashes } from "../social/postGuards.ts";
 import { walletLines, marketLine, type Reads } from "../obscura/reads.ts";
 import type { BookSnapshot, Trade } from "./book.ts";
-import type { Analysis, PriceStats, RatioStats, Session } from "./analysis.ts";
+import type { Analysis, PriceStats, RatioStats, Session, BasisSignal } from "./analysis.ts";
 
 export interface Decision {
   kind: "hold" | "propose-swap";
@@ -50,7 +50,7 @@ const usd = (v: number) => `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en
 const qty = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: 6 });
 
 /** PURE: the measured observation. Every number the model may use is here. */
-export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number; unread?: string[]; candidates?: Array<{ symbol: string; hour: number; volUsd: number; movePct: number; senders: number; tierPct: number; ageH: number; trail: string; grade?: "A" | "B" | "C" | null; capUsd?: number; why?: string; depthUsd?: number | null }>; heldCandidates?: Array<{ symbol: string; qty: number; costUsd: number | null; valueUsd: number | null; pnlPct: number | null; ageH: number; trail: string }>; paper?: boolean; market?: { stats: PriceStats[]; ethPerNvda: RatioStats | null; btcChange24hPct: number | null; ethChange24hPct: number | null; nvdaDepthUsd: number | null; nvdaDepthBaselineUsd: number | null }; session?: Session }): string[] {
+export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number; unread?: string[]; candidates?: Array<{ symbol: string; hour: number; volUsd: number; movePct: number; senders: number; tierPct: number; ageH: number; trail: string; grade?: "A" | "B" | "C" | null; capUsd?: number; why?: string; depthUsd?: number | null }>; heldCandidates?: Array<{ symbol: string; qty: number; costUsd: number | null; valueUsd: number | null; pnlPct: number | null; ageH: number; trail: string }>; paper?: boolean; market?: { stats: PriceStats[]; ethPerNvda: RatioStats | null; btcChange24hPct: number | null; ethChange24hPct: number | null; nvdaDepthUsd: number | null; nvdaDepthBaselineUsd: number | null }; session?: Session; basis?: BasisSignal | null; reference?: { perpTradesDay: number | null; printStatus: string; printAt: string | null } }): string[] {
   const lines: string[] = [];
   if (i.unread?.length) lines.push(`Balances the chain did not answer for this cycle, excluded from equity, not zero: ${i.unread.join(", ")}. Do not size anything against them.`);
   const h = Object.entries(i.book.holdings);
@@ -74,6 +74,12 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
     if (i.market.ethPerNvda?.ratioNow != null) lines.push(`Relative value: one ETH buys ${i.market.ethPerNvda.ratioNow.toFixed(3)} NVDA${i.market.ethPerNvda.deviationPct != null ? `, ${pct(i.market.ethPerNvda.deviationPct)} against its 7-day average` : ", no 7-day average yet"}.`);
     if (i.market.btcChange24hPct != null || i.market.ethChange24hPct != null) lines.push(`Backdrop: BTC ${pct(i.market.btcChange24hPct)} and ETH ${pct(i.market.ethChange24hPct)} over 24h on the wider market.`);
     if (i.market.nvdaDepthUsd != null) lines.push(`NVDA pool depth: ${usd(i.market.nvdaDepthUsd)} moves it 2%${i.market.nvdaDepthBaselineUsd != null ? `, against ${usd(i.market.nvdaDepthBaselineUsd)} when the pool was last measured for the chain memory` : ""}.`);
+  }
+  if (i.basis) {
+    const b = i.basis;
+    const pct = (x: number | null) => (x == null ? "not measured" : `${x > 0 ? "+" : ""}${x.toFixed(2)}%`);
+    lines.push(`NVDA reference: the perp venue on this chain prints ${b.perpUsd == null ? "nothing this cycle" : usd(b.perpUsd)} around the clock${i.reference?.perpTradesDay != null ? ` (${i.reference.perpTradesDay.toLocaleString("en-US")} trades today)` : ""}; the last official print was ${b.printUsd == null ? "not read" : usd(b.printUsd)}${i.reference ? ` (market ${i.reference.printStatus})` : ""}.`);
+    lines.push(`Basis: the pool at ${usd(b.poolUsd)} is ${pct(b.gapToPerpPct)} against the perp and ${pct(b.gapToPrintPct)} against the print. A round trip through the pools costs ${b.roundTripCostPct.toFixed(2)}%, so the net edge is ${pct(b.netEdgePct)} against a ${b.minEdgePct.toFixed(2)}% bar: ${b.side === "buy" ? "the pool is cheap enough to BUY NVDA with USDG and sell it back when the gap closes" : b.side === "sell" ? "the pool is rich; a held NVDA position could be SOLD back to USDG" : "no basis trade this cycle"}.`);
   }
   if (i.session) {
     const when = i.session.minutesToChange != null ? ` (${i.session.open ? "pauses" : "resumes"} in ${Math.floor(i.session.minutesToChange / 60)}h${i.session.minutesToChange % 60}m)` : "";
@@ -121,7 +127,7 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     "",
     past ? `Your last public thoughts, newest first:\n${past}\n` : "",
     journal ? `Your private notes to yourself from earlier cycles, oldest first:\n${journal}\n` : "",
-    `Tokenized stocks trade 24 hours a day on this chain; a paused Nasdaq print changes what the price is anchored to, it is never by itself a reason to hold. Work like an analyst, not a reflex. First read every data point above: the book, the quotes and what each route costs, the 24-hour moves and 7-day ranges, the typical 30-minute move, relative value, the wider market, pool depth, the session, the candidates and their hourly trails. Then either form ONE specific thesis for ONE trade (which asset, which direction, why now, what would prove it wrong) or conclude there is none. Most cycles there is none, and saying so precisely is the job. A swap is only executed when it is argued for: a thesis, at least three EVIDENCE lines each quoting a figure from the observation, an INVALIDATION, and CONVICTION of 4 or 5; anything less is recorded as a hold with the shortfall stated in public. Entries are also spaced and counted by the rails.`,
+    `Tokenized stocks trade 24 hours a day on this chain; a paused Nasdaq print changes what the price is anchored to, it is never by itself a reason to hold. Your bread-and-butter trade is the basis: when NVDA's pool is cheaper than the 24-hour reference by more than the round trip costs plus the bar, buy NVDA with USDG (dollar in, dollar out, no ETH exposure) and sell it back to USDG when the gap closes; when the pool is rich and you hold NVDA, sell. Small, repeatable, argued each time from the figures. Keep dry powder in USDG for it. Work like an analyst, not a reflex. First read every data point above: the book, the quotes and what each route costs, the 24-hour moves and 7-day ranges, the typical 30-minute move, relative value, the wider market, pool depth, the session, the candidates and their hourly trails. Then either form ONE specific thesis for ONE trade (which asset, which direction, why now, what would prove it wrong) or conclude there is none. Most cycles there is none, and saying so precisely is the job. A swap is only executed when it is argued for: a thesis, at least three EVIDENCE lines each quoting a figure from the observation, an INVALIDATION, and CONVICTION of 4 or 5; anything less is recorded as a hold with the shortfall stated in public. Entries are also spaced and counted by the rails.`,
     "",
     `Think out loud, in public. Two to five short lines that a person on obscura.market will read as your reasoning: what you see, what it means, what you would do and why not yet. Plain first-person sentences. Every figure must appear in the observation above; anything else is "not measured". No addresses of any kind, no advice, no price predictions, no dates, no em dashes, no quotation marks.`,
     "",

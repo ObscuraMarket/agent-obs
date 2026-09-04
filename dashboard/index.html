@@ -243,6 +243,15 @@
       <div class="track-wrap"><div class="track" id="track"><span class="tchip dim">no trades yet</span></div></div>
     </div>
 
+    <div class="strip" style="margin-top:20px" id="signals">
+      <div><div class="lbl">Basis vs perp</div><div class="val num" id="g-perp">n/a</div><div class="sub num" id="g-perp-s">pool against the 24h reference</div></div>
+      <div><div class="lbl">Net edge</div><div class="val num" id="g-edge">n/a</div><div class="sub num" id="g-edge-s">after the round trip</div></div>
+      <div><div class="lbl">Vs last print</div><div class="val num" id="g-print">n/a</div><div class="sub" id="g-print-s">print paused</div></div>
+      <div><div class="lbl">ETH / NVDA</div><div class="val num" id="g-ratio">n/a</div><div class="sub" id="g-ratio-s">vs 7-day average</div></div>
+      <div><div class="lbl">Launch bar</div><div class="val num" id="g-cand">0</div><div class="sub" id="g-cand-s">no candidates</div></div>
+      <div><div class="lbl">Track record</div><div class="val num" id="g-track">0</div><div class="sub num" id="g-track-s">no round trips yet</div></div>
+    </div>
+
     <div class="panel" style="margin-top:20px">
       <div class="ph"><div class="lbl">Terminal</div><span class="r" id="term-s">connecting</span></div>
       <div class="term" id="term"></div>
@@ -547,8 +556,26 @@
     }
 
     /* ---- portfolio strip + positions ---- */
+    function track(t) {
+      if (!t) return;
+      var v = el("g-track"); v.textContent = t.roundTrips + (t.roundTrips === 1 ? " trip" : " trips");
+      v.className = "num " + (t.realizedUsd > 0 ? "up" : t.realizedUsd < 0 ? "down" : "");
+      el("g-track-s").textContent = t.roundTrips ? Math.round(t.hitRatePct) + "% wins · " + usd(t.realizedUsd, true) + " realized · 7d " + usd(t.realized7dUsd, true) : "no round trips yet";
+      el("pos-s").textContent = (el("pos-s").textContent ? el("pos-s").textContent + " · " : "") + (t.roundTrips ? t.wins + "W " + t.losses + "L, avg win " + usd(t.avgWinUsd || 0) + (t.avgLossUsd != null ? ", avg loss " + usd(t.avgLossUsd) : "") : "");
+    }
+    function signals(g) {
+      var b = g.basis;
+      if (b && b.gapToPerpPct != null) { setv("g-perp", pct(b.gapToPerpPct), dir(-b.gapToPerpPct)); el("g-perp-s").textContent = "pool " + usd(b.poolUsd) + " · perp " + usd(b.perpUsd) + (g.reference && g.reference.perpTradesDay ? " · " + g.reference.perpTradesDay.toLocaleString("en-US") + " trades" : ""); }
+      if (b && b.netEdgePct != null) { setv("g-edge", pct(b.netEdgePct), b.side !== "none" ? "up" : ""); el("g-edge-s").textContent = b.side === "buy" ? "BUY signal on: pool is cheap" : b.side === "sell" ? "SELL signal on: pool is rich" : "needs " + pct(b.minEdgePct) + " · cost " + b.roundTripCostPct.toFixed(2) + "%"; }
+      if (b && b.gapToPrintPct != null) { setv("g-print", pct(b.gapToPrintPct), ""); el("g-print-s").textContent = "print " + usd(b.printUsd) + " · market " + (g.reference ? g.reference.printStatus : "?"); }
+      if (g.ratio && g.ratio.ratioNow != null) { setv("g-ratio", g.ratio.ratioNow.toFixed(3), g.ratio.deviationPct != null ? dir(g.ratio.deviationPct) : ""); el("g-ratio-s").textContent = g.ratio.deviationPct != null ? pct(g.ratio.deviationPct) + " vs 7-day average" : "no 7-day average yet"; }
+      var c = g.candidates || [], tradable = c.filter(function (x) { return x.grade; });
+      setv("g-cand", tradable.length + " / " + c.length, tradable.some(function (x) { return x.grade === "A" || x.grade === "B"; }) ? "up" : "");
+      el("g-cand-s").textContent = c.length ? c.map(function (x) { return x.symbol + " " + (x.grade ? "grade " + x.grade : "below bar"); }).join(" · ") : "no candidates in the window";
+    }
     function portfolio(p) {
       var s = p.snapshot;
+      track(p.track);
       setv("q-eq", usd(s.equityUsd));
       el("q-eq-s").textContent = Object.keys(s.holdings || {}).length ? Object.keys(s.holdings).length + " assets · " + (s.source === "chain" ? "wallet" : "ledgers") : "nothing held";
       setv("q-cap", usd(s.netCapitalUsd));
@@ -610,6 +637,7 @@
       get("/api/obs/reads").then(function (r) { S.reads = r; wallet(r.wallet || null); stats(); if (SERIES === "obs") chart(); }).catch(fail);
       get("/api/obs/pnl?hours=" + HOURS).then(function (p) { S.pnl = p; portfolio(p); positions(p); chart(); }).catch(fail);
       get("/api/obs/market?hours=" + HOURS).then(function (m) { S.market = m; stats(); if (SERIES === "obs") chart(); }).catch(fail);
+      get("/api/obs/signals").then(signals).catch(fail);
       get("/api/obs/trades?limit=30").then(function (t) { S.trades = t; ticker(t); }).catch(fail);
       get("/api/obs/feed?limit=8").then(feed).catch(fail);
     }

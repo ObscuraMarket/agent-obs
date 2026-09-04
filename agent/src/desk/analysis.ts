@@ -169,3 +169,70 @@ export function evidenceCheck(a: Analysis | null, observation: string[], rule: E
   if (a.conviction == null || a.conviction < rule.minConviction) missing.push(`conviction of at least ${rule.minConviction} (stated ${a.conviction ?? "none"})`);
   return missing.length ? { ok: false, reason: `not argued for: needs ${missing.join("; ")}` } : { ok: true, cited };
 }
+
+// ---- The basis: the pool against where NVDA should be. ----
+
+export interface BasisSignal {
+  poolUsd: number;
+  /** The 24/7 reference: the perp venue's last trade. */
+  perpUsd: number | null;
+  printUsd: number | null;
+  /** Pool against the perp and against the print, in percent; negative means the pool is cheap. */
+  gapToPerpPct: number | null;
+  gapToPrintPct: number | null;
+  /** The round trip's cost in the pools, in percent. */
+  roundTripCostPct: number;
+  /** The absolute gap to the perp less the round-trip cost: what a convergence would pay after costs. */
+  netEdgePct: number | null;
+  /** "buy" when the pool is cheap by more than cost plus margin, "sell" when rich (for a held position), else "none". */
+  side: "buy" | "sell" | "none";
+  minEdgePct: number;
+}
+
+/** PURE: the basis signal from the pool price, the references and the route cost. The perp is the anchor; the print is context. */
+export function basisSignal(poolUsd: number, ref: { perpUsd: number | null; printUsd: number | null }, roundTripCostPct: number, minEdgePct: number): BasisSignal {
+  const gap = (r: number | null) => (r != null && r > 0 ? ((poolUsd - r) / r) * 100 : null);
+  const gapToPerpPct = gap(ref.perpUsd);
+  const gapToPrintPct = gap(ref.printUsd);
+  const netEdgePct = gapToPerpPct != null ? Math.abs(gapToPerpPct) - roundTripCostPct : null;
+  const side: BasisSignal["side"] = gapToPerpPct == null || netEdgePct == null || netEdgePct < minEdgePct ? "none" : gapToPerpPct < 0 ? "buy" : "sell";
+  return { poolUsd, perpUsd: ref.perpUsd, printUsd: ref.printUsd, gapToPerpPct, gapToPrintPct, roundTripCostPct, netEdgePct, side, minEdgePct };
+}
+
+// ---- The track record: every closed round trip, honestly. ----
+
+export interface TrackRecord {
+  roundTrips: number;
+  wins: number;
+  losses: number;
+  hitRatePct: number | null;
+  avgWinUsd: number | null;
+  avgLossUsd: number | null;
+  realizedUsd: number;
+  /** Realized over the last 24h and 7d. */
+  realized24hUsd: number;
+  realized7dUsd: number;
+  /** The last few, newest first. */
+  last: Array<{ at: number; asset: string; usd: number }>;
+}
+
+/** PURE: wins and losses from realized events (a settled sell against its average cost). */
+export function trackRecord(events: Array<{ at: number; asset: string; usd: number }>, now: number): TrackRecord {
+  const sorted = [...events].sort((a, b) => a.at - b.at);
+  const wins = sorted.filter((e) => e.usd > 0);
+  const losses = sorted.filter((e) => e.usd < 0);
+  const sum = (xs: Array<{ usd: number }>) => xs.reduce((s, e) => s + e.usd, 0);
+  return {
+    roundTrips: sorted.length,
+    wins: wins.length,
+    losses: losses.length,
+    hitRatePct: sorted.length ? (wins.length / sorted.length) * 100 : null,
+    avgWinUsd: wins.length ? sum(wins) / wins.length : null,
+    avgLossUsd: losses.length ? sum(losses) / losses.length : null,
+    realizedUsd: sum(sorted),
+    realized24hUsd: sum(sorted.filter((e) => e.at >= now - 24 * H)),
+    realized7dUsd: sum(sorted.filter((e) => e.at >= now - 7 * 24 * H)),
+    last: sorted.slice(-8).reverse(),
+  };
+}
+
