@@ -1,0 +1,19 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/obs/:path*",
+      "destination": "https://stripes-estimates-parent-save.trycloudflare.com/api/obs/:path*"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/obs/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.obscura.obsvercel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__AGENT_DIR__/scripts/_obs-vercel-upstream.sh</string>
+  </array>
+  <!-- Every 2 minutes: keep obs-api.obscura.markets pointed at the bridge. Quiet when unchanged. -->
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/obs-vercel.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/obs-vercel.log</string>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
