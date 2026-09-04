@@ -127,12 +127,14 @@ curl -s http://127.0.0.1:4671/api/obs/status | head -c 400
 ## The relay to the site repo
 
 A push to `main` that touches `dashboard/` opens a pull request on the site
-repo with the folder copied in, via `.github/workflows/relay-dashboard.yml`.
-It needs, on this repo (Settings, Secrets and variables, Actions): the
-variables `RELAY_REPO` (owner/name of the site repo), `RELAY_PATH` (the
-folder that receives `dashboard/`, default `obs-dashboard`), `RELAY_BASE`
-(the branch to target, default `main`), and the secret `RELAY_TOKEN` (a
-fine-grained token with Contents and Pull requests write on the site repo).
-Until `RELAY_REPO` is set the workflow skips itself. The site team reviews
-and merges on their side; nothing is pushed to their `main` directly.
+repo (`JohnDevving/obscura-exchange`) that puts our copy of the Agent page
+onto the site's own paths (`src/app/pages/agent/`,
+`src/app/service/obs-desk.service.ts`) and the contract plus the reference
+page under `docs/obs/`, via `.github/workflows/relay-dashboard.yml`. The
+variables `RELAY_REPO`, `RELAY_BASE`, `RELAY_PATH` and `RELAY_DOCS` are set
+on this repo; the one thing still needed is the secret `RELAY_TOKEN`, a
+token with Contents and Pull requests write on the site repo (a
+fine-grained token scoped to that one repo is the clean choice). Until it
+is set the workflow notes that and does nothing. The site team reviews and
+merges on their side; nothing is pushed to their `main` directly.
 

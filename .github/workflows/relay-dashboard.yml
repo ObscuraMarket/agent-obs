@@ -1,14 +1,16 @@
-# The relay: every push to main that touches dashboard/ (the integration
-# surface: the reference page, the Angular Agent page, the API contract) is
-# copied into the site repo and opened there as a pull request, so the site
-# team reviews and merges on their side and never has to pull from here.
+# The relay: every push to main that touches dashboard/ (the Agent page, its
+# desk service, the reference page, the API contract) is copied onto the
+# site repo's own paths and opened there as a pull request, so the site team
+# reviews and merges on their side and never pulls from here by hand.
 #
 # Configure once on this repo (Settings, Secrets and variables, Actions):
-#   variable RELAY_REPO   owner/name of the site repo, for example obscura/website
-#   variable RELAY_PATH   folder inside that repo to receive dashboard/ (default obs-dashboard)
+#   variable RELAY_REPO   owner/name of the site repo (JohnDevving/obscura-exchange)
 #   variable RELAY_BASE   branch to open the pull request against (default main)
-#   secret   RELAY_TOKEN  a fine-grained token with Contents and Pull requests write on the site repo
-# Until RELAY_REPO is set the job skips itself.
+#   variable RELAY_PATH   the site's Angular app folder that holds pages/ and service/ (default src/app)
+#   variable RELAY_DOCS   folder in the site repo for the contract and the reference page (default docs/obs)
+#   secret   RELAY_TOKEN  a token with Contents and Pull requests write on the site repo
+# Until RELAY_REPO is set the job skips itself. Environments, routing and
+# the app module are the site's own and are never relayed.
 name: Relay the dashboard to the site repo
 
 on:
@@ -25,10 +27,24 @@ jobs:
     if: ${{ vars.RELAY_REPO != '' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Check the relay is configured
+        id: cfg
+        env:
+          TOKEN: ${{ secrets.RELAY_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::RELAY_TOKEN is not set on this repo; nothing relayed"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check out this repo
+        if: steps.cfg.outputs.ok == 'true'
         uses: actions/checkout@v4
 
       - name: Check out the site repo
+        if: steps.cfg.outputs.ok == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.RELAY_REPO }}
@@ -36,25 +52,31 @@ jobs:
           ref: ${{ vars.RELAY_BASE || 'main' }}
           path: site
 
-      - name: Copy the integration surface
+      - name: Copy the Agent page, its service, the contract and the reference page onto the site's paths
+        if: steps.cfg.outputs.ok == 'true'
         run: |
-          dest="site/${{ vars.RELAY_PATH || 'obs-dashboard' }}"
-          mkdir -p "$dest"
-          rsync -a --delete --exclude node_modules --exclude dist --exclude .angular dashboard/ "$dest/"
-          echo "relayed from ${{ github.repository }}@${{ github.sha }}" > "$dest/RELAY.txt"
+          app="site/${{ vars.RELAY_PATH || 'src/app' }}"
+          docs="site/${{ vars.RELAY_DOCS || 'docs/obs' }}"
+          mkdir -p "$app/pages/agent" "$app/service" "$docs"
+          rsync -a --delete dashboard/angular/src/app/pages/agent/ "$app/pages/agent/"
+          cp dashboard/angular/src/app/service/obs-desk.service.ts "$app/service/obs-desk.service.ts"
+          cp dashboard/INTEGRATION.md "$docs/INTEGRATION.md"
+          cp dashboard/index.html "$docs/reference.html"
+          echo "relayed from ${{ github.repository }}@${{ github.sha }} on $(date -u +%FT%TZ)" > "$docs/RELAY.txt"
 
       - name: Open or update the pull request on the site repo
+        if: steps.cfg.outputs.ok == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           path: site
           token: ${{ secrets.RELAY_TOKEN }}
           branch: obs-dashboard-relay
           base: ${{ vars.RELAY_BASE || 'main' }}
-          commit-message: "chore(obs): dashboard relay from ${{ github.repository }}@${{ github.sha }}"
-          title: "OBS dashboard update from ${{ github.repository }}"
+          commit-message: "chore(obs): Agent page relay from ${{ github.repository }}@${{ github.sha }}"
+          title: "OBS Agent page update from ${{ github.repository }}"
           body: |
             Relayed automatically from `${{ github.repository }}` at `${{ github.sha }}`.
 
             What changed on our side: ${{ github.event.head_commit.message }}
 
-            The API contract is `INTEGRATION.md` in the relayed folder. Fields are only ever added, never renamed or removed, so a component that ignores new fields keeps working.
+            Files: `pages/agent/`, `service/obs-desk.service.ts`, `docs/obs/INTEGRATION.md` (the API contract), `docs/obs/reference.html` (the dependency-free reference page). Environments, routing and the app module are yours and are not touched. Fields in `/api/obs/*` are only ever added, never renamed or removed.

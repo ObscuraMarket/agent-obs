@@ -45,11 +45,16 @@ and the live reads he is allowed to cite.
    `https://www.obscura.market`, `https://obscuracex.com` and
    `https://www.obscuracex.com`.
 5. **Updates arrive by relay.** Every push to `main` here that touches
-   `dashboard/` opens a pull request on the site repo with the folder copied
-   in (`.github/workflows/relay-dashboard.yml`), once the site repo's name,
-   the target folder and a token are set on this repo. You review and merge
-   on your side. Fields in `/api/obs/*` are only ever added, never renamed
-   or removed, so a component that ignores a new field keeps working.
+   `dashboard/` opens a pull request on the site repo
+   (`JohnDevving/obscura-exchange`) that puts our copy of the Agent page
+   onto the site's own paths: `src/app/pages/agent/`,
+   `src/app/service/obs-desk.service.ts`, and this contract plus the
+   reference page under `docs/obs/`. Environments, routing and the app
+   module are the site's and are never touched. You review and merge on
+   your side (`.github/workflows/relay-dashboard.yml`; it waits for a
+   token on this repo before it does anything). Fields in `/api/obs/*` are
+   only ever added, never renamed or removed, so a component that ignores a
+   new field keeps working.
 
 ## 1. Run the API
 
