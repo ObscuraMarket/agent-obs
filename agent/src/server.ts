@@ -20,6 +20,12 @@ import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL
 import { xLive, xConfigured } from "./social/xClient.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
+// Public exposure needs manners: a per-address budget on requests and a cap
+// on open streams, so one client cannot make the ledgers unreadable for the
+// rest. Both are generous for a page and tight for a loop.
+const RATE_PER_MIN = Number(process.env.OBS_DASHBOARD_RATE_PER_MIN ?? 120);
+const MAX_STREAMS = Number(process.env.OBS_DASHBOARD_MAX_STREAMS ?? 100);
+const MAX_STREAMS_PER_IP = Number(process.env.OBS_DASHBOARD_MAX_STREAMS_PER_IP ?? 4);
 const ORIGINS = (process.env.OBS_DASHBOARD_ORIGINS ?? "*").split(",").map((s) => s.trim()).filter(Boolean);
 const READS_TTL_MS = 60_000;
 
@@ -193,6 +199,8 @@ function cors(req: IncomingMessage, res: ServerResponse): void {
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Cache-Control", "public, max-age=30");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
 }
 const json = (res: ServerResponse, code: number, body: unknown) => {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
@@ -207,6 +215,33 @@ const DASHBOARD = join(ROOT_DIR, "..", "dashboard", "index.html");
 // between looks; a keepalive comment every 25 so proxies keep the socket.
 const STREAM_POLL_MS = 2000;
 const STREAM_PING_MS = 25_000;
+
+/** PURE: a sliding-window request budget per client. Exported for tests. */
+export class RateLimiter {
+  private hits = new Map<string, number[]>();
+  constructor(private perMinute: number, private windowMs = 60_000) {}
+  /** True when the client may proceed; records the hit. */
+  allow(client: string, now = Date.now()): boolean {
+    const cut = now - this.windowMs;
+    const list = (this.hits.get(client) ?? []).filter((t) => t > cut);
+    if (list.length >= this.perMinute) {
+      this.hits.set(client, list);
+      return false;
+    }
+    list.push(now);
+    this.hits.set(client, list);
+    if (this.hits.size > 10_000) for (const [k, v] of this.hits) if (!v.some((t) => t > cut)) this.hits.delete(k);
+    return true;
+  }
+}
+const limiter = new RateLimiter(RATE_PER_MIN);
+const streams = new Map<string, number>();
+let streamCount = 0;
+const clientOf = (req: IncomingMessage): string => {
+  const fwd = req.headers["x-forwarded-for"] ?? req.headers["cf-connecting-ip"];
+  const first = Array.isArray(fwd) ? fwd[0] : fwd;
+  return (first ? first.split(",")[0].trim() : "") || req.socket.remoteAddress || "unknown";
+};
 
 /** PURE: one SSE frame. */
 export function sseFrame(event: string, data: unknown): string {
@@ -225,6 +260,13 @@ const sizeOf = (file: string): number => {
 };
 
 function stream(req: IncomingMessage, res: ServerResponse, limit: number): void {
+  const client = clientOf(req);
+  if (streamCount >= MAX_STREAMS || (streams.get(client) ?? 0) >= MAX_STREAMS_PER_IP) {
+    json(res, 429, { error: "too many open streams; poll /api/obs/thoughts instead" });
+    return;
+  }
+  streamCount++;
+  streams.set(client, (streams.get(client) ?? 0) + 1);
   res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
   const history = readThoughts(limit).reverse();
   const trades = publicTrades(readBook().trades, 20);
@@ -256,6 +298,10 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
   req.on("close", () => {
     clearInterval(poll);
     clearInterval(ping);
+    streamCount = Math.max(0, streamCount - 1);
+    const n = (streams.get(client) ?? 1) - 1;
+    if (n <= 0) streams.delete(client);
+    else streams.set(client, n);
   });
 }
 
@@ -268,6 +314,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   }
   if (req.method !== "GET") {
     json(res, 405, { error: "read-only" });
+    return;
+  }
+  if (!limiter.allow(clientOf(req), Date.now())) {
+    res.setHeader("Retry-After", "30");
+    json(res, 429, { error: `rate limited: ${RATE_PER_MIN} requests a minute per client` });
     return;
   }
   const url = new URL(req.url ?? "/", "http://localhost");

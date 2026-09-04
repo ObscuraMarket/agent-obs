@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary } from "../src/server.ts";
+import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter } from "../src/server.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
 const posts = [
@@ -55,4 +55,11 @@ test("the rails summary puts each cap next to what is used, from the latest row 
   assert.ok(r.sentTodayUsd >= 20, `today's sends counted, got ${r.sentTodayUsd}`);
   assert.ok(r.allowedAssets.includes("NVDA@robinhood"));
   assert.equal(r.allowedPartners, null);
+});
+
+test("the request budget is per client and slides", () => {
+  const l = new RateLimiter(3, 1000);
+  assert.deepEqual([l.allow("a", 0), l.allow("a", 100), l.allow("a", 200), l.allow("a", 300)], [true, true, true, false]);
+  assert.equal(l.allow("b", 300), true, "another client has its own budget");
+  assert.equal(l.allow("a", 1101), true, "the oldest hit slid out of the window");
 });

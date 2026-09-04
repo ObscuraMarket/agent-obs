@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.obscura.obstunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__AGENT_DIR__/scripts/_obs-tunnel.sh</string>
+  </array>
+  <!-- The launch-day bridge: kept alive; the public URL is in the log. -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/obs-tunnel.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/obs-tunnel.log</string>
+</dict>
+</plist>

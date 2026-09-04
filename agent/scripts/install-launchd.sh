@@ -12,9 +12,12 @@ for t in "$AGENT"/scripts/launchd/*.plist.template; do
   echo "wrote $OUT/$name"
 done
 echo
-echo "To start:   launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsx.plist"
+echo "Services:   launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsapi.plist      (the dashboard API, kept alive)"
+echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsawake.plist    (keeps the Mac awake on power)"
+echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obstunnel.plist   (public bridge; URL in ~/Library/Logs/obs-tunnel.log)"
+echo "Timers:     launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsdesk.plist"
+echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsx.plist"
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsengage.plist"
-echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsdesk.plist"
 echo "To stop:    launchctl bootout gui/\$(id -u)/com.obscura.obsx"
 echo "Run once:   launchctl kickstart -k gui/\$(id -u)/com.obscura.obsx"
 echo "Logs:       ~/Library/Logs/obs-autopilot.log, ~/Library/Logs/obs-engage.log"

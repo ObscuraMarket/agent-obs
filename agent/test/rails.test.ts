@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkRails, railsFromEnv, sentTodayUsd, mapStatus, partnerAllowed, depositAddressLooksRight, clampToBalance, type Intent, type RailContext } from "../src/desk/rails.ts";
+import { checkRails, railsFromEnv, sentTodayUsd, mapStatus, partnerAllowed, depositAddressLooksRight, clampToBalance, type Intent, type RailContext, dailyLossHalt, dayStartEquity } from "../src/desk/rails.ts";
 import { resolveAsset, assetKey } from "../src/desk/assets.ts";
 
 const ETH = resolveAsset("ETH@robinhood")!;
@@ -78,4 +78,19 @@ test("an amount a hair over the balance means the whole balance; further over st
   assert.equal(clampToBalance(0.41, 0.41), 0.41);
   assert.equal(clampToBalance(0.5, 0.41), 0.5, "a real overask is left for the rails to refuse");
   assert.equal(clampToBalance(0.4, 0.41), 0.4);
+});
+
+test("the daily loss brake halts entries, never exits, from the day's opening mark", () => {
+  const r = railsFromEnv({ OBS_TRADING: "on", OBS_DAILY_LOSS_USD: "50", OBS_DAILY_LOSS_PCT: "5", OBS_TRADE_ASSETS: "ETH@robinhood,USDG@robinhood" } as NodeJS.ProcessEnv);
+  assert.equal(dailyLossHalt(1000, 960, r), null, "down $40 and 4%: under both limits");
+  assert.match(dailyLossHalt(1000, 949, r)!, /down \$51\.00 .* limit is \$50/);
+  assert.match(dailyLossHalt(800, 758, r)!, /down 5\.3% .* limit is 5%/);
+  assert.equal(dailyLossHalt(null, 900, r), null, "no opening mark, no guessing");
+  const day = Date.UTC(2026, 8, 3, 15, 0, 0);
+  const snaps = [{ at: day - 3600e3 * 20, equityUsd: 1100 }, { at: day - 3600e3 * 10, equityUsd: 1000 }, { at: day - 3600e3 * 2, equityUsd: 990 }];
+  assert.equal(dayStartEquity(snaps, day), 1000, "the first mark inside the UTC day, not yesterday's last");
+  assert.equal(dayStartEquity([{ at: day - 3600e3 * 20, equityUsd: 1100 }], day), null);
+  const halted = ctx({ dayStartEquityUsd: 1000, equityUsd: 940, rails: r });
+  assert.match((checkRails(intent(), halted) as { ok: false; reason: string }).reason, /daily loss brake/);
+  assert.deepEqual(checkRails(intent({ exit: true, from: USDG, to: ETH, amount: 10, usd: 10 }), { ...halted, balances: { "USDG@robinhood": 40, "ETH@robinhood": 0.05 } }), { ok: true }, "an exit still passes under the brake");
 });

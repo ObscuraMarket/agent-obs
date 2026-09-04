@@ -12,7 +12,7 @@ import { quoteWatchlist, parseWatchlist, DEFAULT_WATCHLIST } from "../obscura/or
 import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, type Trade } from "./book.ts";
 import { observationLines, buildThoughtPrompt, parseThoughtReply, guardThoughts, readThoughts, recordThought, type QuoteRead, type Thought } from "./thoughts.ts";
 import { recallForPrompt, remember } from "../journal.ts";
-import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset } from "./rails.ts";
+import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity } from "./rails.ts";
 import { assetKey } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates } from "./onchain.ts";
@@ -150,6 +150,8 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
       nativeOnFromChain: chain ? (chain.byKey[`ETH@${from.network === "erc20" ? "eth" : from.network}`] ?? null) : null,
       openOrders: open.filter((t) => t.status === "pending").length,
       sentTodayUsd: sentTodayUsd(bookTrades, now),
+      dayStartEquityUsd: dayStartEquity(book.snapshots, now),
+      equityUsd: mark.equityUsd,
     };
     const gate = checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails);
     if (!gate.ok) {
