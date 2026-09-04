@@ -29,11 +29,13 @@ and the live reads he is allowed to cite.
    remembered (`?api=reset` forgets it). The only thing obscura.market's
    zone needs is one DNS record, no proxy:
 
-   | Type | Name | Target |
+   | Type | Name | Value |
    |---|---|---|
    | CNAME | `obs-api` | `1ja8d5cy.up.railway.app` |
+   | TXT | `_railway-verify.obs-api` | `railway-verify=5084619bffdfa604e5487bb6399b0e08b387e01e0dca7f494d73b078a27fb41b` |
 
-   Railway issues the certificate once that resolves.
+   The CNAME routes the name to the desk; the TXT proves ownership to
+   Railway, which issues the certificate once both resolve.
 3. **Wire each component to its endpoint.** The reference page does exactly
    this; its markup says what each field means.
 
