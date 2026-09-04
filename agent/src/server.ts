@@ -7,7 +7,7 @@
 // the journal, no key or token is read here, and the ledgers are shaped down
 // to what a public timeline already shows. Run: npm run dashboard.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readLedger } from "./ledger.ts";
@@ -418,6 +418,31 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         });
       })
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "pnl unavailable" }));
+    return;
+  }
+  if (path === "/api/obs/feed-tail") {
+    // The launch feed's bytes from an offset, for a hosted desk that pulls it (src/desk/feedpull.ts).
+    // Not public: a shared token, and nothing without OBS_FEED_TOKEN set. Headers carry the file's size.
+    const token = process.env.OBS_FEED_TOKEN ?? "";
+    const feedPath = process.env.OBS_CANDIDATE_FEED ?? "";
+    if (!token || !feedPath || req.headers["x-obs-feed-token"] !== token) {
+      json(res, 404, { error: "not found" });
+      return;
+    }
+    if (!existsSync(feedPath)) {
+      json(res, 404, { error: "no feed" });
+      return;
+    }
+    const size = statSync(feedPath).size;
+    const from = Math.max(0, Math.min(size, Number(url.searchParams.get("from") ?? 0) || 0));
+    const want = Math.max(1, Math.min(8 * 1024 * 1024, Number(url.searchParams.get("size") ?? 1_048_576) || 1_048_576));
+    const end = Math.min(size, from + want);
+    res.writeHead(200, { "Content-Type": "application/octet-stream", "Cache-Control": "no-store", "X-OBS-Feed-Size": String(size), "X-OBS-Feed-From": String(from) });
+    if (end <= from) {
+      res.end();
+      return;
+    }
+    createReadStream(feedPath, { start: from, end: end - 1 }).pipe(res);
     return;
   }
   if (path === "/api/obs/live") {

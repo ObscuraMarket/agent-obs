@@ -38,10 +38,19 @@ fi
 # 2. Personas on the gateway. Idempotent; a gateway that is not up yet is not fatal.
 node scripts/ohsetup.mjs || log "persona setup skipped; is the gateway reachable at ${OPENHERMIT_GATEWAY_URL:-unset}?"
 
-# 3. The read-only API, in the background.
+# 2b. A key handed in as a variable (hosts without a mount): written once, read only at signing time.
+if [ -n "${OBS_WALLET_JSON:-}" ] && [ ! -f "${OBS_WALLET_DIR:-/wallet}/obs-wallet.json" ]; then
+  mkdir -p "${OBS_WALLET_DIR:-/wallet}" && umask 077 && printf '%s' "$OBS_WALLET_JSON" > "${OBS_WALLET_DIR:-/wallet}/obs-wallet.json" && log "wallet file written from OBS_WALLET_JSON"
+fi
+
+# 3. The read-only API, the live watch and the feed puller, in the background.
 tsx src/server.ts &
 API=$!
-trap 'log "stopping"; kill $API 2>/dev/null; exit 0' TERM INT
+tsx src/desk/live.ts &
+LIVE=$!
+tsx src/desk/feedpull.ts &
+FEED=$!
+trap 'log "stopping"; kill $API $LIVE $FEED 2>/dev/null; exit 0' TERM INT
 
 # 4. The loops, on a one-minute tick so each cadence keeps its own clock.
 next_desk=0; next_post=0; next_engage=0
@@ -58,6 +67,8 @@ while true; do
     if (( now >= next_engage )); then log "engage cycle"; tsx src/engage.ts; next_engage=$(( now + ENGAGE_EVERY )); fi
   fi
   if ! kill -0 $API 2>/dev/null; then log "API exited; restarting it"; tsx src/server.ts & API=$!; fi
+  if ! kill -0 $LIVE 2>/dev/null; then log "live watch exited; restarting it"; tsx src/desk/live.ts & LIVE=$!; fi
+  if ! kill -0 $FEED 2>/dev/null; then log "feed puller exited; restarting it"; tsx src/desk/feedpull.ts & FEED=$!; fi
   sleep 60 &
   wait $!
 done
