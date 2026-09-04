@@ -19,10 +19,21 @@ and the live reads he is allowed to cite.
    dependencies, renders every endpoint), `angular/` is the Agent page from
    obscuracex.com as a standalone Angular app already wired to this API, and
    this file is the contract. Nothing here needs our code in your build.
-2. **Point it at an API.** Today: the bridge URL on GitHub issue #1, passed
-   as `?api=https://...` (the page remembers it; `?api=reset` forgets). At
-   launch: `https://obs-api.obscura.market`, which the production build
-   already uses, so no `?api=` in production.
+2. **Point it at an API.** The page does this itself: on obscura.market it
+   uses `https://obs-api.obscura.market`, on obscura.markets
+   `https://obs-api.obscura.markets`, both the same desk on Railway. If a
+   name does not answer within four seconds (a fresh DNS record, a
+   certificate still being issued), the page falls back to the desk's
+   direct address, `https://desk-production-18ad.up.railway.app`, for that
+   page load. `?api=https://...` still overrides everything and is
+   remembered (`?api=reset` forgets it). The only thing obscura.market's
+   zone needs is one DNS record, no proxy:
+
+   | Type | Name | Target |
+   |---|---|---|
+   | CNAME | `obs-api` | `1ja8d5cy.up.railway.app` |
+
+   Railway issues the certificate once that resolves.
 3. **Wire each component to its endpoint.** The reference page does exactly
    this; its markup says what each field means.
 
@@ -38,12 +49,11 @@ and the live reads he is allowed to cite.
    | Stats strip (the token's own market) | `/api/obs/reads`, `/api/obs/market` | `token`, `market`, `block` |
    | X feed | `/api/obs/feed` | `items[]`, `posted` |
 
-4. **Launch.** Create the named tunnel `obs-api` in the obscura.market zone
-   (the exact steps are on issue #1 and in `LAUNCH.md`), send its token to the
-   operator privately, and `https://obs-api.obscura.market/api/obs/health`
-   answers within a minute. CORS already allows `https://obscura.market`,
-   `https://www.obscura.market`, `https://obscuracex.com` and
-   `https://www.obscuracex.com`.
+4. **Launch.** Deploy `main`. No tunnel, no token, no key: the API is public
+   and read-only, and CORS already allows `https://obscura.market`,
+   `https://www.obscura.market`, `https://obscura.markets` and
+   `https://www.obscura.markets`. `https://obs-api.obscura.market/api/obs/health`
+   answers once the CNAME above resolves and its certificate is issued.
 5. **Updates arrive by relay.** Every push to `main` here that touches
    `dashboard/` opens a pull request on the site repo
    (`JohnDevving/obscura-exchange`) that puts our copy of the Agent page
