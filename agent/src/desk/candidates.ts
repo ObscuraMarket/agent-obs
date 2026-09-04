@@ -536,12 +536,16 @@ export interface ExitRails {
   /** Trail: once up at least the arm level, sell everything when the price falls this far from its peak since entry. */
   candidateTrailArmPct?: number;
   candidateTrailPct?: number;
+  /** The tape exit: once up at least this much, sell this share when the buyers thin (buy pressure under the bar, or 5-minute volume rolling over). Zero disables. */
+  candidateTapeExitMinPct?: number;
+  candidateTapeExitPressurePct?: number;
+  candidateTapeExitShare?: number;
 }
 export interface ExitVerdict {
   reason: string;
   /** Share of the position to sell, 0 to 1. */
   share: number;
-  kind: "time-stop" | "floor" | "volume" | "take-profit" | "trail";
+  kind: "time-stop" | "floor" | "volume" | "take-profit" | "tape-profit" | "trail";
 }
 /**
  * PURE: what to do with a held launch token now, or null. In order: the
@@ -549,7 +553,7 @@ export interface ExitVerdict {
  * then the trader's exits: a trailing stop off the peak once the trade is
  * armed, and a partial take-profit into strength.
  */
-export function exitVerdict(input: { ageH: number; pnlPct: number | null; hourly: HourlyStat[]; peakPnlPct?: number | null; tookProfit?: boolean; tapeTrend?: "rising" | "holding" | "rolling over" | "thin" | null }, r: ExitRails): ExitVerdict | null {
+export function exitVerdict(input: { ageH: number; pnlPct: number | null; hourly: HourlyStat[]; peakPnlPct?: number | null; tookProfit?: boolean; tapeTrend?: "rising" | "holding" | "rolling over" | "thin" | null; tapeBuyPressurePct?: number | null }, r: ExitRails): ExitVerdict | null {
   if (input.ageH >= r.candidateMaxHoldH) return { kind: "time-stop", share: 1, reason: `held ${input.ageH.toFixed(1)}h, past the ${r.candidateMaxHoldH}h time stop` };
   if (input.pnlPct != null && input.pnlPct <= -r.candidateFloorPct) return { kind: "floor", share: 1, reason: `down ${Math.abs(input.pnlPct).toFixed(1)}%, through the ${r.candidateFloorPct}% floor` };
   const h = input.hourly.slice(-3);
@@ -557,12 +561,28 @@ export function exitVerdict(input: { ageH: number; pnlPct: number | null; hourly
     const k = 1 - r.candidateVolumeDropPct / 100;
     if (h[2].usd < h[1].usd * k && h[1].usd < h[0].usd * k) return { kind: "volume", share: 1, reason: `volume rolled over: $${h[0].usd.toFixed(0)} then $${h[1].usd.toFixed(0)} then $${h[2].usd.toFixed(0)} an hour` };
   }
-  if (input.tapeTrend === "rolling over" && input.pnlPct != null && input.pnlPct < (r.candidateTrailArmPct ?? 30)) return { kind: "volume", share: 1, reason: "the tape rolled over: three 5-minute buckets falling in a row while the trade has not paid" };
+  // The tape rolling over (three 5-minute buckets falling in a row): a trade that has not paid leaves whole;
+  // a paid trade scales out below (the tape exit), and once it has, the rest leaves on the next roll-over.
+  const paidBar = (r.candidateTapeExitMinPct ?? 0) > 0 ? (r.candidateTapeExitMinPct as number) : (r.candidateTrailArmPct ?? 30);
+  if (input.tapeTrend === "rolling over" && input.pnlPct != null && input.pnlPct < paidBar) return { kind: "volume", share: 1, reason: "the tape rolled over: three 5-minute buckets falling in a row while the trade has not paid" };
+  if (input.tapeTrend === "rolling over" && input.tookProfit) return { kind: "volume", share: 1, reason: "the tape rolled over again after the scale-out: the rest leaves" };
   const trailArm = r.candidateTrailArmPct ?? 0;
   const trail = r.candidateTrailPct ?? 0;
   if (trail > 0 && input.pnlPct != null && input.peakPnlPct != null && input.peakPnlPct >= trailArm) {
     const giveBack = ((1 + input.peakPnlPct / 100) - (1 + input.pnlPct / 100)) / (1 + input.peakPnlPct / 100) * 100;
     if (giveBack >= trail) return { kind: "trail", share: 1, reason: `trailing stop: peaked at +${input.peakPnlPct.toFixed(0)}%, gave back ${giveBack.toFixed(0)}% from the peak (${trail}% trail)` };
+  }
+  // The tape exit, read from the data rather than a number: the trade has paid and the buyers are thinning.
+  const te = r.candidateTapeExitMinPct ?? 0;
+  if (te > 0 && !input.tookProfit && input.pnlPct != null && input.pnlPct >= te) {
+    const bar = r.candidateTapeExitPressurePct ?? 45;
+    const thin = input.tapeBuyPressurePct != null && input.tapeBuyPressurePct < bar;
+    const rolling = input.tapeTrend === "rolling over";
+    if (thin || rolling) {
+      const share = Math.min(1, Math.max(0.1, r.candidateTapeExitShare ?? 0.6));
+      const why = [thin ? `buy pressure ${input.tapeBuyPressurePct!.toFixed(0)}% over the window, under the ${bar}% bar` : null, rolling ? "five-minute volume rolling over" : null].filter(Boolean).join(" and ");
+      return { kind: "tape-profit", share, reason: `the trade is up ${input.pnlPct.toFixed(0)}% and the buyers are thinning (${why}): selling ${Math.round(share * 100)}% into what is left of the strength and trailing the rest` };
+    }
   }
   const tp = r.candidateTakeProfitPct ?? 0;
   const tpShare = r.candidateTakeProfitShare ?? 0.5;

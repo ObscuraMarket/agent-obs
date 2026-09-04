@@ -43,10 +43,13 @@ test("the tape reduces to buys against sells, price path, 5-minute buckets and a
   assert.match(tapeLine(tapeStats([], "TOK", now, 15), 1, "USDG"), /no swaps/);
 });
 
-test("a rolling-over tape exits a trade that has not paid; a paid trade waits for its trail", () => {
+test("a rolling-over tape exits a trade that has not paid whole; after a scale-out it takes the rest", () => {
   const r = { candidateMaxHoldH: 8, candidateFloorPct: 40, candidateVolumeDropPct: 30, candidateTakeProfitPct: 60, candidateTakeProfitShare: 0.5, candidateTrailArmPct: 30, candidateTrailPct: 25 };
   assert.equal(exitVerdict({ ageH: 0.5, pnlPct: 5, hourly: [], tapeTrend: "rolling over" }, r)!.kind, "volume");
-  assert.equal(exitVerdict({ ageH: 0.5, pnlPct: 45, hourly: [], peakPnlPct: 50, tapeTrend: "rolling over", tookProfit: true }, r), null, "up 45% off a 50% peak: inside the trail, the tape alone does not close it");
+  const rest = exitVerdict({ ageH: 0.5, pnlPct: 45, hourly: [], peakPnlPct: 50, tapeTrend: "rolling over", tookProfit: true }, r);
+  assert.equal(rest?.kind, "volume");
+  assert.match(rest?.reason ?? "", /the rest leaves/);
+  assert.equal(exitVerdict({ ageH: 0.5, pnlPct: 45, hourly: [], peakPnlPct: 50, tapeTrend: "holding", tookProfit: true }, r), null, "after the scale-out, with the tape holding, the trail owns the rest");
 });
 
 test("trade memory: like setups recall, the launch record tallies", () => {
@@ -71,4 +74,17 @@ test("a tape appended by two processes reads as one row per swap, in block order
   const r = (block: number, tx: string): SwapRow => ({ at: block, block, tx, side: "buy", tokenAmount: 1, quoteAmount: 1, price: 1 });
   const rows = dedupeRows([r(2, "b:0"), r(1, "a:0"), r(2, "b:0"), r(3, "c:1")]);
   assert.deepEqual(rows.map((x) => x.tx), ["a:0", "b:0", "c:1"]);
+});
+
+test("the tape exit: a paid trade whose buyers are thinning scales out on the data, and only once", () => {
+  const r = { candidateMaxHoldH: 8, candidateFloorPct: 40, candidateVolumeDropPct: 30, candidateTakeProfitPct: 40, candidateTakeProfitShare: 0.5, candidateTrailArmPct: 20, candidateTrailPct: 20, candidateTapeExitMinPct: 15, candidateTapeExitPressurePct: 45, candidateTapeExitShare: 0.6 };
+  const thin = exitVerdict({ ageH: 1, pnlPct: 22, hourly: [], tapeTrend: "holding", tapeBuyPressurePct: 38 }, r);
+  assert.equal(thin?.kind, "tape-profit");
+  assert.equal(thin?.share, 0.6);
+  assert.match(thin?.reason ?? "", /buyers are thinning/);
+  const rolling = exitVerdict({ ageH: 1, pnlPct: 18, hourly: [], tapeTrend: "rolling over", tapeBuyPressurePct: 60 }, r);
+  assert.equal(rolling?.kind, "tape-profit", "volume rolling over counts as thinning");
+  assert.equal(exitVerdict({ ageH: 1, pnlPct: 22, hourly: [], tapeTrend: "holding", tapeBuyPressurePct: 62 }, r), null, "buyers still there: nothing to do");
+  assert.equal(exitVerdict({ ageH: 1, pnlPct: 8, hourly: [], tapeTrend: "holding", tapeBuyPressurePct: 30 }, r), null, "not paid enough yet: the floor and the roll-over rules own that");
+  assert.equal(exitVerdict({ ageH: 1, pnlPct: 22, hourly: [], tookProfit: true, tapeTrend: "holding", tapeBuyPressurePct: 30, peakPnlPct: 22 }, r), null, "already scaled out once; the trail owns the rest");
 });

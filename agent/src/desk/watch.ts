@@ -16,6 +16,8 @@ export interface WatchState {
   entryOk: boolean;
   trend: "rising" | "holding" | "rolling over" | "thin";
   offPeakPct: number | null;
+  /** Buy pressure over the tape window, in quote terms. */
+  buyPressurePct?: number | null;
   swaps: number;
   lastSwapAgoMin: number | null;
   why: string;
@@ -30,6 +32,8 @@ export interface WatchRules {
   entryEveryMin: number;
   /** A held token this far off its tape peak is an exit trigger. */
   giveBackPct: number;
+  /** A held token whose buy pressure falls under this is an exit trigger (the buyers are thinning). */
+  thinPressurePct: number;
 }
 
 export function watchRulesFromEnv(env: NodeJS.ProcessEnv = process.env): WatchRules {
@@ -39,6 +43,7 @@ export function watchRulesFromEnv(env: NodeJS.ProcessEnv = process.env): WatchRu
     cooldownMin: n("OBS_LIVE_COOLDOWN_MIN", 3),
     entryEveryMin: n("OBS_LIVE_ENTRY_EVERY_MIN", 15),
     giveBackPct: Number(env.OBS_LIVE_GIVEBACK_PCT ?? env.OBS_CANDIDATE_TRAIL_PCT ?? 25),
+    thinPressurePct: Number(env.OBS_LIVE_THIN_PRESSURE_PCT ?? env.OBS_CANDIDATE_TAPE_EXIT_PRESSURE_PCT ?? 45),
   };
 }
 
@@ -59,6 +64,7 @@ export function triggersFor(prev: Record<string, WatchState>, next: WatchState[]
     if (s.role === "held") {
       if (s.trend === "rolling over" && p?.trend !== "rolling over") out.push({ symbol: s.symbol, kind: "exit", reason: `the tape rolled over on held ${s.symbol}` });
       else if (s.offPeakPct != null && s.offPeakPct >= r.giveBackPct && (p?.offPeakPct == null || p.offPeakPct < r.giveBackPct)) out.push({ symbol: s.symbol, kind: "exit", reason: `held ${s.symbol} is ${s.offPeakPct.toFixed(0)}% off its tape peak` });
+      else if (s.buyPressurePct != null && s.buyPressurePct < r.thinPressurePct && (p?.buyPressurePct == null || p.buyPressurePct >= r.thinPressurePct)) out.push({ symbol: s.symbol, kind: "exit", reason: `the buyers are thinning on held ${s.symbol}: buy pressure ${s.buyPressurePct.toFixed(0)}%` });
       else if (sinceMin >= r.heldEveryMin) out.push({ symbol: s.symbol, kind: "held", reason: `held ${s.symbol}, ${sinceMin === Infinity ? "not reviewed yet" : `${sinceMin.toFixed(0)} min since its last review`}` });
       continue;
     }

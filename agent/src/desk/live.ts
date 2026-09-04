@@ -127,7 +127,7 @@ async function step(now: number): Promise<void> {
     const rows = tapes.get(spec.id as string) ?? [];
     const st = tapeStats(rows, symbol, now, 15);
     const er = entryRead(rows, symbol, now, entryRules, role !== "launch");
-    states.push({ symbol, role, entryState: er.state, entryOk: er.ok, trend: st.trend, offPeakPct: st.offPeakPct, swaps: st.swaps, lastSwapAgoMin: st.lastSwapAgoMin, why: er.why });
+    states.push({ symbol, role, entryState: er.state, entryOk: er.ok, trend: st.trend, offPeakPct: st.offPeakPct, buyPressurePct: st.buyPressurePct, swaps: st.swaps, lastSwapAgoMin: st.lastSwapAgoMin, why: er.why });
   }
   const triggers = triggersFor(prev, states, lastThinkAt, now, rules);
   prev = Object.fromEntries(states.map((s) => [s.symbol, s]));

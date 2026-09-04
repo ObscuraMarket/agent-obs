@@ -26,6 +26,9 @@ test("a held token fires an exit trigger the moment its tape breaks, and a revie
   assert.deepEqual(triggersFor({ HLD: held }, [held], { HLD: now - 2 * M }, now, R), [], "quiet and recently reviewed");
   assert.equal(triggersFor({ HLD: held }, [held], { HLD: now - 6 * M }, now, R)[0]?.kind, "held", "due a review");
   assert.equal(triggersFor({}, [held], {}, now, R)[0]?.reason, "held HLD, not reviewed yet");
+  const thinning = st({ symbol: "HLD", role: "held", buyPressurePct: 38 });
+  assert.match(triggersFor({ HLD: st({ symbol: "HLD", role: "held", buyPressurePct: 55 }) }, [thinning], { HLD: now - 1 * M }, now, R)[0].reason, /buyers are thinning/);
+  assert.deepEqual(triggersFor({ HLD: thinning }, [thinning], { HLD: now - 1 * M }, now, R), [], "already thin, already fired");
 });
 
 test("exits come before entries before reviews, and the heartbeat reads at a glance", () => {

@@ -37,6 +37,10 @@ export interface Rails {
   candidateTakeProfitShare: number;
   candidateTrailArmPct: number;
   candidateTrailPct: number;
+  /** The tape exit: once up this much, sell this share when buy pressure falls under the bar or 5-minute volume rolls over. */
+  candidateTapeExitMinPct: number;
+  candidateTapeExitPressurePct: number;
+  candidateTapeExitShare: number;
   /** The whole-book brake: once the day's drawdown from its opening mark passes either limit, no new entries until the next UTC day. Exits still run. */
   dailyLossUsd: number;
   dailyLossPct: number;
@@ -82,6 +86,9 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     candidateTakeProfitShare: Number(env.OBS_CANDIDATE_TAKE_PROFIT_SHARE ?? 0.5),
     candidateTrailArmPct: Number(env.OBS_CANDIDATE_TRAIL_ARM_PCT ?? 30),
     candidateTrailPct: Number(env.OBS_CANDIDATE_TRAIL_PCT ?? 25),
+    candidateTapeExitMinPct: Number(env.OBS_CANDIDATE_TAPE_EXIT_MIN_PCT ?? 15),
+    candidateTapeExitPressurePct: Number(env.OBS_CANDIDATE_TAPE_EXIT_PRESSURE_PCT ?? 45),
+    candidateTapeExitShare: Number(env.OBS_CANDIDATE_TAPE_EXIT_SHARE ?? 0.6),
     dailyLossUsd: Number(env.OBS_DAILY_LOSS_USD ?? 50),
     dailyLossPct: Number(env.OBS_DAILY_LOSS_PCT ?? 5),
     minHoursBetweenEntries: Number(env.OBS_MIN_HOURS_BETWEEN_ENTRIES ?? 2),

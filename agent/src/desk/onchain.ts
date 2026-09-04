@@ -398,9 +398,9 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
     const avgCost = p?.avgCostUsd ?? null;
     const peakPx = readPrices().filter((s) => s.symbol === a.symbol && s.at >= firstBuy).reduce((m, s) => Math.max(m, s.priceUsd), prices[a.symbol] ?? 0);
     const peakPnlPct = avgCost != null && avgCost > 0 && peakPx > 0 ? ((peakPx - avgCost) / avgCost) * 100 : null;
-    const tookProfit = allTrades.some((t) => t.from.asset === a.symbol && t.exit && (t.note ?? "").includes("take profit"));
+    const tookProfit = allTrades.some((t) => t.from.asset === a.symbol && t.exit && /take profit|buyers are thinning/.test(t.note ?? ""));
     const tape = a.candidate ? tapeStats(readTape(a.candidate.poolId), a.symbol, now, 15) : null;
-    const v = exitVerdict({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly, peakPnlPct, tookProfit, tapeTrend: tape?.trend ?? null }, ctx.rails);
+    const v = exitVerdict({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly, peakPnlPct, tookProfit, tapeTrend: tape?.trend ?? null, tapeBuyPressurePct: tape?.buyPressurePct ?? null }, ctx.rails);
     if (!v) continue;
     const amount = v.share >= 1 ? held : Number((held * v.share).toPrecision(8));
     const usd = prices[a.symbol] != null ? amount * (prices[a.symbol] as number) : null;
