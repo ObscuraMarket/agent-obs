@@ -356,17 +356,21 @@ export async function assetPrices(symbols: string[], known: Record<string, numbe
 
 export interface PriceRead {
   btcUsd: number | null;
-  ethUsd: number | null;
+  ethUsd: number | null;  /** The wider market's 24h moves, from the same read. Null when not answered. */
+  btcChange24hPct?: number | null;
+  ethChange24hPct?: number | null;
 }
 
 /** Spot prices for the two assets every route touches. Best-effort. */
 export async function prices(): Promise<PriceRead> {
   try {
-    const res = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd", { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
-    const j = (await res.json()) as { bitcoin?: { usd?: number }; ethereum?: { usd?: number } };
-    return { btcUsd: j.bitcoin?.usd ?? null, ethUsd: j.ethereum?.usd ?? null };
+    const res = await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&price_change_percentage=24h", { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
+    const rows = (await res.json()) as Array<{ id?: string; current_price?: number; price_change_percentage_24h?: number | null }>;
+    const by = (id: string) => (Array.isArray(rows) ? rows.find((r) => r.id === id) : undefined);
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    return { btcUsd: num(by("bitcoin")?.current_price), ethUsd: num(by("ethereum")?.current_price), btcChange24hPct: num(by("bitcoin")?.price_change_percentage_24h), ethChange24hPct: num(by("ethereum")?.price_change_percentage_24h) };
   } catch {
-    return { btcUsd: null, ethUsd: null };
+    return { btcUsd: null, ethUsd: null, btcChange24hPct: null, ethChange24hPct: null };
   }
 }
 

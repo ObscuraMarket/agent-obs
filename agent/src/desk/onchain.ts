@@ -256,6 +256,7 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     id: `pool-${now}`,
     status: "pending",
     venue: "pool",
+    ...(i.exit ? { exit: true } : {}),
     from: { asset: i.from.symbol, network: i.from.network, amount: i.amount, usd: i.usd },
     to: { asset: i.to.symbol, network: i.to.network, amount: q.amountOut, usd: q.priceOutUsd != null ? q.amountOut * q.priceOutUsd : null },
     partner: "pool",

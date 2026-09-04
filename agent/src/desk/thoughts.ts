@@ -13,6 +13,7 @@ import { DEFAULT_TRADE_ASSETS } from "./rails.ts";
 import { forbiddenReason, stripDashes } from "../social/postGuards.ts";
 import { walletLines, marketLine, type Reads } from "../obscura/reads.ts";
 import type { BookSnapshot, Trade } from "./book.ts";
+import type { Analysis, PriceStats, RatioStats, Session } from "./analysis.ts";
 
 export interface Decision {
   kind: "hold" | "propose-swap";
@@ -29,8 +30,11 @@ export interface Thought {
   observation: string[];
   /** The model's public reasoning, guarded. */
   thoughts: string[];
-  decision: Decision;  /** Set when the cycle ran as a paper session. */
+  decision: Decision;
+  /** Set when the cycle ran as a paper session. */
   paper?: boolean;
+  /** The argument behind the decision: thesis, evidence lines, invalidation, conviction 1 to 5. */
+  analysis?: Analysis;
 }
 
 export interface QuoteRead {
@@ -46,7 +50,7 @@ const usd = (v: number) => `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en
 const qty = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: 6 });
 
 /** PURE: the measured observation. Every number the model may use is here. */
-export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number; unread?: string[]; candidates?: Array<{ symbol: string; hour: number; volUsd: number; movePct: number; senders: number; tierPct: number; ageH: number; trail: string }>; heldCandidates?: Array<{ symbol: string; qty: number; costUsd: number | null; valueUsd: number | null; pnlPct: number | null; ageH: number; trail: string }>; paper?: boolean }): string[] {
+export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: QuoteRead[]; open: Trade[]; now: number; unread?: string[]; candidates?: Array<{ symbol: string; hour: number; volUsd: number; movePct: number; senders: number; tierPct: number; ageH: number; trail: string }>; heldCandidates?: Array<{ symbol: string; qty: number; costUsd: number | null; valueUsd: number | null; pnlPct: number | null; ageH: number; trail: string }>; paper?: boolean; market?: { stats: PriceStats[]; ethPerNvda: RatioStats | null; btcChange24hPct: number | null; ethChange24hPct: number | null; nvdaDepthUsd: number | null; nvdaDepthBaselineUsd: number | null }; session?: Session }): string[] {
   const lines: string[] = [];
   if (i.unread?.length) lines.push(`Balances the chain did not answer for this cycle, excluded from equity, not zero: ${i.unread.join(", ")}. Do not size anything against them.`);
   const h = Object.entries(i.book.holdings);
@@ -57,6 +61,21 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
       `Equity ${i.book.equityUsd == null ? "not priced this cycle" : usd(i.book.equityUsd)} against ${usd(i.book.netCapitalUsd)} net capital; PnL ${i.book.pnlUsd == null ? "not measured" : `${usd(i.book.pnlUsd)}${i.book.pnlPct != null ? ` (${(i.book.pnlPct * 100).toFixed(2)}%)` : ""}`}.${i.book.unpriced.length ? ` Unpriced and excluded: ${i.book.unpriced.join(", ")}.` : ""}`,
     );
   }
+  if (i.market) {
+    const pct = (v: number | null, signed = true) => (v == null ? "not measured" : `${signed && v > 0 ? "+" : ""}${v.toFixed(2)}%`);
+    for (const st of i.market.stats) {
+      if (st.priceUsd == null) continue;
+      const bits = [`${st.symbol} at ${st.symbol === "ETH" || st.priceUsd >= 1 ? usd(st.priceUsd) : `$${st.priceUsd.toPrecision(3)}`}`, `24h ${pct(st.change24hPct)}`];
+      if (st.low7d != null && st.high7d != null && st.rangePosPct != null) bits.push(`7-day range ${usd(st.low7d)} to ${usd(st.high7d)}, sitting at ${st.rangePosPct.toFixed(0)}% of it`);
+      if (st.move30mPct != null) bits.push(`typical 30-minute move ${st.move30mPct.toFixed(2)}%`);
+      bits.push(st.historyH < 24 ? `${st.historyH.toFixed(0)}h of history so far` : `${st.samples} samples over ${(st.historyH / 24).toFixed(1)} days`);
+      lines.push(`${bits.join("; ")}.`);
+    }
+    if (i.market.ethPerNvda?.ratioNow != null) lines.push(`Relative value: one ETH buys ${i.market.ethPerNvda.ratioNow.toFixed(3)} NVDA${i.market.ethPerNvda.deviationPct != null ? `, ${pct(i.market.ethPerNvda.deviationPct)} against its 7-day average` : ", no 7-day average yet"}.`);
+    if (i.market.btcChange24hPct != null || i.market.ethChange24hPct != null) lines.push(`Backdrop: BTC ${pct(i.market.btcChange24hPct)} and ETH ${pct(i.market.ethChange24hPct)} over 24h on the wider market.`);
+    if (i.market.nvdaDepthUsd != null) lines.push(`NVDA pool depth: ${usd(i.market.nvdaDepthUsd)} moves it 2%${i.market.nvdaDepthBaselineUsd != null ? `, against ${usd(i.market.nvdaDepthBaselineUsd)} when the pool was last measured for the chain memory` : ""}.`);
+  }
+  if (i.session) lines.push(`US equities: ${i.session.label}${i.session.minutesToChange != null ? ` (${i.session.open ? "closes" : "opens"} in ${Math.round(i.session.minutesToChange / 60)}h${i.session.minutesToChange % 60}m)` : ""}. NVDA's pool tracks the live print only while the session is open; off-hours it drifts from a stale one.`);
   const pending = i.open.filter((t) => t.status === "pending");
   const proposed = i.open.filter((t) => t.status === "proposed");
   if (pending.length) lines.push(`In flight: ${pending.map((t) => `${qty(t.from.amount)} ${t.from.asset} to ${t.to.asset} via ${t.partner ?? "a route"}`).join("; ")}.`);
@@ -95,6 +114,8 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     "",
     past ? `Your last public thoughts, newest first:\n${past}\n` : "",
     journal ? `Your private notes to yourself from earlier cycles, oldest first:\n${journal}\n` : "",
+    `Work like an analyst, not a reflex. First read every data point above: the book, the quotes and what each route costs, the 24-hour moves and 7-day ranges, the typical 30-minute move, relative value, the wider market, pool depth, the session, the candidates and their hourly trails. Then either form ONE specific thesis for ONE trade (which asset, which direction, why now, what would prove it wrong) or conclude there is none. Most cycles there is none, and saying so precisely is the job. A swap is only executed when it is argued for: a thesis, at least three EVIDENCE lines each quoting a figure from the observation, an INVALIDATION, and CONVICTION of 4 or 5; anything less is recorded as a hold with the shortfall stated in public. Entries are also spaced and counted by the rails.`,
+    "",
     `Think out loud, in public. Two to five short lines that a person on obscura.market will read as your reasoning: what you see, what it means, what you would do and why not yet. Plain first-person sentences. Every figure must appear in the observation above; anything else is "not measured". No addresses of any kind, no advice, no price predictions, no dates, no em dashes, no quotation marks.`,
     "",
     canExecute
@@ -107,6 +128,12 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     "Reply in exactly this shape, one item per line:",
     "THOUGHT: <a line>",
     "THOUGHT: <another line>",
+    "THESIS: <the one trade you would make and why now, or: none>",
+    "EVIDENCE: <one observed figure and what it means>",
+    "EVIDENCE: <another>",
+    "EVIDENCE: <another>",
+    "INVALIDATION: <what would prove the thesis wrong>",
+    "CONVICTION: <1 to 5>",
     "DECISION: hold",
     "REASON: <one sentence>",
     "NOTE: <one private sentence to yourself, fed back next cycle>",
@@ -118,23 +145,38 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
 }
 
 /** PURE: the reply, parsed forgivingly. Unlabelled lines count as thoughts. */
-export function parseThoughtReply(raw: string): { thoughts: string[]; decision: Decision; note: string } {
+export function parseThoughtReply(raw: string): { thoughts: string[]; decision: Decision; note: string; analysis: Analysis | null } {
   const thoughts: string[] = [];
   let decision: Decision = { kind: "hold", reason: "" };
   let reason = "";
   let note = "";
+  const analysis: Analysis = { thesis: "", evidence: [], invalidation: "", conviction: null };
+  let stated = false;
   for (const rawLine of (raw ?? "").split("\n")) {
     const line = rawLine.replace(/^[\s>*-]+/, "").trim();
     if (!line) continue;
-    const m = line.match(/^(THOUGHT|DECISION|REASON|NOTE)\s*:\s*(.*)$/i);
+    const m = line.match(/^(THOUGHT|THESIS|EVIDENCE|INVALIDATION|CONVICTION|DECISION|REASON|NOTE)\s*:\s*(.*)$/i);
     if (!m) {
-      if (!note && !reason) thoughts.push(line);
+      if (!note && !reason && !stated) thoughts.push(line);
       continue;
     }
     const key = m[1].toUpperCase();
     const val = m[2].trim();
     if (key === "THOUGHT") thoughts.push(val);
-    else if (key === "REASON") reason = val;
+    else if (key === "THESIS") {
+      stated = true;
+      analysis.thesis = /^none\b/i.test(val) ? "" : stripDashes(val).slice(0, 300);
+    } else if (key === "EVIDENCE") {
+      stated = true;
+      if (val) analysis.evidence.push(stripDashes(val).slice(0, 240));
+    } else if (key === "INVALIDATION") {
+      stated = true;
+      analysis.invalidation = /^none\b/i.test(val) ? "" : stripDashes(val).slice(0, 240);
+    } else if (key === "CONVICTION") {
+      stated = true;
+      const n = Number((val.match(/\d+/) ?? [])[0]);
+      analysis.conviction = Number.isFinite(n) && n >= 1 && n <= 5 ? n : null;
+    } else if (key === "REASON") reason = val;
     else if (key === "NOTE") note = val;
     else if (key === "DECISION") {
       const swap = val.match(/^swap\s+([\d.]+)\s+([A-Za-z0-9]+(?:@[A-Za-z0-9-]+)?)\s*(?:->|to)\s*([A-Za-z0-9]+(?:@[A-Za-z0-9-]+)?)/i);
@@ -149,7 +191,7 @@ export function parseThoughtReply(raw: string): { thoughts: string[]; decision: 
     }
   }
   decision.reason = stripDashes(reason).slice(0, 300);
-  return { thoughts, decision, note: stripDashes(note).slice(0, 400) };
+  return { thoughts, decision, note: stripDashes(note).slice(0, 400), analysis: stated ? analysis : null };
 }
 
 /** PURE: the public lines after the same boundaries a tweet passes. */

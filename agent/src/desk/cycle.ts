@@ -12,13 +12,15 @@ import { quoteWatchlist, parseWatchlist, DEFAULT_WATCHLIST } from "../obscura/or
 import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, type Trade, markIsTrustworthy } from "./book.ts";
 import { observationLines, buildThoughtPrompt, parseThoughtReply, guardThoughts, readThoughts, recordThought, type QuoteRead, type Thought } from "./thoughts.ts";
 import { recallForPrompt, remember } from "../journal.ts";
-import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity } from "./rails.ts";
+import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity, entryStats } from "./rails.ts";
 import { assetKey } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates } from "./onchain.ts";
 import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens } from "./candidates.ts";
 import { checkCandidate, clampToBalance } from "./rails.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute, PAPER_BOOK } from "./paper.ts";
+import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCheck } from "./analysis.ts";
+import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
 import { positions } from "./book.ts";
 
@@ -83,6 +85,7 @@ const prices = await assetPrices(symbols, { OBS: reads.market?.priceUsd ?? null 
 const mark = chain ? snapshotFromChain(book.flows, bookTrades, chain.bySymbol, prices, now) : snapshot(book.flows, bookTrades, prices, now);
 const open = latestTrades(book.trades).filter((t) => t.status === "pending" || t.status === "proposed");
 const obscuraQuotes: QuoteRead[] = await quoteWatchlist(now);
+const nvdaDepth = await (async () => { try { const r = await poolRead(chainMemory().referencePools["NVDA/USDG"]); return r?.depthUsd2pct ?? null; } catch { return null; } })();
 // The same legs priced in the pools, so he sees the venue he actually trades on beside Obscura's routes.
 const legs = parseWatchlist(process.env.OBS_QUOTE_WATCHLIST ?? DEFAULT_WATCHLIST)
   .map((w) => ({ from: resolveAsset(`${w.from.code}@${w.from.network}`), to: resolveAsset(`${w.to.code}@${w.to.network}`), amount: w.amount }))
@@ -103,13 +106,25 @@ const heldCandidates = heldDyn.map((a) => {
   const firstBuy = bookTrades.filter((t) => t.to.asset === a.symbol && t.status === "settled").map((t) => t.at).sort()[0] ?? a.candidate?.seenAt ?? now;
   return { symbol: a.symbol, qty: chain?.bySymbol[a.symbol] ?? 0, costUsd: p?.costUsd ?? null, valueUsd: p?.valueUsd ?? null, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, ageH: (now - firstBuy) / 3600e3, trail: a.candidate ? trailOf(a.candidate.poolId) : "unknown" };
 });
+// The desk's own price samples, and what they say: 24h moves, 7-day ranges, the typical 30-minute move, relative value.
+if (!DRY) recordPrices({ ETH: prices.ETH ?? reads.prices.ethUsd ?? null, NVDA: prices.NVDA ?? null, OBS: reads.market?.priceUsd ?? null }, now);
+const priceRows = readPrices();
+const market = {
+  stats: ["ETH", "NVDA"].map((sym) => priceStats(priceRows, sym, now)),
+  ethPerNvda: ratioStats(priceRows, "ETH", "NVDA", now),
+  btcChange24hPct: reads.prices.btcChange24hPct ?? null,
+  ethChange24hPct: reads.prices.ethChange24hPct ?? null,
+  nvdaDepthUsd: nvdaDepth,
+  nvdaDepthBaselineUsd: chainMemory().referencePools["NVDA/USDG"]?.measured?.usdgDepth2pct ?? null,
+};
+const session = usSession(now);
 // Paper exits: a paper-held launch token past its rails is sold on paper, before the model thinks.
 if (PAPER && chain && heldDyn.length) {
   const ctxP = { rails: railsFromEnv(), balances: chain.byKey, nativeOnFromChain: chain.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookTrades, now) };
   const exits = await exitCandidates(chain.bySymbol, prices, ctxP, feed, now, (i, c, t) => paperExecute(i, c, real?.bySymbol ?? {}, t), paperTrades);
   for (const t of exits) console.log(`[desk] paper exit ${t.id}: ${t.note}`);
 }
-const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, heldCandidates, paper: PAPER });
+const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, heldCandidates, paper: PAPER, market, session });
 console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  - " + l).join("\n")}`);
 
 // The persona thinks.
@@ -152,8 +167,12 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
       sentTodayUsd: sentTodayUsd(bookTrades, now),
       dayStartEquityUsd: dayStartEquity(book.snapshots, now),
       equityUsd: mark.equityUsd,
+      ...entryStats(bookTrades, now),
+      now,
     };
-    const gate = checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails);
+    // A swap must be argued for. An exit of a held position is exempt: leaving is never blocked on paperwork.
+    const argued = from.candidate ? { ok: true as const, cited: 0 } : evidenceCheck(parsed.analysis, observation, { minEvidence: rails.minEvidence, minConviction: rails.minConviction });
+    const gate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails);
     if (!gate.ok) {
       decision = { kind: "hold", reason: `wanted ${decision.amount} ${assetKey(from)} to ${assetKey(to)}, refused: ${gate.reason}` };
     } else if (gate.maxUsd != null && usd != null && usd > gate.maxUsd) {
@@ -194,8 +213,9 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
   }
 }
 
-const entry: Thought = { at: now, observation, thoughts, decision, ...(PAPER ? { paper: true } : {}) };
+const entry: Thought = { at: now, observation, thoughts, decision, ...(PAPER ? { paper: true } : {}), ...(parsed.analysis ? { analysis: parsed.analysis } : {}) };
 console.log(`[desk] thoughts:\n${thoughts.map((t) => "  " + t).join("\n")}\n[desk] decision: ${decision.kind}${decision.reason ? ` (${decision.reason})` : ""}`);
+if (parsed.analysis) console.log(`[desk] analysis: thesis ${parsed.analysis.thesis || "none"}; evidence ${parsed.analysis.evidence.length} lines; invalidation ${parsed.analysis.invalidation || "none"}; conviction ${parsed.analysis.conviction ?? "none"}`);
 if (parsed.note) console.log(`  note to self: ${parsed.note}`);
 
 if (DRY) {

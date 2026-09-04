@@ -205,6 +205,23 @@ the position falls through the floor (default 40%), or at the time stop
 (default 8 hours). Exits skip the caps: an exit is never blocked. What the
 desk learns about each token lives in `data/obs-tokens.json`.
 
+**How he decides** (`desk/analysis.ts`). The observation carries more than
+the book and the quotes: the desk samples every price it uses each cycle
+(`obs-prices.jsonl`) and reads back 24-hour moves, 7-day ranges and where the
+price sits in them, the typical 30-minute move, ETH against NVDA versus its
+7-day average, the wider market's 24-hour moves, NVDA pool depth against
+its measured baseline, and the US equity session (NVDA's pool tracks the
+print only while it is open). The prompt asks for an analyst's procedure:
+read everything, form one specific thesis or conclude there is none. A
+swap is executed only when it is argued for, and code checks that: a
+THESIS, at least three EVIDENCE lines each quoting a figure that appears
+in the observation (two distinct figures at least), an INVALIDATION, and
+CONVICTION of 4 or 5 (`OBS_MIN_EVIDENCE`, `OBS_MIN_CONVICTION`); anything
+less is recorded as a hold with the shortfall stated. Entries are also
+spaced (`OBS_MIN_HOURS_BETWEEN_ENTRIES`, default 2) and counted
+(`OBS_MAX_ENTRIES_PER_DAY`, default 3); exits are neither. The argument
+rides in the thought row (`analysis`) and the terminal shows it.
+
 **Paper sessions** (`desk/paper.ts`). `OBS_PAPER=on` runs a cycle at full
 size with nothing sent: the real wallet is read, the model decides, the
 rails check the intent, the route is priced from live pool state, the exact

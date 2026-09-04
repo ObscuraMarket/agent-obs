@@ -35,6 +35,12 @@ export interface Rails {
   /** The whole-book brake: once the day's drawdown from its opening mark passes either limit, no new entries until the next UTC day. Exits still run. */
   dailyLossUsd: number;
   dailyLossPct: number;
+  /** Selectivity: entries are spaced and counted. Exits are neither. */
+  minHoursBetweenEntries: number;
+  maxEntriesPerDay: number;
+  /** A swap must be argued for: this many evidence lines quoting observed figures, and this conviction. */
+  minEvidence: number;
+  minConviction: number;
 }
 
 // The mandate: this desk trades on Robinhood Chain only, in the majors,
@@ -66,6 +72,10 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     candidateVolumeDropPct: Number(env.OBS_CANDIDATE_VOLUME_DROP_PCT ?? 30),
     dailyLossUsd: Number(env.OBS_DAILY_LOSS_USD ?? 50),
     dailyLossPct: Number(env.OBS_DAILY_LOSS_PCT ?? 5),
+    minHoursBetweenEntries: Number(env.OBS_MIN_HOURS_BETWEEN_ENTRIES ?? 2),
+    maxEntriesPerDay: Number(env.OBS_MAX_ENTRIES_PER_DAY ?? 3),
+    minEvidence: Number(env.OBS_MIN_EVIDENCE ?? 3),
+    minConviction: Number(env.OBS_MIN_CONVICTION ?? 4),
   };
 }
 
@@ -96,6 +106,10 @@ export interface RailContext {
   /** The book's equity at the start of the UTC day and now, for the whole-book brake. Null when unknown: the brake stays off rather than guessing. */
   dayStartEquityUsd?: number | null;
   equityUsd?: number | null;
+  /** When the last entry (a non-exit swap) was sent, and how many were sent in the last 24h. */
+  lastEntryAt?: number | null;
+  entriesToday?: number;
+  now?: number;
   /** Dollar value of swaps already sent in the trailing 24h. */
   sentTodayUsd: number;
 }
@@ -110,6 +124,9 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   if (!i.exit) {
     const halt = dailyLossHalt(c.dayStartEquityUsd ?? null, c.equityUsd ?? null, r);
     if (halt) return { ok: false, reason: halt };
+    const now = c.now ?? Date.now();
+    if (c.lastEntryAt != null && now - c.lastEntryAt < r.minHoursBetweenEntries * 3600e3) return { ok: false, reason: `the last entry was ${((now - c.lastEntryAt) / 3600e3).toFixed(1)}h ago; entries are at least ${r.minHoursBetweenEntries}h apart` };
+    if ((c.entriesToday ?? 0) >= r.maxEntriesPerDay) return { ok: false, reason: `${c.entriesToday} entries in the last 24h; the limit is ${r.maxEntriesPerDay}` };
   }
   const allowed = (a: Asset) => r.allowedAssets.has(assetKey(a)) || (r.candidatesOn && !!a.candidate);
   if (!allowed(i.from)) return { ok: false, reason: `${assetKey(i.from)} is not on the trade allowlist` };
@@ -215,5 +232,20 @@ export function dayStartEquity(snapshots: Array<{ at: number; equityUsd: number 
   const start = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate());
   const today = snapshots.filter((s) => s.at >= start && s.at <= now && s.equityUsd != null).sort((a, b) => a.at - b.at);
   return today.length ? (today[0].equityUsd as number) : null;
+}
+
+/** PURE: entries (swaps that were not exits) in the last 24h, and when the last one went out. From the latest row per id. */
+export function entryStats(trades: Trade[], now: number): { entriesToday: number; lastEntryAt: number | null } {
+  const seen = new Set<string>();
+  let entriesToday = 0;
+  let lastEntryAt: number | null = null;
+  for (const t of [...trades].sort((a, b) => (b.updatedAt ?? b.at) - (a.updatedAt ?? a.at))) {
+    if (seen.has(t.id)) continue;
+    seen.add(t.id);
+    if (t.exit || (t.status !== "pending" && t.status !== "settled")) continue;
+    if (t.at >= now - 24 * 3600e3) entriesToday++;
+    if (lastEntryAt == null || t.at > lastEntryAt) lastEntryAt = t.at;
+  }
+  return { entriesToday, lastEntryAt };
 }
 

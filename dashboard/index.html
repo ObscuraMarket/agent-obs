@@ -372,6 +372,13 @@
       out.push(line("sys cycle", t.at, "cycle", "desk cycle, " + (swap ? "proposes a swap" : "holds") + (withInputs ? "" : " (inputs folded)"), false));
       if (withInputs) (t.observation || []).forEach(function (o) { out.push(line("obs", null, "observe", o, false)); });
       (t.thoughts || []).forEach(function (l) { out.push(line("think", null, "think", l, animate)); });
+      var an = t.analysis;
+      if (an) {
+        if (an.thesis) out.push(line("think", null, "thesis", an.thesis, animate));
+        (an.evidence || []).forEach(function (e) { out.push(line("obs", null, "evidence", e, animate)); });
+        if (an.invalidation) out.push(line("why", null, "invalid.", an.invalidation, animate));
+        if (an.conviction != null) out.push(line("why", null, "conviction", an.conviction + " of 5", animate));
+      }
       out.push(line("decide" + (swap ? " swap" : ""), null, "decide", swap ? "swap " + d.amount + " " + d.from + " -> " + d.to : "hold", animate));
       if (d.reason) out.push(line("why", null, "because", d.reason, animate));
       return out;

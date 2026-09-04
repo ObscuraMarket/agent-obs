@@ -42,6 +42,8 @@ export interface Trade {
   updatedAt?: number;
   /** Where the swap ran: through Obscura's routes, or in the pools on chain from the desk's own wallet. */
   venue?: "obscura" | "pool";
+  /** True when the swap closed a position (an exit); exits are not counted or spaced as entries. */
+  exit?: boolean;
 }
 
 export interface CapitalFlow {
