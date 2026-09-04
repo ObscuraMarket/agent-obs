@@ -479,7 +479,7 @@ export interface ExitVerdict {
  * then the trader's exits: a trailing stop off the peak once the trade is
  * armed, and a partial take-profit into strength.
  */
-export function exitVerdict(input: { ageH: number; pnlPct: number | null; hourly: HourlyStat[]; peakPnlPct?: number | null; tookProfit?: boolean }, r: ExitRails): ExitVerdict | null {
+export function exitVerdict(input: { ageH: number; pnlPct: number | null; hourly: HourlyStat[]; peakPnlPct?: number | null; tookProfit?: boolean; tapeTrend?: "rising" | "holding" | "rolling over" | "thin" | null }, r: ExitRails): ExitVerdict | null {
   if (input.ageH >= r.candidateMaxHoldH) return { kind: "time-stop", share: 1, reason: `held ${input.ageH.toFixed(1)}h, past the ${r.candidateMaxHoldH}h time stop` };
   if (input.pnlPct != null && input.pnlPct <= -r.candidateFloorPct) return { kind: "floor", share: 1, reason: `down ${Math.abs(input.pnlPct).toFixed(1)}%, through the ${r.candidateFloorPct}% floor` };
   const h = input.hourly.slice(-3);
@@ -487,6 +487,7 @@ export function exitVerdict(input: { ageH: number; pnlPct: number | null; hourly
     const k = 1 - r.candidateVolumeDropPct / 100;
     if (h[2].usd < h[1].usd * k && h[1].usd < h[0].usd * k) return { kind: "volume", share: 1, reason: `volume rolled over: $${h[0].usd.toFixed(0)} then $${h[1].usd.toFixed(0)} then $${h[2].usd.toFixed(0)} an hour` };
   }
+  if (input.tapeTrend === "rolling over" && input.pnlPct != null && input.pnlPct < (r.candidateTrailArmPct ?? 30)) return { kind: "volume", share: 1, reason: "the tape rolled over: three 5-minute buckets falling in a row while the trade has not paid" };
   const trailArm = r.candidateTrailArmPct ?? 0;
   const trail = r.candidateTrailPct ?? 0;
   if (trail > 0 && input.pnlPct != null && input.peakPnlPct != null && input.peakPnlPct >= trailArm) {

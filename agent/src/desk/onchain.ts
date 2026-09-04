@@ -21,6 +21,8 @@ import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBa
 import { WALLET_ADDRESS } from "../config.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
+import { readTape, tapeStats } from "./tape.ts";
+import { readEntries, recordClose } from "./trade-memory.ts";
 import { positions } from "./book.ts";
 import type { QuoteRead } from "./thoughts.ts";
 
@@ -397,7 +399,8 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
     const peakPx = readPrices().filter((s) => s.symbol === a.symbol && s.at >= firstBuy).reduce((m, s) => Math.max(m, s.priceUsd), prices[a.symbol] ?? 0);
     const peakPnlPct = avgCost != null && avgCost > 0 && peakPx > 0 ? ((peakPx - avgCost) / avgCost) * 100 : null;
     const tookProfit = allTrades.some((t) => t.from.asset === a.symbol && t.exit && (t.note ?? "").includes("take profit"));
-    const v = exitVerdict({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly, peakPnlPct, tookProfit }, ctx.rails);
+    const tape = a.candidate ? tapeStats(readTape(a.candidate.poolId), a.symbol, now, 15) : null;
+    const v = exitVerdict({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly, peakPnlPct, tookProfit, tapeTrend: tape?.trend ?? null }, ctx.rails);
     if (!v) continue;
     const amount = v.share >= 1 ? held : Number((held * v.share).toPrecision(8));
     const usd = prices[a.symbol] != null ? amount * (prices[a.symbol] as number) : null;
@@ -406,6 +409,7 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
       const row: Trade = { ...r.trade, note: `exit (${v.kind}), ${v.reason}; ${r.trade.note ?? ""}` };
       if (exec === executeOnChain) recordTrade(row);
       out.push(row);
+      if (v.share >= 1) rememberClose(a.symbol, a.contract ?? "", firstBuy, p?.costUsd ?? null, (p?.realizedUsd ?? 0) + (row.to.usd ?? 0) - (p?.costUsd ?? 0), peakPnlPct, v.kind, exec !== executeOnChain, now);
     } else if ("trade" in r && r.trade) out.push(r.trade);
     else console.error(`[desk] exit of ${a.symbol} refused: ${r.reason}`);
   }
@@ -436,3 +440,28 @@ export async function poolQuotes(legs: Array<{ from: Asset; to: Asset; amount: n
   }
   return out;
 }
+
+/** A closed launch trade into the desk's memory, from its recorded entry and the exit that closed it. */
+export function rememberClose(symbol: string, token: string, enteredAt: number, costUsd: number | null, realizedUsd: number, peakPct: number | null, exitKind: string, paper: boolean, now = Date.now()): void {
+  const entry = readEntries().filter((e) => e.symbol === symbol && e.paper === paper).sort((a, b) => b.at - a.at)[0];
+  const usdIn = costUsd ?? entry?.usd ?? 0;
+  recordClose({
+    at: now,
+    symbol,
+    token,
+    source: entry?.source ?? "unknown",
+    grade: entry?.grade ?? null,
+    tierPct: entry?.tierPct ?? 0,
+    ignitedAfterMin: entry?.ignitedAfterMin ?? null,
+    via: entry?.via ?? "unknown",
+    enteredAt: entry?.at ?? enteredAt,
+    holdH: (now - (entry?.at ?? enteredAt)) / 3600e3,
+    usdIn,
+    realizedUsd,
+    realizedPct: usdIn > 0 ? (realizedUsd / usdIn) * 100 : null,
+    peakPct,
+    exitKind,
+    paper,
+  });
+}
+

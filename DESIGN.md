@@ -235,6 +235,28 @@ otherwise; forced exits on held tokens run on every tick when armed. The
 with the tokens: the launches and candidates are the job, the basis on the
 tokenized stock a side trade.
 
+**The tape** (`desk/tape.ts`). For every token in play (held, probeable, or
+graded) the desk reads the pool's own Swap events from the chain (the v4
+manager indexes them by pool id), keeps them per pool in
+`data/tape/<poolId>.jsonl` so each read is incremental, and reduces them to
+what a trader reads minute by minute: swaps, buys against sells in dollars,
+buy pressure, the price path and how far off its peak, 5-minute volume
+buckets and their trend. The observation carries a tape line per token, and
+the prompt tells him to read the tape before the watcher's hourly rows. A
+tape rolling over (three 5-minute buckets falling 30% in a row) exits a
+held token that has not paid; a paid one waits for its trail.
+
+**Trade memory** (`desk/trade-memory.ts`). Every entry into a launch token
+is recorded with its setup (source, grade, tier, ignition minute, curve or
+side pool, size, the argued reason) and every full close with its result
+(hours held, realized dollars and percent, the peak, how it left: time
+stop, floor, volume, tape, trail, take-profit, or the model's own call).
+Paper trades count, marked as paper. When a like setup is in play the
+closest past trades are recalled into the observation, and the launch
+record as a whole (closed trades, wins and losses, realized, average hold,
+by grade and by exit) rides with them, so the second launch of a kind is
+traded with the first one in mind.
+
 **The bar.** Not every candidate is worth a probe and few are worth size,
 so each is graded in code from its row, its hourly trail and its pool's
 depth read live (`gradeCandidate`, knobs `OBS_GRADE_*`). GRADE A clears

@@ -15,12 +15,14 @@ import { recallForPrompt, remember } from "../journal.ts";
 import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity, entryStats } from "./rails.ts";
 import { assetKey } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
-import { executeOnChain, settleOnChain, poolQuotes, exitCandidates } from "./onchain.ts";
+import { executeOnChain, settleOnChain, poolQuotes, exitCandidates, rememberClose } from "./onchain.ts";
 import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate, curveKey } from "./candidates.ts";
 import { checkCandidate, clampToBalance } from "./rails.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute, PAPER_BOOK } from "./paper.ts";
 import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCheck, basisSignal } from "./analysis.ts";
 import { stockReference } from "../obscura/stockRef.ts";
+import { updateTape, tapeStats, tapeLine } from "./tape.ts";
+import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry } from "./trade-memory.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
 import { positions } from "./book.ts";
@@ -180,7 +182,42 @@ if (PAPER && chain && heldDyn.length) {
   const exits = await exitCandidates(chain.bySymbol, prices, ctxP, feed, now, (i, c, t) => paperExecute(i, c, real?.bySymbol ?? {}, t), paperTrades);
   for (const t of exits) console.log(`[desk] paper exit ${t.id}: ${t.note}`);
 }
-const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, early: feed.path ? early : undefined, heldCandidates, paper: PAPER, market, session, basis, reference: { perpTradesDay: ref.perpTradesDay, printStatus: ref.printStatus, printAt: ref.printAt } });
+// The desk's own tape for every token in play: held, probeable, or graded; a few pools, incremental reads.
+const inPlay = new Map<string, ReturnType<typeof resolveAny>>();
+for (const a of heldDyn) inPlay.set(a.symbol, a);
+for (const e of early.filter((x) => x.tradable).slice(0, 3)) if (!inPlay.has(e.symbol)) inPlay.set(e.symbol, resolveAny(`${e.symbol}@robinhood`, feed));
+for (const cnd of candidates.filter((x) => x.grade).slice(0, 2)) if (!inPlay.has(cnd.symbol)) inPlay.set(cnd.symbol, resolveAny(`${cnd.symbol}@robinhood`, feed));
+const tapes: string[] = [];
+const tapeTrend = new Map<string, string>();
+for (const [sym, a] of inPlay) {
+  if (!a?.candidate) continue;
+  const spec = dynamicPoolSpec(a);
+  if (!spec) continue;
+  const rows = await updateTape(spec, sym, now);
+  const st = tapeStats(rows, sym, now, 15);
+  const quote = spec.quote ?? "USDG";
+  const quoteUsd = quote === "USDG" ? 1 : prices[quote] ?? null;
+  tapes.push(tapeLine(st, quoteUsd, quote));
+  tapeTrend.set(sym, st.trend);
+}
+// What he learned: the launch record, and the closest past trades to the setups in play.
+const closes = readCloses();
+const recalls: string[] = [];
+const seenRecall = new Set<string>();
+for (const [sym, a] of inPlay) {
+  if (!a?.candidate) continue;
+  const e = early.find((x) => x.symbol === sym);
+  const g = graded.get(sym);
+  const setup = { source: e?.source ?? feed.candidates.find((x) => x.symbol === sym)?.source ?? "unknown", grade: g?.grade ?? null, tierPct: a.candidate.tierPct, ignitedAfterMin: e?.ignitedAfterMin ?? null, via: a.candidate.curve ? "curve" : "side pool", hourUtc: new Date(now).getUTCHours() };
+  for (const r of recallLike(setup, closes, 2)) {
+    const key = `${r.close.symbol}-${r.close.at}`;
+    if (seenRecall.has(key)) continue;
+    seenRecall.add(key);
+    recalls.push(recallLine(r.close));
+  }
+}
+const memory = { record: launchRecordLine(launchRecord(closes)), recalls: recalls.slice(0, 4) };
+const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, early: feed.path ? early : undefined, heldCandidates, paper: PAPER, market, session, basis, reference: { perpTradesDay: ref.perpTradesDay, printStatus: ref.printStatus, printAt: ref.printAt }, tapes, memory: feed.path ? memory : undefined });
 console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  - " + l).join("\n")}`);
 
 // The persona thinks.
@@ -254,6 +291,14 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
         : VENUE === "obscura" && !from.candidate && !to.candidate ? await execute(intent, ctx, now) : await executeOnChain(intent, ctx, now);
       if (r.ok) {
         executed = r.trade;
+        if (to.candidate && (r.trade.status === "settled" || r.trade.status === "pending")) {
+          const e = early.find((x) => x.symbol === to.symbol);
+          recordEntry({ at: now, symbol: to.symbol, token: to.contract ?? "", source: e?.source ?? feed.candidates.find((x) => x.symbol === to.symbol)?.source ?? "unknown", grade: graded.get(to.symbol)?.grade ?? null, tierPct: to.candidate.tierPct, ignitedAfterMin: e?.ignitedAfterMin ?? null, via: to.candidate.curve ? "curve" : "side pool", usd: intentUsd ?? 0, reason: parsed.analysis?.thesis || decision.reason || "", paper: PAPER });
+        }
+        if (from.candidate && isExit && r.trade.status === "settled" && amt >= (chain?.bySymbol[from.symbol] ?? amt) * 0.999) {
+          const p = pos.find((x) => x.asset === from.symbol);
+          rememberClose(from.symbol, from.contract ?? "", bookTrades.filter((t) => t.to.asset === from.symbol && t.status === "settled").map((t) => t.at).sort()[0] ?? now, p?.costUsd ?? null, (p?.realizedUsd ?? 0) + (r.trade.to.usd ?? 0) - (p?.costUsd ?? 0), null, "model", PAPER, now);
+        }
         decision = { ...decision, from: assetKey(from), to: assetKey(to), reason: `${decision.reason || "executing"}; ${PAPER ? `paper: swapped ${amt} ${from.symbol} for ${r.trade.to.amount} ${to.symbol} at full size, nothing sent` : r.trade.venue === "pool" ? `swapped ${amt} ${from.symbol} on chain, ${r.trade.status}` : `sent ${amt} ${from.symbol} via ${r.trade.partner}`}` };
       } else {
         decision = { kind: "hold", reason: `wanted ${amt} ${assetKey(from)} to ${assetKey(to)}, refused: ${r.reason}` };
