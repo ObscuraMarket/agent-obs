@@ -15,6 +15,7 @@ import { dataPath, USDG_CONTRACT, RPC_URL } from "../config.ts";
 import { chainMemory } from "../obscura/pools.ts";
 import { ASSETS, type Asset } from "./assets.ts";
 import type { PoolSpec } from "../obscura/pools.ts";
+import { stabilityRead, hourlyTrail, hourVolumes, stabilityRulesFromEnv, type StabilityRules, type StabilityRead } from "./stability.ts";
 
 export const ZERO = "0x0000000000000000000000000000000000000000" as const;
 const TAIL_BYTES = 6 * 1024 * 1024;
@@ -41,13 +42,19 @@ export interface Candidate {
   usdgIs0: boolean;
   /** Set when the candidate trades through its launch curve rather than a hookless side pool. */
   curve?: { hookAddress: `0x${string}`; feePips: number; quote: string; quoteAddress: `0x${string}`; quoteIs0: boolean; creatorTaxBps: number | null };
+  /** The token's hourly trail read for stability, when the feed had one. */
+  stable?: StabilityRead;
 }
 export interface HourlyStat {
   hour: number;
   at: number;
+  /** The last active hour's volume as the watcher reports it; repeats once a pool goes quiet. */
   usd: number;
   px: number | null;
   senders: number;
+  /** Cumulative volume since launch, when the row carries it: the honest hourly series is its delta. */
+  cumUsd?: number;
+  swaps?: number;
 }
 /** A launch the watcher saw start, from minute one: the curve, the gate, the tax, ignition, and any hookless side pool since. */
 export interface EarlyLaunch {
@@ -79,6 +86,8 @@ export interface FeedSnapshot {
 }
 export interface FeedOptions {
   maxAgeMs: number;
+  /** Stability rules; when set, tokens with a stable hourly trail join the candidates. */
+  stable?: StabilityRules;
   maxTierPct: number;
   requireGate: boolean;
   /** How long after launch a launch still counts as early. */
@@ -112,6 +121,7 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
   const byToken = new Map<string, Candidate>();
   const launches = new Map<string, EarlyLaunch>();
   const ignitions = new Map<string, number>();
+  const meta = new Map<string, { token: `0x${string}`; symbol: string; tierPct: number; gateOk: boolean; source: string; at: number; swaps: number }>();
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     let r: Record<string, unknown>;
@@ -154,7 +164,13 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
     } else if (kind === "hourly" && id) {
       const lh = (r.lastHour ?? {}) as Record<string, unknown>;
       const px = Number(lh.px);
-      (hourly[id] ??= []).push({ hour: Number(r.hour ?? 0), at: Number(r.ts ?? 0), usd: Number(lh.usd ?? 0) || 0, px: Number.isFinite(px) && px > 0 && px < 1e12 ? px : null, senders: Number(r.senders ?? 0) || 0 });
+      const cum = Number(r.volumeUsd);
+      (hourly[id] ??= []).push({ hour: Number(r.hour ?? 0), at: Number(r.ts ?? 0), usd: Number(lh.usd ?? 0) || 0, px: Number.isFinite(px) && px > 0 && px < 1e12 ? px : null, senders: Number(r.senders ?? 0) || 0, ...(Number.isFinite(cum) && cum >= 0 ? { cumUsd: cum } : {}), ...(Number.isFinite(Number(r.swaps)) ? { swaps: Number(r.swaps) } : {}) });
+      if (typeof r.token === "string") {
+        const at = Number(r.ts ?? 0);
+        const prev = meta.get(id);
+        if (!prev || at >= prev.at) meta.set(id, { token: r.token.toLowerCase() as `0x${string}`, symbol: String(r.symbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12), tierPct: Number(r.tier), gateOk: r.gateOk === true, source: String(r.launchSource ?? ""), at, swaps: Number(r.swaps ?? 0) || 0 });
+      }
     } else if (kind === "candidate" && id && typeof r.token === "string") {
       const at = Number(r.ts ?? 0);
       const tierPct = Number(r.tier);
@@ -196,6 +212,58 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
     candidates.push(c);
   }
   candidates.sort((a, b) => b.volUsd - a.volUsd);
+  // Stability: tokens that have already shown it. A candidate row gets its
+  // token's read attached; a pool with a stable trail and no candidate row
+  // becomes a candidate of its own when it is a hookless USDG pool at an
+  // accepted tier. Stable tokens lead the list.
+  if (opts.stable) {
+    const have = new Map(candidates.map((c) => [c.token, c]));
+    for (const [id, rows] of Object.entries(hourly)) {
+      const m = meta.get(id);
+      if (!m) continue;
+      const read = stabilityRead(rows, m.symbol, now, opts.stable);
+      const existing = have.get(m.token);
+      if (existing) {
+        if (!existing.stable || read.stable) existing.stable = read;
+        continue;
+      }
+      if (!read.stable) continue;
+      // The watcher's gate is a bytecode verdict (the token matches a verified standard); a stable token still has to pass it.
+      if (opts.requireGate && !m.gateOk) continue;
+      if (!(m.tierPct > 0) || m.tierPct > opts.maxTierPct) continue;
+      if (!m.symbol || ASSETS[`${m.symbol}@robinhood`]) continue;
+      const feePips = Math.round(m.tierPct * 10000);
+      const sp = sidePools.get(id);
+      const tickSpacing = sp && sp.fee === feePips ? sp.tickSpacing : deriveTickSpacing(m.token, feePips, id);
+      if (tickSpacing == null) continue;
+      const trail = hourlyTrail(rows);
+      const vols = hourVolumes(trail).filter((v): v is number => v != null);
+      const pxs = trail.map((h) => h.px).filter((p): p is number => p != null && p > 0);
+      const lastRow = trail[trail.length - 1];
+      const c: Candidate = {
+        at: m.at,
+        poolId: id as `0x${string}`,
+        token: m.token,
+        symbol: m.symbol,
+        tierPct: m.tierPct,
+        feePips,
+        tickSpacing,
+        gateOk: m.gateOk,
+        source: m.source,
+        hour: lastRow.hour,
+        volUsd: vols.length >= 2 ? vols[vols.length - 2] : (vols[vols.length - 1] ?? 0),
+        movePct: pxs.length >= 2 ? (pxs[pxs.length - 1] / pxs[pxs.length - 2] - 1) * 100 : 0,
+        senders: lastRow.senders,
+        swaps: m.swaps,
+        px: pxs.length ? pxs[pxs.length - 1] : null,
+        usdgIs0: usdgIsToken0(m.token),
+        stable: read,
+      };
+      candidates.push(c);
+      have.set(c.token, c);
+    }
+    candidates.sort((a, b) => (b.stable?.stable ? 1 : 0) - (a.stable?.stable ? 1 : 0) || b.volUsd - a.volUsd);
+  }
   const early: EarlyLaunch[] = [];
   for (const l of launches.values()) {
     if (now - l.at > opts.earlyMaxAgeMs || now < l.at) continue;
@@ -294,7 +362,7 @@ export function earlyAsCandidate(l: EarlyLaunch, now: number, requireIgnition = 
 }
 
 export function feedOptions(env: NodeJS.ProcessEnv = process.env): FeedOptions {
-  return { maxAgeMs: Number(env.OBS_CANDIDATE_MAX_AGE_H ?? 6) * 3600e3, maxTierPct: Number(env.OBS_CANDIDATE_MAX_TIER_PCT ?? 5), requireGate: (env.OBS_CANDIDATE_REQUIRE_GATE ?? "on") !== "off", earlyMaxAgeMs: Number(env.OBS_EARLY_MAX_AGE_MIN ?? 90) * 60e3 };
+  return { maxAgeMs: Number(env.OBS_CANDIDATE_MAX_AGE_H ?? 6) * 3600e3, maxTierPct: Number(env.OBS_CANDIDATE_MAX_TIER_PCT ?? 5), requireGate: (env.OBS_CANDIDATE_REQUIRE_GATE ?? "on") !== "off", earlyMaxAgeMs: Number(env.OBS_EARLY_MAX_AGE_MIN ?? 90) * 60e3, ...((env.OBS_STABLE ?? "on") !== "off" ? { stable: stabilityRulesFromEnv(env) } : {}) };
 }
 
 /** The last few megabytes of the feed file; the feed is append-only so the tail is the present. */
@@ -320,7 +388,7 @@ export function readFeed(now = Date.now(), env: NodeJS.ProcessEnv = process.env)
   let snap: FeedSnapshot = { candidates: [], early: [], hourly: {}, readAt: now, path };
   if (path && existsSync(path)) {
     try {
-      snap = { ...parseFeed(tailOf(path), now, feedOptions(env)), readAt: now, path };
+      snap = { ...parseFeed(tailOf(path, Number(env.OBS_FEED_TAIL_MB ?? 24) * 1024 * 1024), now, feedOptions(env)), readAt: now, path };
     } catch {
       /* an unreadable feed is an empty feed */
     }
@@ -560,6 +628,8 @@ export function gradeCandidate(c: Candidate, trail: HourlyStat[], depthUsd: numb
   if (drawdownPct != null && drawdownPct > a.maxDrawdownPct) fails.push(`${drawdownPct.toFixed(0)}% off its peak`);
   if (!fails.length) return { grade: "A", capUsd: r.capUsd.A, why: "clears every bar for size", depthUsd, drawdownPct, trend };
   const b = r.gradeB;
+  // A token that has already shown stability is on the board for a swing at ordinary size, whatever its prior hour printed.
+  if (c.stable?.stable && trend !== "rolling over" && (drawdownPct == null || drawdownPct <= b.maxDrawdownPct)) return { grade: "B", capUsd: r.capUsd.B, why: `stable: ${c.stable.why}`, depthUsd, drawdownPct, trend };
   const bOk = c.volUsd >= b.minVolUsd && c.senders >= b.minSenders && move <= b.maxMovePct && c.tierPct <= b.maxTierPct && trend !== "rolling over" && (drawdownPct == null || drawdownPct <= b.maxDrawdownPct);
   if (bOk) return { grade: "B", capUsd: r.capUsd.B, why: `short of A: ${fails.slice(0, 2).join(", ")}`, depthUsd, drawdownPct, trend };
   const cOk = trend !== "rolling over" && (drawdownPct == null || drawdownPct <= b.maxDrawdownPct);

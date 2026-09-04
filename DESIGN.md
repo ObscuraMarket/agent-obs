@@ -262,6 +262,25 @@ whose Entry line says NO ENTRY, and the refusal is public. The thresholds
 are `OBS_ENTRY_*` in the environment; more data points belong in this
 module, not in the cycle.
 
+**Stability** (`desk/stability.ts`). The desk also hunts tokens that have
+already shown it. The watcher tracks a token's first day hour by hour and
+repeats the last active hour once a pool goes quiet, so the honest hourly
+series is the cumulative volume moving hour to hour. A token is stable when
+it traded in most of its hours for six hours or more, sits within a
+contained distance of its peak, held its range over its last hours, still
+carries a fair share of its median hour, and has real senders behind it
+(`OBS_STABLE_*`). A stable trail is attached to the token's candidate row,
+or makes a candidate of its own when the pool is a hookless USDG pool at an
+accepted tier, and it still has to pass the watcher's gate (a bytecode
+verdict: the token matches a verified standard). Drawdown is measured
+against the peak of the last twelve active hours, not the launch spike, so
+a token that dumped a day ago and has based since can qualify while one
+that dumped this morning cannot. Stable tokens lead the list and grade B on the bar for a
+swing at ordinary size, whatever their prior hour printed. Their Entry line
+times the buy, on the 30-minute cycle and on the tick. The feed tail read
+each cycle is `OBS_FEED_TAIL_MB` (default 24) so the trails run long enough
+to judge; `OBS_STABLE=off` turns the hunt off.
+
 **Trade memory** (`desk/trade-memory.ts`). Every entry into a launch token
 is recorded with its setup (source, grade, tier, ignition minute, curve or
 side pool, size, the argued reason) and every full close with its result

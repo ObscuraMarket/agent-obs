@@ -98,6 +98,20 @@ if (process.env.OBS_TICK === "fast" && !DRY) {
     }
     skipped.push(`${l.symbol} ${er.state}${er.state === "quiet" && er.pickupRatio != null ? ` (${er.pickupRatio.toFixed(1)}x)` : ""}`);
   }
+  // Stable tokens are hunted on the tick too: their volume is established by the hourly trail, so only the price action is asked.
+  if (!probeable) {
+    for (const c of feedNow.candidates.filter((x) => x.stable?.stable).slice(0, 3)) {
+      const a = resolveAny(`${c.symbol}@robinhood`, feedNow);
+      const spec = a?.candidate ? dynamicPoolSpec(a) : null;
+      const er = entryRead(spec ? await updateTape(spec, c.symbol, now) : [], c.symbol, now, tickRules, true);
+      if (er.ok) {
+        probeable = c.symbol;
+        entryWhy = er.why;
+        break;
+      }
+      skipped.push(`${c.symbol} ${er.state} (stable)`);
+    }
+  }
   const holding = readTokens().length > 0;
   if (!probeable && !holding) {
     console.log(`[desk] fast tick: nothing in play${skipped.length ? ` (${skipped.join(", ")}: no entry on the tape)` : ""}, no model call`);
@@ -145,7 +159,7 @@ const trailOf = (poolId: string) => {
 const gradeRules = gradeRulesFromEnv();
 const graded = new Map<string, ReturnType<typeof gradeCandidate>>();
 const candidates = [];
-for (const cnd of feed.candidates.slice(0, 4)) {
+for (const cnd of feed.candidates.slice(0, 6)) {
   const spec = dynamicPoolSpec(candidateAsset(cnd));
   const depth = spec ? await (async () => { try { return (await poolRead(spec))?.depthUsd2pct ?? null; } catch { return null; } })() : null;
   const g = gradeCandidate(cnd, feed.hourly[cnd.poolId.toLowerCase()] ?? [], depth, gradeRules);
