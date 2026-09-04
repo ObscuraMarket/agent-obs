@@ -1,8 +1,10 @@
 // One paper trade, chosen by the operator, through the same rails, quote,
 // cost floor and wallet simulation as a paper session, recorded in the paper
 // ledger. `npm run paper:trade -- 0.05 ETH NVDA`. Nothing is sent.
-import { resolveAny, readFeed, tokenInfo } from "../src/desk/candidates.ts";
-import { railsFromEnv, checkCandidate, sentTodayUsd } from "../src/desk/rails.ts";
+import { resolveAny, readFeed, tokenInfo, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec } from "../src/desk/candidates.ts";
+import { poolRead } from "../src/obscura/pools.ts";
+import { positions } from "../src/desk/book.ts";
+import { railsFromEnv, checkCandidate, sentTodayUsd, entryStats } from "../src/desk/rails.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute } from "../src/desk/paper.ts";
 import { liveReads, walletBalances, assetPrices } from "../src/obscura/reads.ts";
 import { readBook } from "../src/desk/book.ts";
@@ -25,16 +27,34 @@ const px = prices[from.symbol] ?? null;
 let usd = px != null ? amount * px : null;
 const rails = railsFromEnv();
 const heldCandidates = Object.keys(bySymbol).filter((s) => !!resolveAny(`${s}@robinhood`, feed)?.candidate);
-const gate = checkCandidate({ from, to, amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates, rails);
+// The bar, exactly as the cycle applies it: the candidate's row, its hourly trail, its pool depth read live.
+let graded: ReturnType<typeof gradeCandidate> | null = null;
+if (to.candidate) {
+  const row = feed.candidates.find((c) => c.symbol === to.symbol);
+  const spec = dynamicPoolSpec(to);
+  const depth = spec ? (await poolRead(spec))?.depthUsd2pct ?? null : null;
+  graded = row ? gradeCandidate(row, feed.hourly[row.poolId.toLowerCase()] ?? [], depth, gradeRulesFromEnv()) : null;
+  if (graded) console.log(`bar: ${to.symbol} ${graded.grade ? `grade ${graded.grade}, cap $${graded.capUsd}` : "below the bar"} (${graded.why})`);
+}
+const book0 = readBook();
+const heldUsd = to.candidate ? positions(book0.flows, [...book0.trades, ...paper], bySymbol, prices).positions.find((x) => x.asset === to.symbol)?.valueUsd ?? 0 : 0;
+const gate = checkCandidate({ from, to, amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates, rails, graded, heldUsd);
 if (!gate.ok) { console.log(`refused before the rails: ${gate.reason}`); process.exit(0); }
-if (gate.maxUsd != null && usd != null && usd > gate.maxUsd) {
-  amount = Number(((amount * gate.maxUsd) / usd).toPrecision(6));
-  usd = gate.maxUsd;
-  console.log(`sized down to a $${gate.maxUsd} probe: ${to.symbol} has no proven sell yet -> ${amount} ${from.symbol}`);
+let capUsd: number | undefined;
+let addOn = false;
+if ("maxUsd" in gate && gate.maxUsd != null) {
+  capUsd = gate.maxUsd;
+  addOn = !!gate.addOn;
+  if (usd != null && usd > gate.maxUsd) {
+    amount = Number(((amount * gate.maxUsd) / usd).toPrecision(6));
+    usd = gate.maxUsd;
+    console.log(`sized to $${gate.maxUsd}: ${to.symbol} ${tokenInfo(to.contract ?? "")?.proven === true ? `grade ${graded?.grade ?? "C"} ceiling` : "has no proven sell yet, so a probe"} -> ${amount} ${from.symbol}`);
+  }
 }
 const now = Date.now();
-const ctx = { rails, balances: byKey, nativeOnFromChain: byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd([...readBook().trades, ...paper], now) };
-const r = await paperExecute({ from, to, amount, usd, exit: !!from.candidate }, ctx, real.bySymbol, now);
+const allTrades = [...readBook().trades, ...paper];
+const ctx = { rails, balances: byKey, nativeOnFromChain: byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(allTrades, now), ...entryStats(allTrades, now), now };
+const r = await paperExecute({ from, to, amount, usd, exit: !!from.candidate, ...(capUsd != null ? { capUsd } : {}), ...(addOn ? { addOn: true } : {}) }, ctx, real.bySymbol, now);
 if (!r.ok) { console.log(`refused: ${r.reason}`); process.exit(0); }
 console.log(`paper trade ${r.trade.id}: ${r.trade.from.amount} ${r.trade.from.asset} (${usd == null ? "unpriced" : `$${usd.toFixed(2)}`}) -> ${r.trade.to.amount} ${r.trade.to.asset}${r.trade.to.usd != null ? ` ($${r.trade.to.usd.toFixed(2)})` : ""}`);
 console.log(`  ${r.trade.note}`);
