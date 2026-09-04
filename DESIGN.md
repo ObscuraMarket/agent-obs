@@ -302,8 +302,15 @@ landing in one block, or identical sizes: a bundle), and how many of the
 top ten are fresh by transaction count. Each token in play carries a
 Holders line in the observation, and the rails refuse a launch-token buy
 whose read fails (`OBS_HOLDERS_*`). An unread token is not a verdict.
-The wallets' own trading records, across the tokens the desk has watched,
-are the next layer on this data.
+**The wallets' records** (`desk/wallets.ts`). Every buy and sell a wallet
+makes in a token the desk watches is priced by joining the token's
+Transfer events with the pool's Swap events through the transaction hash
+and kept in `obs-wallet-trades.jsonl`; reduced per wallet across tokens
+that is a track record (dollars in, dollars out, tokens won and lost:
+repeat winner, repeat loser, mixed, or a holder who never sold). Each
+token in play carries a Records line naming how many of its top ten
+wallets have a record on other tokens and what it says. The ledger fills
+from the first cycle and becomes a signal over days.
 
 **Trade memory** (`desk/trade-memory.ts`). Every entry into a launch token
 is recorded with its setup (source, grade, tier, ignition minute, curve or

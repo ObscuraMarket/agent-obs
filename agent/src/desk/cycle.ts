@@ -25,6 +25,7 @@ import { stockReference } from "../obscura/stockRef.ts";
 import { updateTape, tapeStats, tapeLine } from "./tape.ts";
 import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry.ts";
 import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, type HolderRead } from "./holders.ts";
+import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry } from "./trade-memory.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
@@ -284,6 +285,11 @@ for (const [sym, a] of inPlay) {
     const hr = holderRead(transfers, sym, a.contract ?? "", now, holderRules, infra, counts);
     holderReads.set(sym, hr);
     tapes.push(holdersLine(hr));
+    // The wallets' own records: their trades here priced by the tape, kept across tokens, read against the top wallets.
+    if (transfers.length && rows.length) {
+      recordWalletTrades(walletTrades(transfers, rows, infraSet, sym, a.contract ?? "", quoteUsd ?? 0));
+      tapes.push(walletsLine(sym, top, walletRecords(readWalletTrades()), (a.contract ?? "").toLowerCase()));
+    }
   } catch (e) {
     tapes.push(`Holders ${sym}: not read (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`);
   }
