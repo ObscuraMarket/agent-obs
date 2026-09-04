@@ -17,6 +17,18 @@ Chain. OBS is its operator mind and its voice.
 - Working agreement for agents and engineers sharing this repo: [AGENTS.md](AGENTS.md)
 - **For Obscura's developers, the dashboard integration:** [dashboard/INTEGRATION.md](dashboard/INTEGRATION.md)
 
+## Site team: start here
+
+Everything the obscura.market front end needs is in `dashboard/`, and the
+path is five steps at the top of
+[dashboard/INTEGRATION.md](dashboard/INTEGRATION.md): pull the folder,
+point the Agent page at the bridge (today) or `obs-api.obscura.market`
+(launch), wire each component to its endpoint from the table there, create
+the named tunnel, and receive updates by relay. The launch steps by owner
+are in [LAUNCH.md](LAUNCH.md); the current bridge URL and the tunnel steps
+are on [issue #1](https://github.com/louz514/agent-obs/issues/1). Fields in
+`/api/obs/*` are only ever added, never renamed or removed.
+
 ## What is in the box
 
 ```
