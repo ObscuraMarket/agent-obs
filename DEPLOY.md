@@ -148,7 +148,10 @@ The launch watcher stays on the Mac. Its API serves the feed's bytes at
 kept pointed at the Mac's bridge by `com.obscura.obsvercel`); the desk on
 Railway pulls it every 30 seconds. `obs-api.obscura.markets` points at the
 desk on Railway (a CNAME in Vercel DNS to the Railway domain). Arming on
-Railway: `OBS_WALLET_JSON` as a variable (written to the wallet dir at boot,
-once), then `OBS_TRADING=on`. Two desks must never run against one wallet:
+Railway: `scripts/railway-preflight.sh` (read-only readiness checks), then
+`scripts/railway-arm.sh on` (puts the key from `~/.obs/wallet/obs-wallet.json`
+into `OBS_WALLET_JSON`, written to the wallet dir at boot, and sets
+`OBS_TRADING=on`; `off` disarms). Set `ROBINHOOD_RPC_URL` to a provider
+endpoint first; the public RPC throttles. Two desks must never run against one wallet:
 when Railway is the desk, the Mac's desk timers come down.
 
