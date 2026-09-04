@@ -289,6 +289,22 @@ times the buy, on the 30-minute cycle and on the tick. The feed tail read
 each cycle is `OBS_FEED_TAIL_MB` (default 24) so the trails run long enough
 to judge; `OBS_STABLE=off` turns the hunt off.
 
+**The holders** (`desk/holders.ts`). Who holds each token in play, read
+from the chain rather than an explorer (the chain's explorer challenges
+clients, indexes new tokens late and times out on transfer history): the
+token's Transfer events, kept per token in `data/holders/<token>.jsonl` and
+read incrementally like the tape. The read sets aside the pool manager,
+the router, the hooks, the burn address and the busiest sender (the pool
+or the curve), then measures how many wallets hold the token, what the
+largest and the top ten hold of circulating supply, whether the first
+buyers inside the first thirty seconds look like one hand (three or more
+landing in one block, or identical sizes: a bundle), and how many of the
+top ten are fresh by transaction count. Each token in play carries a
+Holders line in the observation, and the rails refuse a launch-token buy
+whose read fails (`OBS_HOLDERS_*`). An unread token is not a verdict.
+The wallets' own trading records, across the tokens the desk has watched,
+are the next layer on this data.
+
 **Trade memory** (`desk/trade-memory.ts`). Every entry into a launch token
 is recorded with its setup (source, grade, tier, ignition minute, curve or
 side pool, size, the argued reason) and every full close with its result

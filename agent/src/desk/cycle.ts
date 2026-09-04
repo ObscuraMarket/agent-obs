@@ -24,6 +24,7 @@ import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCh
 import { stockReference } from "../obscura/stockRef.ts";
 import { updateTape, tapeStats, tapeLine } from "./tape.ts";
 import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry.ts";
+import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, type HolderRead } from "./holders.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry } from "./trade-memory.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
@@ -255,6 +256,9 @@ const tapes: string[] = [];
 const tapeTrend = new Map<string, string>();
 // The entry read per token: volume puts it on watch, the price action gives the entry.
 const entryReads = new Map<string, EntryRead>();
+// Who holds each token in play: concentration, the first buyers, fresh wallets. A failed read is a public refusal.
+const holderReads = new Map<string, HolderRead>();
+const holderRules = holderRulesFromEnv();
 const entryRules = entryRulesFromEnv();
 for (const [sym, a] of inPlay) {
   if (!a?.candidate) continue;
@@ -270,6 +274,19 @@ for (const [sym, a] of inPlay) {
   const er = entryRead(rows, sym, now, entryRules, g === "A" || g === "B" || heldDyn.some((h) => h.symbol === sym));
   entryReads.set(sym, er);
   tapes.push(entryLine(er));
+  try {
+    const launchAt = feed.early.find((x) => x.symbol === sym)?.at ?? feed.candidates.find((x) => x.symbol === sym)?.at ?? null;
+    const transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);
+    const infra = infrastructureAddresses([a.candidate.curve?.hookAddress]);
+    const infraSet = new Set(infra.map((x) => x.toLowerCase()));
+    const top = [...balancesFrom(transfers).entries()].filter(([addr, v]) => v > 0 && !infraSet.has(addr)).sort((x, y) => y[1] - x[1]).slice(0, 10).map(([addr]) => addr);
+    const counts = transfers.length && top.length ? await txCounts(top) : null;
+    const hr = holderRead(transfers, sym, a.contract ?? "", now, holderRules, infra, counts);
+    holderReads.set(sym, hr);
+    tapes.push(holdersLine(hr));
+  } catch (e) {
+    tapes.push(`Holders ${sym}: not read (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`);
+  }
 }
 // What he learned: the launch record, and the closest past trades to the setups in play.
 const closes = readCloses();
@@ -347,7 +364,10 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
     const railGate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails, to.candidate ? (graded.get(to.symbol) ?? null) : null, heldPos?.valueUsd ?? 0);
     // The entry: a launch-token buy also needs the price action to allow it. Volume puts a token on watch; the tape gives the entry.
     const entry = to.candidate && !from.candidate ? (entryReads.get(to.symbol) ?? null) : null;
-    const gate = railGate.ok && to.candidate && !from.candidate && !entry?.ok ? { ok: false as const, reason: entry ? `the tape gives no entry: ${entry.why}` : `no tape was read for ${to.symbol} this cycle, so there is no entry read` } : railGate;
+    const gateEntry = railGate.ok && to.candidate && !from.candidate && !entry?.ok ? { ok: false as const, reason: entry ? `the tape gives no entry: ${entry.why}` : `no tape was read for ${to.symbol} this cycle, so there is no entry read` } : railGate;
+    // The holders: a bundled or single-hand token is not bought, whatever the tape says.
+    const holders = to.candidate && !from.candidate ? (holderReads.get(to.symbol) ?? null) : null;
+    const gate = gateEntry.ok && holders && holders.transfers > 0 && !holders.ok ? { ok: false as const, reason: `the holders fail the read: ${holders.why}` } : gateEntry;
     let capUsd: number | undefined;
     let addOn = false;
     if (!gate.ok) {
