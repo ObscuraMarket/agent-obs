@@ -45,7 +45,19 @@ export function readTape(poolId: string): SwapRow[] {
       /* skip */
     }
   }
-  return out;
+  return dedupeRows(out);
+}
+
+/** PURE: one row per swap (tx hash and log index), first occurrence kept, in block order. Two processes may append the same swap to a tape file. */
+export function dedupeRows(rows: SwapRow[]): SwapRow[] {
+  const seen = new Set<string>();
+  const out: SwapRow[] = [];
+  for (const r of rows) {
+    if (seen.has(r.tx)) continue;
+    seen.add(r.tx);
+    out.push(r);
+  }
+  return out.sort((a, b) => a.block - b.block || a.at - b.at);
 }
 
 /** PURE: a v4 Swap event decoded into a row. Amounts are the pool's deltas: positive means the pool received that currency, so the user sold it. */
@@ -96,6 +108,79 @@ export async function updateTape(spec: PoolSpec, tokenSymbol: string, now = Date
   } catch {
     return existing.filter((r) => r.at >= now - sinceMin * 60e3);
   }
+}
+
+/**
+ * The tapes of several pools in one read, for the live watch: one head block
+ * and one Swap query across every pool id for the blocks since the last
+ * look. A pool with no stored tape is backfilled on its own first (once).
+ * `cache` keeps each pool's window in memory between looks so the files are
+ * not re-read every few seconds. Returns each pool's rows inside the window
+ * and the head block, or what it had when the chain did not answer.
+ */
+export async function updateTapes(items: Array<{ spec: PoolSpec; symbol: string }>, now = Date.now(), sinceMin = 35, cache?: Map<string, SwapRow[]>): Promise<{ tapes: Map<string, SwapRow[]>; headBlock: number | null }> {
+  const tapes = new Map<string, SwapRow[]>();
+  const live = items.filter((i) => i.spec.venue === "uniswap-v4" && i.spec.id);
+  const inWindow = (rows: SwapRow[]) => rows.filter((r) => r.at >= now - sinceMin * 60e3);
+  if (!live.length) return { tapes, headBlock: null };
+  const pub = createPublicClient({ transport: http(RPC_URL, { fetchOptions: { headers: { "User-Agent": UA } } }) });
+  let head: { number: bigint; timestamp: bigint };
+  try {
+    head = await pub.getBlock({ blockTag: "latest" });
+  } catch {
+    for (const i of live) tapes.set(i.spec.id as string, inWindow(cache?.get(i.spec.id as string) ?? readTape(i.spec.id as string)));
+    return { tapes, headBlock: null };
+  }
+  const headBlock = head.number;
+  const headAt = Number(head.timestamp) * 1000;
+  const batch: Array<{ item: { spec: PoolSpec; symbol: string }; existing: SwapRow[]; from: bigint }> = [];
+  for (const item of live) {
+    const id = item.spec.id as string;
+    const existing = cache?.get(id) ?? readTape(id);
+    if (!existing.length) {
+      const rows = await updateTape(item.spec, item.symbol, now, sinceMin);
+      cache?.set(id, rows);
+      tapes.set(id, rows);
+      continue;
+    }
+    batch.push({ item, existing, from: BigInt(existing[existing.length - 1].block) + 1n });
+  }
+  if (batch.length) {
+    const fromBlock = batch.reduce((m, b) => (b.from < m ? b.from : m), headBlock + 1n);
+    const byId = new Map(batch.map((b) => [(b.item.spec.id as string).toLowerCase(), b]));
+    const fresh = new Map<string, SwapRow[]>();
+    try {
+      for (let start = fromBlock; start <= headBlock; start += CHUNK) {
+        const end = start + CHUNK - 1n > headBlock ? headBlock : start + CHUNK - 1n;
+        const logs = await pub.getLogs({ address: chainMemory().contracts.uniswapV4.poolManager as `0x${string}`, event: SWAP_ABI[0], args: { id: batch.map((b) => b.item.spec.id as `0x${string}`) }, fromBlock: start, toBlock: end });
+        for (const l of logs) {
+          const id = String(l.topics[1] ?? "").toLowerCase();
+          const b = byId.get(id);
+          if (!b) continue;
+          const block = Number(l.blockNumber);
+          if (BigInt(block) < b.from) continue;
+          const d = decodeEventLog({ abi: SWAP_ABI, data: l.data, topics: l.topics }).args as { amount0: bigint; amount1: bigint; sqrtPriceX96: bigint };
+          const at = headAt - Math.round((Number(headBlock) - block) / BLOCKS_PER_SEC) * 1000;
+          const row = decodeSwap(d, b.item.spec, b.item.spec.token0 === b.item.symbol, at, block, `${l.transactionHash}:${l.logIndex}`);
+          if (row) (fresh.get(id) ?? fresh.set(id, []).get(id)!).push(row);
+        }
+      }
+    } catch {
+      /* keep what we have; the next look tries again */
+    }
+    for (const b of batch) {
+      const id = b.item.spec.id as string;
+      const rows = fresh.get(id.toLowerCase()) ?? [];
+      if (rows.length) {
+        mkdirSync(tapeDir(), { recursive: true });
+        appendFileSync(tapePath(id), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+      }
+      const all = inWindow(dedupeRows([...b.existing, ...rows]));
+      cache?.set(id, all);
+      tapes.set(id, all);
+    }
+  }
+  return { tapes, headBlock: Number(headBlock) };
 }
 
 export interface TapeStats {

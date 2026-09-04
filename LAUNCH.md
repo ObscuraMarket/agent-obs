@@ -7,8 +7,10 @@ domain).
 
 ## Already true, in code
 
-- The desk cycles every 30 minutes on a launchd timer and thinks with the
-  full persona (identity, rules, soul, knowledge).
+- The live watch runs continuously and runs a desk cycle the moment a held
+  token's tape breaks or an entry appears; the full board is read every 30
+  minutes on a launchd timer. The desk thinks with the full persona
+  (identity, rules, soul, knowledge).
 - Every public thought passes the same guards as a tweet; the journal never
   leaves the machine except into the private memory repo.
 - Two execution lanes behind one set of rails: the pools on Robinhood Chain

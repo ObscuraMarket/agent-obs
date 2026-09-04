@@ -219,21 +219,29 @@ grade C size, the sell is proven right after, and it scales only if the
 token later clears the bar. Minute-one buying loses on average across the
 tape, so ignition is the earliest signal the desk will probe.
 
-**The trader's exits and the fast tick.** A held launch token leaves on
+**The trader's exits and the live watch.** A held launch token leaves on
 the hard stops first (time stop, floor, volume rolling over two hours
 running), then on the trader's exits: a partial take-profit into strength
 (`OBS_CANDIDATE_TAKE_PROFIT_PCT`, share `OBS_CANDIDATE_TAKE_PROFIT_SHARE`,
 once) and a trailing stop off the peak since entry once the trade is armed
 (`OBS_CANDIDATE_TRAIL_ARM_PCT`, `OBS_CANDIDATE_TRAIL_PCT`); the peak comes
 from the desk's own price samples, which now include every held launch
-token. Because launches live for hours, a second timer, the fast tick
-(`com.obscura.obstick`, every 5 minutes, `scripts/_obs-tick.sh`), runs a
-cycle that spends a model call only when a token is in play: a held launch
-token, or an ignited launch inside the window whose tape gives an entry (a
-held pullback or a base, see the entry read below); otherwise it exits
-quietly, naming the launches it skipped and their entry state. Forced
-exits on held tokens run on every tick when armed. The 30-minute desk
-cycle is unchanged and still reads everything. The persona and the prompt now lead
+token. Because launches move in minutes, the desk runs in real time: the live
+watch (`desk/live.ts`, `com.obscura.obslive`, kept alive, `scripts/_obs-live.sh`)
+is a long-running process that follows the pool of every token in play a
+few seconds apart (`OBS_LIVE_POLL_MS`, default 3000, a few dozen blocks on
+this chain), reads each swap as it lands, keeps the tape and the entry read
+current, and runs a desk cycle the moment a held token's tape rolls over or
+gives back the trailing stop from its tape peak, the moment an entry
+appears (once, with a cooldown, and a fresh look every so often while it
+lasts), or when a held token is due its review (`OBS_LIVE_HELD_EVERY_MIN`,
+default 5). The rules are pure (`desk/watch.ts`); the cycle it runs is the
+same script the timers run, with `OBS_TICK=fast` so it spends a model call
+only when the tape still gives an entry or a token is held, and its own
+forced exits run first. One cycle at a time. A heartbeat goes to
+`data/obs-live.json` and `/api/obs/live` every look. The old five-minute
+tick (`com.obscura.obstick`) is superseded; the 30-minute desk cycle stays
+as the board-wide sweep. The persona and the prompt now lead
 with the tokens: the launches and candidates are the job, the basis on the
 tokenized stock a side trade.
 

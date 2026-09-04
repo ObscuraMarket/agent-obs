@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeSwap, tapeStats, tapeLine, type SwapRow } from "../src/desk/tape.ts";
+import { decodeSwap, tapeStats, tapeLine, dedupeRows, type SwapRow } from "../src/desk/tape.ts";
 import { similarity, recallLike, launchRecord, launchRecordLine, recallLine, type TradeClose } from "../src/desk/trade-memory.ts";
 import { exitVerdict } from "../src/desk/candidates.ts";
 
@@ -65,4 +65,10 @@ test("trade memory: like setups recall, the launch record tallies", () => {
   assert.equal(r.byGrade.A.trades, 1);
   assert.match(launchRecordLine(r), /3 closed \(1 paper\), 2 wins, 1 losses, \+\$14\.00 realized/);
   assert.match(launchRecordLine(launchRecord([])), /no closed launch trades yet/);
+});
+
+test("a tape appended by two processes reads as one row per swap, in block order", () => {
+  const r = (block: number, tx: string): SwapRow => ({ at: block, block, tx, side: "buy", tokenAmount: 1, quoteAmount: 1, price: 1 });
+  const rows = dedupeRows([r(2, "b:0"), r(1, "a:0"), r(2, "b:0"), r(3, "c:1")]);
+  assert.deepEqual(rows.map((x) => x.tx), ["a:0", "b:0", "c:1"]);
 });

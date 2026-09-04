@@ -78,6 +78,7 @@ if (ARMED && readTokens().length) {
 // launches it skipped and why. Forced exits above ran regardless. The
 // 30-minute desk cycle is unchanged and still reads everything.
 if (process.env.OBS_TICK === "fast" && !DRY) {
+  if (process.env.OBS_LIVE_TRIGGER) console.log(`[desk] live trigger: ${process.env.OBS_LIVE_TRIGGER}`);
   const feedNow = readFeed(now);
   const wantIgnition = (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off";
   const tickRules = entryRulesFromEnv();

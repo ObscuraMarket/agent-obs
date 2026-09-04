@@ -94,7 +94,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.obscura.obsengage.pl
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.obscura.obsdesk.plist
 ```
 
-Desk cycle every 30 min (25 min floor inside the job), post cycle every 2h
+The live watch runs continuously (a look every few seconds) and runs a desk cycle the moment a held token's tape breaks or an entry appears; the full board is read every 30 min (25 min floor inside the job); post cycle every 2h
 (90 min floor), replies every 10 min. Logs in `~/Library/Logs/obs-desk.log`,
 `obs-autopilot.log` and `obs-engage.log`.
 

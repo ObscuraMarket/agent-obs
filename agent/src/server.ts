@@ -397,6 +397,21 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "pnl unavailable" }));
     return;
   }
+  if (path === "/api/obs/live") {
+    // The live watch's heartbeat: what it follows block by block, and its last trigger. Live when written in the last half minute.
+    const p = dataPath("obs-live.json");
+    if (!existsSync(p)) {
+      json(res, 200, { live: false, watching: [] });
+      return;
+    }
+    try {
+      const beat = JSON.parse(readFileSync(p, "utf8")) as { at: number };
+      json(res, 200, { live: Date.now() - Number(beat.at) < 30_000, ...beat });
+    } catch {
+      json(res, 200, { live: false, watching: [] });
+    }
+    return;
+  }
   if (path === "/api/obs/signals") {
     // What the desk is watching and how close each is to acting, for the page's signals strip.
     cachedReads()
@@ -447,7 +462,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/stream?limit=12 (server-sent events)"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in
