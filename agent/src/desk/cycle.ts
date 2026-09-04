@@ -12,8 +12,8 @@ import { quoteWatchlist, parseWatchlist, DEFAULT_WATCHLIST } from "../obscura/or
 import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, type Trade, markIsTrustworthy } from "./book.ts";
 import { observationLines, buildThoughtPrompt, parseThoughtReply, guardThoughts, readThoughts, recordThought, type QuoteRead, type Thought } from "./thoughts.ts";
 import { recallForPrompt, remember } from "../journal.ts";
-import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity, entryStats } from "./rails.ts";
-import { assetKey } from "./assets.ts";
+import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity, entryStats, baseLeg } from "./rails.ts";
+import { assetKey, type Asset } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates, rememberClose } from "./onchain.ts";
 import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate, curveKey } from "./candidates.ts";
@@ -282,7 +282,14 @@ let proposal: Trade | null = null;
 let executed: Trade | null = null;
 if (decision.kind === "propose-swap" && decision.from && decision.to && decision.amount) {
   const from = resolveAny(decision.from, feed);
-  const to = resolveAny(decision.to, feed);
+  const named = resolveAny(decision.to, feed);
+  // ETH is the base: a sell of a launch token comes back to ETH whatever leg was named.
+  const based = from && named ? baseLeg(from, named, railsFromEnv()) : null;
+  const to = based ? based.to : named;
+  if (based?.note && to) {
+    decision.to = assetKey(to as Asset);
+    decision.reason = `${decision.reason || ""} (${based.note})`.trim();
+  }
   if (!from || !to) {
     decision = { kind: "hold", reason: `proposed ${decision.amount} ${decision.from} to ${decision.to} but one of them is not a registered asset; held instead` };
   } else {

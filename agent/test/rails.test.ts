@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkRails, railsFromEnv, sentTodayUsd, mapStatus, partnerAllowed, depositAddressLooksRight, clampToBalance, type Intent, type RailContext, dailyLossHalt, dayStartEquity } from "../src/desk/rails.ts";
+import { checkRails, railsFromEnv, baseLeg, sentTodayUsd, mapStatus, partnerAllowed, depositAddressLooksRight, clampToBalance, type Intent, type RailContext, dailyLossHalt, dayStartEquity } from "../src/desk/rails.ts";
 import { resolveAsset, assetKey } from "../src/desk/assets.ts";
 
 const ETH = resolveAsset("ETH@robinhood")!;
 const USDG = resolveAsset("USDG@robinhood")!;
 // These rails tests exercise the checks, not the default list, so USDG (registered, not routable today) is allowed here explicitly.
-const rails = railsFromEnv({ OBS_TRADING: "on", OBS_MAX_SWAP_USD: "25", OBS_DAILY_SWAP_USD: "100", OBS_MAX_OPEN_ORDERS: "1", OBS_GAS_RESERVE_ETH: "0.002", OBS_TRADE_ASSETS: "ETH@eth,USDC@erc20,ETH@robinhood,USDG@robinhood,NVDA@robinhood" } as NodeJS.ProcessEnv);
+// The basis is on here so the fixture's ETH to USDG swap is the dollar leg, not a park; the ETH-base rule has its own test below.
+const rails = railsFromEnv({ OBS_TRADING: "on", OBS_BASIS: "on", OBS_MAX_SWAP_USD: "25", OBS_DAILY_SWAP_USD: "100", OBS_MAX_OPEN_ORDERS: "1", OBS_GAS_RESERVE_ETH: "0.002", OBS_TRADE_ASSETS: "ETH@eth,USDC@erc20,ETH@robinhood,USDG@robinhood,NVDA@robinhood" } as NodeJS.ProcessEnv);
 const ctx = (over: Partial<RailContext> = {}): RailContext => ({ rails, balances: { "ETH@robinhood": 0.05, "USDG@robinhood": 40 }, nativeOnFromChain: 0.05, openOrders: 0, sentTodayUsd: 0, ...over });
 const intent = (over: Partial<Intent> = {}): Intent => ({ from: ETH, to: USDG, amount: 0.005, usd: 12, ...over });
 
@@ -91,6 +92,24 @@ test("the daily loss brake halts entries, never exits, from the day's opening ma
   assert.equal(dayStartEquity(snaps, day), 1000, "the first mark inside the UTC day, not yesterday's last");
   assert.equal(dayStartEquity([{ at: day - 3600e3 * 20, equityUsd: 1100 }], day), null);
   const halted = ctx({ dayStartEquityUsd: 1000, equityUsd: 940, rails: r });
-  assert.match((checkRails(intent(), halted) as { ok: false; reason: string }).reason, /daily loss brake/);
+  // An entry from USDG into ETH: not a park, so the brake is the first rail it meets.
+  assert.match((checkRails(intent({ from: USDG, to: ETH, amount: 10, usd: 10 }), halted) as { ok: false; reason: string }).reason, /daily loss brake/);
   assert.deepEqual(checkRails(intent({ exit: true, from: USDG, to: ETH, amount: 10, usd: 10 }), { ...halted, balances: { "USDG@robinhood": 40, "ETH@robinhood": 0.05 } }), { ok: true }, "an exit still passes under the brake");
+});
+
+test("ETH is the base: a swap into USDG is refused as a park unless the basis needs it, and a launch-token exit comes back to ETH", () => {
+  const base = railsFromEnv({ OBS_TRADING: "on" } as NodeJS.ProcessEnv);
+  const c = (over: Partial<RailContext> = {}) => ctx({ rails: base, ...over });
+  assert.match((checkRails(intent(), c()) as { ok: false; reason: string }).reason, /base is ETH/);
+  assert.deepEqual(checkRails(intent({ from: USDG, to: ETH, amount: 10, usd: 10 }), c()), { ok: true }, "coming back to ETH is always fine");
+  assert.deepEqual(checkRails(intent({ exit: true }), c()), { ok: true }, "an exit is never a park");
+  assert.deepEqual(checkRails(intent(), c({ rails: railsFromEnv({ OBS_TRADING: "on", OBS_BASIS: "on" } as NodeJS.ProcessEnv) })), { ok: true }, "the basis trade needs the dollar leg");
+  assert.deepEqual(checkRails(intent(), c({ rails: railsFromEnv({ OBS_TRADING: "on", OBS_BASE: "usdg" } as NodeJS.ProcessEnv) })), { ok: true }, "the operator can choose another base");
+  const tok = { ...ETH, symbol: "TOK", code: "tok", kind: "erc20", contract: "0x" + "1".repeat(40), candidate: { poolId: "0x", feePips: 40000, tierPct: 4, tickSpacing: 400, usdgIs0: true, seenAt: 1 } } as unknown as typeof ETH;
+  const sold = baseLeg(tok, USDG, base);
+  assert.equal(sold.to.symbol, "ETH");
+  assert.match(sold.note ?? "", /sold back to ETH/);
+  assert.equal(baseLeg(tok, ETH, base).note, null, "already coming back to ETH");
+  assert.equal(baseLeg(ETH, USDG, base).note, null, "not an exit; the rails decide that one");
+  assert.equal(baseLeg(tok, USDG, rails).note, null, "with the basis on, USDG is a legitimate leg");
 });

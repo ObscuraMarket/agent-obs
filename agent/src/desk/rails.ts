@@ -46,6 +46,9 @@ export interface Rails {
   /** A swap must be argued for: this many evidence lines quoting observed figures, and this conviction. */
   minEvidence: number;
   minConviction: number;
+  /** ETH is the base: parking the book in USDG is refused and a launch-token exit comes back to ETH, unless the basis trade needs the dollar leg. */
+  ethBase: boolean;
+  basisOn: boolean;
 }
 
 // The mandate: this desk trades tokens on Robinhood Chain. ETH is the base
@@ -85,6 +88,8 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     maxEntriesPerDay: Number(env.OBS_MAX_ENTRIES_PER_DAY ?? 3),
     minEvidence: Number(env.OBS_MIN_EVIDENCE ?? 3),
     minConviction: Number(env.OBS_MIN_CONVICTION ?? 4),
+    ethBase: (env.OBS_BASE ?? "eth").toLowerCase() === "eth",
+    basisOn: (env.OBS_BASIS ?? "off") === "on",
   };
 }
 
@@ -128,11 +133,21 @@ export interface RailContext {
 }
 
 /** PURE: the whole decision, in order, first failure wins. */
+/** PURE: with ETH as the base, a sell of a launch token comes back to ETH whatever leg was named. The leg to use, and a note when it changed. */
+export function baseLeg(from: Asset, to: Asset, r: Rails): { to: Asset; note: string | null } {
+  if (r.ethBase && !r.basisOn && from.candidate && !to.candidate && to.symbol === "USDG") {
+    const eth = resolveAsset("ETH@robinhood");
+    if (eth) return { to: eth, note: "sold back to ETH, the book's base, rather than USDG" };
+  }
+  return { to, note: null };
+}
+
 export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: false; reason: string } {
   const r = c.rails;
   if (!r.tradingOn) return { ok: false, reason: "trading is off (OBS_TRADING)" };
   if (!(i.amount > 0)) return { ok: false, reason: "amount must be positive" };
   if (assetKey(i.from) === assetKey(i.to)) return { ok: false, reason: "from and to are the same asset" };
+  if (r.ethBase && !r.basisOn && !i.exit && i.to.symbol === "USDG") return { ok: false, reason: "the book's base is ETH; USDG is a hop on the way to a pool, not a place to park (OBS_BASE)" };
   for (const leg of [i.from, i.to]) if (!r.allowedChains.has(leg.chain)) return { ok: false, reason: `${assetKey(leg)} is on ${leg.chain}; this desk trades on Robinhood Chain only` };
   if (!i.exit) {
     const halt = dailyLossHalt(c.dayStartEquityUsd ?? null, c.equityUsd ?? null, r);

@@ -357,12 +357,17 @@ clears it. Paper is ignored while execution is armed. A swap decision names two 
 inferred, nothing outside the table. The mandate is Robinhood Chain only:
 a rail refuses any leg on another chain (`OBS_TRADE_CHAINS`, default
 `robinhood`), in public, before the allowlist is even consulted. On that
-chain the desk trades what Obscura routes there, today `ETH@robinhood` and
-`NVDA@robinhood` (the one tokenized stock Obscura lists on the network;
-CASHCAT and PIPEDOG are listed too and deliberately left out).
-`USDG@robinhood` is registered and read but off the default allowlist:
-probed 2026-09-02, Obscura quoted no USDG leg in any direction, while every
-ETH and NVDA leg on the network quoted through Obscura's own pool route.
+chain ETH is the base (`OBS_BASE`, default `eth`): every buy is paid from
+ETH and every sell comes back to ETH. `USDG@robinhood` is on the allowlist
+as the hop to the USDG-quoted pools and as the dollar leg of the basis
+trade, and nothing more: a swap that would park the book in USDG is refused
+by the rails unless the basis is on, and a launch-token exit the model
+names into USDG is redirected to ETH with the change stated. `NVDA@robinhood`
+(the one tokenized stock Obscura lists on the network; CASHCAT and PIPEDOG
+are listed too and deliberately left out) joins the allowlist only with
+`OBS_BASIS=on`. Obscura itself, probed 2026-09-02, quoted no USDG leg in
+any direction while every ETH and NVDA leg quoted through its own pool
+route, which is one reason the pool lane is the default venue.
 The registry also carries the Ethereum assets Obscura routes (`ETH@eth`,
 `WBTC@erc20`, `LINK@erc20`, `UNI@erc20`, `AAVE@erc20`, `USDC@erc20`,
 `USDT@erc20`, `DAI@erc20`, each verified on chain): they are read and
