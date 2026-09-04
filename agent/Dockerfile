@@ -17,7 +17,7 @@ ENV OBS_DATA_DIR=/app/data \
     OBS_WALLET_DIR=/wallet \
     OBS_DASHBOARD_PORT=4671 \
     OBS_DASHBOARD_ORIGINS=* \
-    OBS_DASHBOARD_HOST=0.0.0.0
+    OBS_DASHBOARD_HOST=::
 EXPOSE 4671
 HEALTHCHECK --interval=60s --timeout=5s --start-period=30s CMD wget -qO- http://127.0.0.1:4671/api/obs/health >/dev/null || exit 1
 ENTRYPOINT ["bash", "scripts/entrypoint.sh"]
