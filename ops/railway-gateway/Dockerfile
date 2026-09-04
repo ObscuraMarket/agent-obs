@@ -11,6 +11,6 @@ ARG OPENHERMIT_REF=main
 RUN git clone --depth 1 --branch "$OPENHERMIT_REF" https://github.com/HCF-STUDIOS/openhermit.git . \
   && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund)
 ENV NODE_ENV=development
-ENV HOST=::
+ENV GATEWAY_HOST=::
 EXPOSE 4000
 CMD ["node", "-C", "development", "--import", "tsx", "apps/gateway/src/index.ts"]
