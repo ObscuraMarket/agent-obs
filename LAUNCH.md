@@ -36,10 +36,16 @@ domain).
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.obscura.obsawake.plist
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.obscura.obstunnel.plist
    ```
-   The tunnel's public URL is in `~/Library/Logs/obs-tunnel.log` (grep
-   `trycloudflare.com`). It changes if the tunnel restarts; the site team
-   should replace it with a named tunnel on their domain or the hosted
-   runner (DEPLOY.md) as soon as they can.
+   The clean bridge is a named tunnel on the site's own domain: the site
+   team creates a tunnel in their Cloudflare zone (Zero Trust, Networks,
+   Tunnels), routes a hostname such as `obs-api.obscura.market` to
+   `http://127.0.0.1:4671`, and hands over the token; put it in `agent/.env`
+   as `OBS_TUNNEL_TOKEN` and restart the service
+   (`launchctl kickstart -k gui/$(id -u)/com.obscura.obstunnel`). Without a
+   token the service opens a quick tunnel with a random hostname, printed
+   to `~/Library/Logs/obs-tunnel.log`; it changes on restart, so it is for a
+   test, not for the page. Either way, the hosted runner (DEPLOY.md) is the
+   destination once the site team has a box.
 2. **A provider RPC** in `agent/.env` (`ROBINHOOD_RPC_URL`). The public RPC
    works, paced, but it is Cloudflare's to throttle; a free provider key
    removes "not measured" cycles on a busy day.
