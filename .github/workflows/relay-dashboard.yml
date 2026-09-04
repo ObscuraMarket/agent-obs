@@ -8,6 +8,7 @@
 #   variable RELAY_BASE   branch to open the pull request against (default main)
 #   variable RELAY_PATH   the site's Angular app folder that holds pages/ and service/ (default src/app)
 #   variable RELAY_DOCS   folder in the site repo for the contract and the reference page (default docs/obs)
+#   variable RELAY_ASSETS the site's assets folder, which receives the page's images and video (default src/assets)
 #   secret   RELAY_TOKEN  a token with Contents and Pull requests write on the site repo
 # Until RELAY_REPO is set the job skips itself. Environments, routing and
 # the app module are the site's own and are never relayed.
@@ -63,6 +64,13 @@ jobs:
           cp dashboard/INTEGRATION.md "$docs/INTEGRATION.md"
           cp dashboard/index.html "$docs/reference.html"
           echo "relayed from ${{ github.repository }}@${{ github.sha }} on $(date -u +%FT%TZ)" > "$docs/RELAY.txt"
+          # The assets the Agent page references, added beside the site's own (never deleted).
+          assets="dashboard/angular/src/assets"
+          site_assets="site/${{ vars.RELAY_ASSETS || 'src/assets' }}"
+          mkdir -p "$site_assets/images/tokenized-stocks" "$site_assets/video"
+          for f in bnb-icon.png btc-icon.png sol-icon.png obs-icon.png usdg.png maskspin-poster.jpg; do cp "$assets/images/$f" "$site_assets/images/$f"; done
+          rsync -a "$assets/images/tokenized-stocks/" "$site_assets/images/tokenized-stocks/"
+          cp "$assets/video/maskspin.mp4" "$site_assets/video/maskspin.mp4"
 
       - name: Open or update the pull request on the site repo
         if: steps.cfg.outputs.ok == 'true'
@@ -79,4 +87,4 @@ jobs:
 
             What changed on our side: ${{ github.event.head_commit.message }}
 
-            Files: `pages/agent/`, `service/obs-desk.service.ts`, `docs/obs/INTEGRATION.md` (the API contract), `docs/obs/reference.html` (the dependency-free reference page). Environments, routing and the app module are yours and are not touched. Fields in `/api/obs/*` are only ever added, never renamed or removed.
+            Files: `pages/agent/`, `service/obs-desk.service.ts`, the page's images and video under `src/assets/` (added, never removed), `docs/obs/INTEGRATION.md` (the API contract), `docs/obs/reference.html` (the dependency-free reference page). Environments, routing and the app module are yours and are not touched. Fields in `/api/obs/*` are only ever added, never renamed or removed.
