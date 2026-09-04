@@ -571,7 +571,8 @@
       if (g.ratio && g.ratio.ratioNow != null) { setv("g-ratio", g.ratio.ratioNow.toFixed(3), g.ratio.deviationPct != null ? dir(g.ratio.deviationPct) : ""); el("g-ratio-s").textContent = g.ratio.deviationPct != null ? pct(g.ratio.deviationPct) + " vs 7-day average" : "no 7-day average yet"; }
       var c = g.candidates || [], tradable = c.filter(function (x) { return x.grade; });
       setv("g-cand", tradable.length + " / " + c.length, tradable.some(function (x) { return x.grade === "A" || x.grade === "B"; }) ? "up" : "");
-      el("g-cand-s").textContent = c.length ? c.map(function (x) { return x.symbol + " " + (x.grade ? "grade " + x.grade : "below bar"); }).join(" · ") : "no candidates in the window";
+      var e = g.early || [];
+      el("g-cand-s").textContent = (c.length ? c.map(function (x) { return x.symbol + " " + (x.grade ? "grade " + x.grade : "below bar"); }).join(" · ") : "no candidates") + (e.length ? " · early: " + e.slice(0, 3).map(function (x) { return x.symbol + (x.ignitedAfterMin != null ? " ignited +" + x.ignitedAfterMin + "m" : " " + x.ageMin + "m"); }).join(", ") : "");
     }
     function portfolio(p) {
       var s = p.snapshot;

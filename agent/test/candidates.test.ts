@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseFeed, deriveTickSpacing, poolIdFor, exitSignal, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv } from "../src/desk/candidates.ts";
+import { parseFeed, deriveTickSpacing, poolIdFor, exitSignal, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs } from "../src/desk/candidates.ts";
 import { checkCandidate, railsFromEnv, checkRails, type Intent } from "../src/desk/rails.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 import { routeFor, costFloorPct } from "../src/desk/onchain.ts";
@@ -29,14 +29,14 @@ const feed = [
 ].map((r) => (typeof r === "string" ? r : JSON.stringify(r))).join("\n");
 
 test("the feed's tail parses into gated, recent, sane-tier candidates with their pools, plus hourly trails", () => {
-  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true });
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
   assert.deepEqual(snap.candidates.map((c) => c.symbol), ["BLOKKS"], "UPS failed the gate, OLD is too old");
   const c = snap.candidates[0];
   assert.equal(c.feePips, 40000);
   assert.equal(c.tickSpacing, 400);
   assert.equal(c.usdgIs0, USDG.toLowerCase() < BLOKKS.toLowerCase());
   assert.equal(snap.hourly[BLOKKS_POOL].map((h) => h.usd).join(","), "2605,956,263");
-  const loose = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: false });
+  const loose = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: false, earlyMaxAgeMs: 90 * 60e3 });
   assert.deepEqual(loose.candidates.map((c) => c.symbol), ["BLOKKS", "UPS"], "gate off admits the ungated one, still sorted by volume");
   const a = candidateAsset(c);
   assert.equal(a.chain, "robinhood");
@@ -51,7 +51,7 @@ test("the feed's tail parses into gated, recent, sane-tier candidates with their
 });
 
 test("a candidate routes through its own pool and back to ETH", () => {
-  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true });
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
   const a = candidateAsset(snap.candidates[0]);
   const eth = resolveAsset("ETH@robinhood")!;
   const buy = routeFor(eth, a)!;
@@ -73,7 +73,7 @@ test("exit signals: time stop, floor, and volume rolling over two hours running"
 
 test("candidate rails: probe first, proven sizes up, blacklisted never, one at a time, exits skip the caps", () => {
   const rails = railsFromEnv({ OBS_TRADING: "on", OBS_PROBE_USD: "5", OBS_MAX_CANDIDATES: "1" } as NodeJS.ProcessEnv);
-  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true });
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
   const tok = candidateAsset(snap.candidates[0]);
   const eth = resolveAsset("ETH@robinhood")!;
   const buy: Intent = { from: eth, to: tok, amount: 0.01, usd: 24 };
@@ -91,7 +91,7 @@ test("candidate rails: probe first, proven sizes up, blacklisted never, one at a
 });
 
 test("the cost floor is the ordinary allowance for the majors and the pool's own tier on top for a launch token", () => {
-  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true });
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
   const tok = candidateAsset(snap.candidates[0]);
   const eth = resolveAsset("ETH@robinhood")!;
   assert.ok(Math.abs(costFloorPct({ from: eth, to: resolveAsset("NVDA@robinhood")!, amount: 1, usd: 1 }, 0.97) - 3) < 1e-9);
@@ -101,7 +101,7 @@ test("the cost floor is the ordinary allowance for the majors and the pool's own
 
 test("the bar: grade A clears every threshold and earns size, B ordinary size, C a probe, and rolling over is below the bar", () => {
   const r = gradeRulesFromEnv({} as NodeJS.ProcessEnv);
-  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true });
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
   const base = snap.candidates[0];
   const holding = [{ hour: 1, at: 1, usd: 300000, px: 0.001, senders: 50 }, { hour: 2, at: 2, usd: 280000, px: 0.00098, senders: 60 }];
   const strong = { ...base, volUsd: 400000, senders: 60, movePct: 12, tierPct: 3, hour: 2 };
@@ -130,7 +130,7 @@ test("the bar: grade A clears every threshold and earns size, B ordinary size, C
 
 test("grade caps size the position, the probe comes first, and scaling into a proven token is a continuation", () => {
   const rails = railsFromEnv({ OBS_TRADING: "on", OBS_PROBE_USD: "5" } as NodeJS.ProcessEnv);
-  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true });
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
   const tok = candidateAsset(snap.candidates[0]);
   const eth = resolveAsset("ETH@robinhood")!;
   const buy: Intent = { from: eth, to: tok, amount: 0.05, usd: 120 };
@@ -144,4 +144,32 @@ test("grade caps size the position, the probe comes first, and scaling into a pr
   assert.deepEqual(checkRails({ from: eth, to: tok, amount: 0.03, usd: 70, capUsd: 75, addOn: true }, ctx), { ok: true }, "a $70 add-on passes under a $75 grade cap, and skips the spacing rule");
   assert.match((checkRails({ from: eth, to: tok, amount: 0.03, usd: 70, capUsd: 75 }, ctx) as { reason: string }).reason, /at least 2h apart/, "a fresh entry is still spaced");
   assert.match((checkRails({ from: eth, to: tok, amount: 0.04, usd: 96, capUsd: 75, addOn: true }, ctx) as { reason: string }).reason, /grade cap of \$75/);
+});
+
+test("early launches: seconds and milliseconds both read as time, ignition and a side pool make a probe candidate, the rest are watched", () => {
+  assert.equal(toMs(1788495175.169), 1788495175169);
+  assert.equal(toMs(1788495175169), 1788495175169);
+  assert.equal(toMs("nope"), 0);
+  const t0 = now - 20 * 60e3;
+  const feedEarly = [
+    { kind: "launch", token: "0xaaa0000000000000000000000000000000000001", source: "pons-v2", ts: t0 / 1000, symbol: "DATA", gate: { ok: true, standard: "PonsV2LauncherToken", reason: "" }, creatorTaxBps: 100, curvePoolId: "0xcurve", ignitionTs: null, firstSwapTs: (t0 + 60e3) / 1000 },
+    { kind: "ignition", token: "0xaaa0000000000000000000000000000000000001", symbol: "DATA", launchTs: t0 / 1000, ignitionTs: (t0 + 8 * 60e3) / 1000, minutesAfterLaunch: 8 },
+    { kind: "side-pool", id: BLOKKS_POOL, token: "0xaaa0000000000000000000000000000000000001", fee: 40000, tickSpacing: 400, launch: "pons-v2", ts: t0 + 9 * 60e3 },
+    { kind: "launch", token: "0xbbb0000000000000000000000000000000000002", source: "pons-v2", ts: (now - 5 * 60e3) / 1000, symbol: "SC69", gate: { ok: true, standard: "PonsV2LauncherToken" }, creatorTaxBps: 100, ignitionTs: null, firstSwapTs: null },
+    { kind: "launch", token: "0xccc0000000000000000000000000000000000003", source: "doppler", ts: (now - 3 * 3600e3) / 1000, symbol: "OLDIE", gate: { ok: true }, creatorTaxBps: 0 },
+    { kind: "launch", token: "0xddd0000000000000000000000000000000000004", source: "pons-v2", ts: (now - 10 * 60e3) / 1000, symbol: "TAXY", gate: { ok: true }, creatorTaxBps: 500, ignitionTs: (now - 5 * 60e3) / 1000 },
+    { kind: "side-pool", id: "0x" + "9".repeat(64), token: "0xddd0000000000000000000000000000000000004", fee: 30000, tickSpacing: 300, launch: "pons-v2", ts: now - 4 * 60e3 },
+  ].map((r) => JSON.stringify(r)).join("\n");
+  const snap = parseFeed(feedEarly, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
+  assert.deepEqual(snap.early.map((e) => e.symbol), ["SC69", "TAXY", "DATA"], "newest first, the three-hour-old one is out of the window");
+  const data = snap.early.find((e) => e.symbol === "DATA")!;
+  assert.equal(data.ignitedAfterMin, 8);
+  assert.equal(data.sidePools[0].tierPct, 4);
+  assert.equal(data.standard, "PonsV2LauncherToken");
+  const c = earlyAsCandidate(data, now)!;
+  assert.equal(c.symbol, "DATA");
+  assert.equal(c.poolId, BLOKKS_POOL);
+  assert.equal(c.hour, 0);
+  assert.equal(earlyAsCandidate(snap.early.find((e) => e.symbol === "SC69")!, now), null, "not ignited, no side pool: watched, not tradable");
+  assert.equal(earlyAsCandidate(snap.early.find((e) => e.symbol === "TAXY")!, now), null, "a 5% creator tax is never a probe");
 });

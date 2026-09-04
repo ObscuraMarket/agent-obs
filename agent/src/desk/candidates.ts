@@ -46,8 +46,26 @@ export interface HourlyStat {
   px: number | null;
   senders: number;
 }
+/** A launch the watcher saw start, from minute one: the curve, the gate, the tax, ignition, and any hookless side pool since. */
+export interface EarlyLaunch {
+  at: number;
+  token: `0x${string}`;
+  symbol: string;
+  source: string;
+  gateOk: boolean;
+  standard: string | null;
+  creatorTaxBps: number | null;
+  curvePoolId: string | null;
+  firstSwapAt: number | null;
+  /** Minutes after launch the watcher called ignition, or null if it has not. */
+  ignitedAfterMin: number | null;
+  /** Hookless USDG side pools seen for the token, cheapest tier first. */
+  sidePools: Array<{ poolId: `0x${string}`; feePips: number; tierPct: number; tickSpacing: number }>;
+}
 export interface FeedSnapshot {
   candidates: Candidate[];
+  /** Launches inside the early window, newest first. */
+  early: EarlyLaunch[];
   /** Per pool id, the hourly rows in order. */
   hourly: Record<string, HourlyStat[]>;
   readAt: number;
@@ -57,7 +75,15 @@ export interface FeedOptions {
   maxAgeMs: number;
   maxTierPct: number;
   requireGate: boolean;
+  /** How long after launch a launch still counts as early. */
+  earlyMaxAgeMs: number;
 }
+/** PURE: the feed writes some timestamps in seconds and some in milliseconds; this reads both as milliseconds. */
+export const toMs = (v: unknown): number => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n < 1e12 ? n * 1000 : n;
+};
 
 /** PURE: the v4 pool id for a key, currencies sorted the way the manager sorts them. */
 export function poolIdFor(a: `0x${string}`, b: `0x${string}`, feePips: number, tickSpacing: number, hooks: `0x${string}` = ZERO): `0x${string}` {
@@ -75,8 +101,11 @@ const usdgIsToken0 = (token: string, usdg = USDG_CONTRACT) => usdg.toLowerCase()
 /** PURE: the feed's tail parsed into current candidates and per-pool hourly stats. Bad lines are skipped. */
 export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<FeedSnapshot, "readAt" | "path"> {
   const sidePools = new Map<string, { fee: number; tickSpacing: number }>();
+  const sidePoolsByToken = new Map<string, Array<{ poolId: `0x${string}`; feePips: number; tickSpacing: number }>>();
   const hourly: Record<string, HourlyStat[]> = {};
   const byToken = new Map<string, Candidate>();
+  const launches = new Map<string, EarlyLaunch>();
+  const ignitions = new Map<string, number>();
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     let r: Record<string, unknown>;
@@ -89,6 +118,31 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
     const id = typeof r.id === "string" ? r.id.toLowerCase() : "";
     if (kind === "side-pool" && id && Number.isFinite(Number(r.fee)) && Number.isFinite(Number(r.tickSpacing))) {
       sidePools.set(id, { fee: Number(r.fee), tickSpacing: Number(r.tickSpacing) });
+      if (typeof r.token === "string") {
+        const list = sidePoolsByToken.get(r.token.toLowerCase()) ?? [];
+        if (!list.some((x) => x.poolId === id)) list.push({ poolId: id as `0x${string}`, feePips: Number(r.fee), tickSpacing: Number(r.tickSpacing) });
+        sidePoolsByToken.set(r.token.toLowerCase(), list);
+      }
+    } else if (kind === "launch" && typeof r.token === "string") {
+      const at = toMs(r.ts);
+      if (!at) continue;
+      const gate = (r.gate ?? {}) as Record<string, unknown>;
+      launches.set(r.token.toLowerCase(), {
+        at,
+        token: r.token.toLowerCase() as `0x${string}`,
+        symbol: String(r.symbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12),
+        source: String(r.source ?? r.launchSource ?? ""),
+        gateOk: gate.ok === true || r.gateOk === true,
+        standard: typeof gate.standard === "string" ? gate.standard : null,
+        creatorTaxBps: Number.isFinite(Number(r.creatorTaxBps)) && r.creatorTaxBps != null ? Number(r.creatorTaxBps) : null,
+        curvePoolId: typeof r.curvePoolId === "string" ? r.curvePoolId : null,
+        firstSwapAt: toMs(r.firstSwapTs) || null,
+        ignitedAfterMin: toMs(r.ignitionTs) ? Math.max(0, Math.round((toMs(r.ignitionTs) - at) / 60e3)) : null,
+        sidePools: [],
+      });
+    } else if (kind === "ignition" && typeof r.token === "string") {
+      const m = Number(r.minutesAfterLaunch);
+      ignitions.set(r.token.toLowerCase(), Number.isFinite(m) ? m : 0);
     } else if (kind === "hourly" && id) {
       const lh = (r.lastHour ?? {}) as Record<string, unknown>;
       const px = Number(lh.px);
@@ -134,11 +188,32 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
     candidates.push(c);
   }
   candidates.sort((a, b) => b.volUsd - a.volUsd);
-  return { candidates, hourly };
+  const early: EarlyLaunch[] = [];
+  for (const l of launches.values()) {
+    if (now - l.at > opts.earlyMaxAgeMs || now < l.at) continue;
+    const ign = ignitions.get(l.token);
+    if (ign != null && l.ignitedAfterMin == null) l.ignitedAfterMin = ign;
+    l.sidePools = (sidePoolsByToken.get(l.token) ?? [])
+      .map((sp) => ({ ...sp, tierPct: sp.feePips / 10000 }))
+      .filter((sp) => sp.tierPct > 0 && sp.tierPct <= opts.maxTierPct)
+      .sort((a, b) => a.tierPct - b.tierPct);
+    if (l.symbol && !ASSETS[`${l.symbol}@robinhood`]) early.push(l);
+  }
+  early.sort((a, b) => b.at - a.at);
+  return { candidates, early, hourly };
+}
+
+/** PURE: an early launch as a tradable candidate row, when it has ignited and a hookless side pool exists; null otherwise. */
+export function earlyAsCandidate(l: EarlyLaunch, now: number, requireIgnition = true): Candidate | null {
+  if (!l.gateOk || !l.sidePools.length) return null;
+  if (requireIgnition && l.ignitedAfterMin == null) return null;
+  if (l.creatorTaxBps != null && l.creatorTaxBps > 100) return null;
+  const sp = l.sidePools[0];
+  return { at: now, poolId: sp.poolId, token: l.token, symbol: l.symbol, tierPct: sp.tierPct, feePips: sp.feePips, tickSpacing: sp.tickSpacing, gateOk: true, source: l.source, hour: 0, volUsd: 0, movePct: 0, senders: 0, swaps: 0, px: null, usdgIs0: usdgIsToken0(l.token) };
 }
 
 export function feedOptions(env: NodeJS.ProcessEnv = process.env): FeedOptions {
-  return { maxAgeMs: Number(env.OBS_CANDIDATE_MAX_AGE_H ?? 6) * 3600e3, maxTierPct: Number(env.OBS_CANDIDATE_MAX_TIER_PCT ?? 5), requireGate: (env.OBS_CANDIDATE_REQUIRE_GATE ?? "on") !== "off" };
+  return { maxAgeMs: Number(env.OBS_CANDIDATE_MAX_AGE_H ?? 6) * 3600e3, maxTierPct: Number(env.OBS_CANDIDATE_MAX_TIER_PCT ?? 5), requireGate: (env.OBS_CANDIDATE_REQUIRE_GATE ?? "on") !== "off", earlyMaxAgeMs: Number(env.OBS_EARLY_MAX_AGE_MIN ?? 90) * 60e3 };
 }
 
 /** The last few megabytes of the feed file; the feed is append-only so the tail is the present. */
@@ -161,7 +236,7 @@ let cache: { at: number; snap: FeedSnapshot } | null = null;
 export function readFeed(now = Date.now(), env: NodeJS.ProcessEnv = process.env): FeedSnapshot {
   if (cache && now - cache.at < 60_000) return cache.snap;
   const path = env.OBS_CANDIDATE_FEED?.trim() || null;
-  let snap: FeedSnapshot = { candidates: [], hourly: {}, readAt: now, path };
+  let snap: FeedSnapshot = { candidates: [], early: [], hourly: {}, readAt: now, path };
   if (path && existsSync(path)) {
     try {
       snap = { ...parseFeed(tailOf(path), now, feedOptions(env)), readAt: now, path };
@@ -240,6 +315,10 @@ function tokenAsset(t: DynamicToken): Asset {
 export function dynamicAssets(feed: FeedSnapshot = readFeed()): Record<string, Asset> {
   const out: Record<string, Asset> = {};
   for (const t of readTokens()) out[`${t.symbol}@robinhood`] = tokenAsset(t);
+  for (const l of feed.early) {
+    const c = earlyAsCandidate(l, feed.readAt, (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off");
+    if (c) out[`${c.symbol}@robinhood`] = candidateAsset(c);
+  }
   for (const c of feed.candidates) out[`${c.symbol}@robinhood`] = candidateAsset(c);
   for (const k of Object.keys(out)) if (ASSETS[k]) delete out[k];
   return out;

@@ -412,7 +412,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           const g = gradeCandidate(c, feed.hourly[c.poolId.toLowerCase()] ?? [], depth, rules);
           candidates.push({ symbol: c.symbol, hour: c.hour, volUsd: c.volUsd, movePct: c.movePct, senders: c.senders, tierPct: c.tierPct, grade: g.grade, capUsd: g.capUsd, why: g.why, depthUsd: g.depthUsd, trend: g.trend });
         }
-        json(res, 200, { basis, reference: { printStatus: ref.printStatus, printAt: ref.printAt, perpTradesDay: ref.perpTradesDay, perpChangeDayPct: ref.perpChangeDayPct }, ratio: ratioStats(readPrices(), "ETH", "NVDA", now), session: usSession(now), candidates, market: r.market ?? null, at: now });
+        const early = feed.early.slice(0, 6).map((l) => ({ symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null }));
+        json(res, 200, { basis, reference: { printStatus: ref.printStatus, printAt: ref.printAt, perpTradesDay: ref.perpTradesDay, perpChangeDayPct: ref.perpChangeDayPct }, ratio: ratioStats(readPrices(), "ETH", "NVDA", now), session: usSession(now), candidates, early, market: r.market ?? null, at: now });
       })
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "signals unavailable" }));
     return;

@@ -205,6 +205,20 @@ the position falls through the floor (default 40%), or at the time stop
 (default 8 hours). Exits skip the caps: an exit is never blocked. What the
 desk learns about each token lives in `data/obs-tokens.json`.
 
+**Early launches.** The desk also watches launches from minute one, from
+the feed's `launch`, `ignition` and `side-pool` rows (timestamps there are
+in seconds where the rest are milliseconds; both are read): the gate and
+standard, the creator tax, the curve, the first swap, ignition (the
+watcher's call that the curve has real volume and buyers inside its first
+minutes) and any hookless USDG side pool since. Every launch inside the
+window (`OBS_EARLY_MAX_AGE_MIN`, default 90) is named in the observation
+with its state. It becomes a PROBE candidate only once it has ignited
+(`OBS_EARLY_REQUIRE_IGNITION`) and a side pool at an acceptable tier
+exists, with the gate passed and a creator tax of 1% or less; the probe is
+grade C size, the sell is proven right after, and it scales only if the
+token later clears the bar. Minute-one buying loses on average across the
+tape, so ignition is the earliest signal the desk will probe.
+
 **The bar.** Not every candidate is worth a probe and few are worth size,
 so each is graded in code from its row, its hourly trail and its pool's
 depth read live (`gradeCandidate`, knobs `OBS_GRADE_*`). GRADE A clears

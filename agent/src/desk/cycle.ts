@@ -16,7 +16,7 @@ import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity,
 import { assetKey } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates } from "./onchain.ts";
-import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset } from "./candidates.ts";
+import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate } from "./candidates.ts";
 import { checkCandidate, clampToBalance } from "./rails.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute, PAPER_BOOK } from "./paper.ts";
 import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCheck, basisSignal } from "./analysis.ts";
@@ -112,6 +112,14 @@ for (const cnd of feed.candidates.slice(0, 4)) {
   graded.set(cnd.symbol, g);
   candidates.push({ symbol: cnd.symbol, hour: cnd.hour, volUsd: cnd.volUsd, movePct: cnd.movePct, senders: cnd.senders, tierPct: cnd.tierPct, ageH: (now - cnd.at) / 3600e3, trail: trailOf(cnd.poolId), grade: g.grade, capUsd: g.capUsd, why: g.why, depthUsd: g.depthUsd });
 }
+// Early launches: minute one onward. Tradable as a probe once ignited with a hookless side pool; watched otherwise.
+const requireIgnition = (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off";
+const early = feed.early.slice(0, 6).map((l) => {
+  const asCand = earlyAsCandidate(l, now, requireIgnition);
+  const why = !l.gateOk ? "gate failed, never" : l.creatorTaxBps != null && l.creatorTaxBps > 100 ? `creator tax ${(l.creatorTaxBps / 100).toFixed(1)}%, too high` : !l.sidePools.length ? "no hookless side pool yet, watch" : l.ignitedAfterMin == null && requireIgnition ? "not ignited yet, watch" : "";
+  if (asCand && !graded.has(asCand.symbol)) graded.set(asCand.symbol, { grade: "C", capUsd: gradeRules.capUsd.C, why: `ignited launch at +${l.ignitedAfterMin ?? 0} min with a side pool, probe only`, depthUsd: null, drawdownPct: null, trend: "unknown" });
+  return { symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, standard: l.standard, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null, tradable: !!asCand, why };
+});
 const dyn = dynamicAssets(feed);
 const heldDyn = Object.values(dyn).filter((a) => (chain?.bySymbol[a.symbol] ?? 0) > 0);
 const pos = positions(book.flows, bookTrades, chain?.bySymbol ?? mark.holdings, prices).positions;
@@ -144,11 +152,11 @@ if (PAPER && chain && heldDyn.length) {
   const exits = await exitCandidates(chain.bySymbol, prices, ctxP, feed, now, (i, c, t) => paperExecute(i, c, real?.bySymbol ?? {}, t), paperTrades);
   for (const t of exits) console.log(`[desk] paper exit ${t.id}: ${t.note}`);
 }
-const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, heldCandidates, paper: PAPER, market, session, basis, reference: { perpTradesDay: ref.perpTradesDay, printStatus: ref.printStatus, printAt: ref.printAt } });
+const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, early: feed.path ? early : undefined, heldCandidates, paper: PAPER, market, session, basis, reference: { perpTradesDay: ref.perpTradesDay, printStatus: ref.printStatus, printAt: ref.printAt } });
 console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  - " + l).join("\n")}`);
 
 // The persona thinks.
-const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED || PAPER, [...railsFromEnv().allowedAssets], VENUE, candidates.map((cnd) => `${cnd.symbol}@robinhood`), PAPER);
+const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED || PAPER, [...railsFromEnv().allowedAssets], VENUE, [...candidates.map((cnd) => `${cnd.symbol}@robinhood`), ...early.filter((e) => e.tradable).map((e) => `${e.symbol}@robinhood`)], PAPER);
 const sessionId = "desk-cycle";
 await gw.agent(AGENT_ID).openSession({ sessionId, source: { kind: "api", interactive: true, type: "direct" } }).catch(() => {});
 const resp = await gw.agent(AGENT_ID).postMessageSync(sessionId, { text: prompt }, { timeout: 90_000 });
