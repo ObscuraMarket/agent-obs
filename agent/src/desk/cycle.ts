@@ -287,7 +287,7 @@ for (const [sym, a] of inPlay) {
     tapes.push(holdersLine(hr));
     // The wallets' own records: their trades here priced by the tape, kept across tokens, read against the top wallets.
     if (transfers.length && rows.length) {
-      recordWalletTrades(walletTrades(transfers, rows, infraSet, sym, a.contract ?? "", quoteUsd ?? 0));
+      recordWalletTrades(walletTrades(transfers, rows, new Set(hr.infra), sym, a.contract ?? "", quoteUsd ?? 0));
       tapes.push(walletsLine(sym, top, walletRecords(readWalletTrades()), (a.contract ?? "").toLowerCase()));
     }
   } catch (e) {

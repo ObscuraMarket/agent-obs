@@ -77,6 +77,8 @@ export interface HolderRead {
   bundlePct: number | null;
   /** Fresh wallets among the top ten, or null when their transaction counts were not read. */
   freshTop10: number | null;
+  /** Every address the read set aside as infrastructure, the busiest sender included. */
+  infra: string[];
   ok: boolean;
   why: string;
 }
@@ -165,7 +167,7 @@ export function balancesFrom(rows: TransferRow[]): Map<string, number> {
  */
 export function holderRead(rows: TransferRow[], symbol: string, token: string, now: number, r: HolderRules, infrastructure: string[] = [], txCounts: Map<string, number> | null = null): HolderRead {
   const infra = new Set([ZERO, DEAD, token.toLowerCase(), ...infrastructure.map((a) => a.toLowerCase())]);
-  const base: HolderRead = { symbol, token, at: now, transfers: rows.length, wallets: 0, top1Pct: null, top10Pct: null, earlyBuyers: 0, earlySameBlock: 0, earlySameSize: 0, bundlePct: null, freshTop10: null, ok: false, why: "" };
+  const base: HolderRead = { symbol, token, at: now, transfers: rows.length, wallets: 0, top1Pct: null, top10Pct: null, earlyBuyers: 0, earlySameBlock: 0, earlySameSize: 0, bundlePct: null, freshTop10: null, infra: [...infra], ok: false, why: "" };
   if (!rows.length) return { ...base, why: "no transfers read" };
   // The busiest sender is the pool or the curve: buys come out of it.
   const sent = new Map<string, number>();
@@ -207,7 +209,7 @@ export function holderRead(rows: TransferRow[], symbol: string, token: string, n
   if (top10Pct != null && top10Pct > r.maxTop10Pct) fails.push(`the top ten hold ${top10Pct.toFixed(0)}% (${r.maxTop10Pct}% allowed)`);
   if (bundlePct != null && earlyBuyers >= 5 && bundlePct > r.maxBundlePct) fails.push(`${bundlePct.toFixed(0)}% of the first buyers look bundled (${r.maxBundlePct}% allowed)`);
   if (freshTop10 != null && freshTop10 > r.maxFreshTop10) fails.push(`${freshTop10} of the top ten wallets are fresh (${r.maxFreshTop10} allowed)`);
-  const read: HolderRead = { ...base, wallets, top1Pct, top10Pct, earlyBuyers, earlySameBlock, earlySameSize, bundlePct, freshTop10 };
+  const read: HolderRead = { ...base, wallets, top1Pct, top10Pct, earlyBuyers, earlySameBlock, earlySameSize, bundlePct, freshTop10, infra: [...infra] };
   if (fails.length) return { ...read, ok: false, why: fails.join(", ") };
   return { ...read, ok: true, why: `${wallets} wallets, largest ${top1Pct?.toFixed(0) ?? "?"}%, top ten ${top10Pct?.toFixed(0) ?? "?"}%, first ${r.earlySec} s ${earlyBuyers} buyers${bundlePct != null ? ` (${bundlePct.toFixed(0)}% bundled)` : ""}${freshTop10 != null ? `, ${freshTop10} of the top ten fresh` : ""}` };
 }
