@@ -228,10 +228,12 @@ once) and a trailing stop off the peak since entry once the trade is armed
 from the desk's own price samples, which now include every held launch
 token. Because launches live for hours, a second timer, the fast tick
 (`com.obscura.obstick`, every 5 minutes, `scripts/_obs-tick.sh`), runs a
-cycle that spends a model call only when a token is in play, an ignited
-launch inside the window or a held launch token, and exits quietly
-otherwise; forced exits on held tokens run on every tick when armed. The
-30-minute desk cycle is unchanged. The persona and the prompt now lead
+cycle that spends a model call only when a token is in play: a held launch
+token, or an ignited launch inside the window whose tape gives an entry (a
+held pullback or a base, see the entry read below); otherwise it exits
+quietly, naming the launches it skipped and their entry state. Forced
+exits on held tokens run on every tick when armed. The 30-minute desk
+cycle is unchanged and still reads everything. The persona and the prompt now lead
 with the tokens: the launches and candidates are the job, the basis on the
 tokenized stock a side trade.
 

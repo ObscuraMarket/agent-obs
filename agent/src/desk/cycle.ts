@@ -72,27 +72,38 @@ if (ARMED && readTokens().length) {
 }
 
 // The fast tick (OBS_TICK=fast, a timer every few minutes): it only spends a
-// model call when a token is in play, an ignited launch inside the window or
-// a held launch token; otherwise it leaves quietly. Forced exits above ran
-// regardless. The 30-minute desk cycle is unchanged.
+// model call when a token is in play: a held launch token, or an ignited
+// launch inside the window whose tape gives an entry (a held pullback or a
+// base, never the top of a run). Otherwise it leaves quietly, saying which
+// launches it skipped and why. Forced exits above ran regardless. The
+// 30-minute desk cycle is unchanged and still reads everything.
 if (process.env.OBS_TICK === "fast" && !DRY) {
   const feedNow = readFeed(now);
   const wantIgnition = (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off";
+  const tickRules = entryRulesFromEnv();
   let probeable: string | null = null;
+  let entryWhy = "";
+  const skipped: string[] = [];
   for (const l of feedNow.early.slice(0, 8)) {
     if (!l.gateOk || (wantIgnition && l.ignitedAfterMin == null) || (l.creatorTaxBps != null && l.creatorTaxBps > 100)) continue;
     const key = !l.sidePools.length && l.curvePoolId ? await curveKey(l.curvePoolId as `0x${string}`) : null;
-    if (earlyAsCandidate(l, now, wantIgnition, key)) {
+    if (!earlyAsCandidate(l, now, wantIgnition, key)) continue;
+    const a = resolveAny(`${l.symbol}@robinhood`, feedNow);
+    const spec = a?.candidate ? dynamicPoolSpec(a) : null;
+    const er = entryRead(spec ? await updateTape(spec, l.symbol, now) : [], l.symbol, now, tickRules);
+    if (er.ok) {
       probeable = l.symbol;
+      entryWhy = er.why;
       break;
     }
+    skipped.push(`${l.symbol} ${er.state}${er.state === "quiet" && er.pickupRatio != null ? ` (${er.pickupRatio.toFixed(1)}x)` : ""}`);
   }
   const holding = readTokens().length > 0;
   if (!probeable && !holding) {
-    console.log("[desk] fast tick: nothing in play, no model call");
+    console.log(`[desk] fast tick: nothing in play${skipped.length ? ` (${skipped.join(", ")}: no entry on the tape)` : ""}, no model call`);
     process.exit(0);
   }
-  console.log(`[desk] fast tick: ${probeable ? `${probeable} is probeable now` : "a launch token is held"}, thinking`);
+  console.log(`[desk] fast tick: ${probeable ? `${probeable} has an entry (${entryWhy})` : "a launch token is held"}, thinking`);
 }
 
 // Cadence floor, before any model call.
