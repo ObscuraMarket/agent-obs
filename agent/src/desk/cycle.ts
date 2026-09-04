@@ -82,7 +82,8 @@ const paperTrades = PAPER ? readPaper() : [];
 const chain = real && PAPER ? { ...real, bySymbol: paperBalances(real.bySymbol, paperTrades), byKey: paperByKey(real.byKey, paperBalances(real.bySymbol, paperTrades)) } : real;
 const bookTrades = PAPER ? [...book.trades, ...paperTrades] : book.trades;
 const symbols = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, bookTrades, {}, now).holdings);
-const prices = await assetPrices(symbols, { OBS: reads.market?.priceUsd ?? null });
+// ETH and NVDA are priced every cycle whether or not they are held: the basis and the samples need them.
+const prices = await assetPrices([...new Set([...symbols, "ETH", "NVDA"])], { OBS: reads.market?.priceUsd ?? null });
 const mark = chain ? snapshotFromChain(book.flows, bookTrades, chain.bySymbol, prices, now) : snapshot(book.flows, bookTrades, prices, now);
 const open = latestTrades(book.trades).filter((t) => t.status === "pending" || t.status === "proposed");
 // Obscura quotes only the legs it routes (no USDG leg quotes there); the pools quote every Robinhood leg.
