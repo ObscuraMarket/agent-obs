@@ -116,3 +116,39 @@ is the desk, so there is one desk, not two:
 `launchctl bootout gui/$(id -u)/com.obscura.obslive` and the same for
 `obsdesk`, `obsapi`, `obstunnel`.
 
+## Railway (where the desk runs from 2026-09-04)
+
+Project `obs` in the operator's Railway workspace (linked from
+`ops/railway`; `railway status` there). Three services:
+
+- **Postgres**: the gateway's store, Railway's own, volume at its default path.
+- **gateway**: the model gateway built from its public source
+  (`ops/railway-gateway/Dockerfile`), listening on `::` port 4000 so the
+  private network reaches it as `http://gateway.railway.internal:4000`.
+  Variables: `DATABASE_URL` (a reference to Postgres), `GATEWAY_PORT`,
+  `GATEWAY_HOST=::`, `GATEWAY_ADMIN_TOKEN`, `GATEWAY_JWT_SECRET`,
+  `OPENHERMIT_SECRETS_KEY`, `OPENROUTER_API_KEY`. It runs its migrations at
+  start. Deploy: `railway up -s gateway --path-as-root ../railway-gateway --ci`
+  from `ops/railway`.
+- **desk**: this repo's `agent/Dockerfile` (the hosted runner: API, live
+  watch, feed puller, the 30-minute desk loop with the memory backup), a
+  volume at `/app/data` (ledgers, tapes, the pulled feed, the wallet dir),
+  public on port 4671. Variables: the Mac's `agent/.env` minus the Mac-only
+  keys, plus `OBS_CANDIDATE_FEED=/app/data/feed/launch-watch.jsonl`,
+  `OPENHERMIT_GATEWAY_URL=http://gateway.railway.internal:4000`,
+  `OBS_FEED_SOURCE=https://feed.obscura.markets` with `OBS_FEED_TOKEN`,
+  `OBS_MEMORY_REPO_URL` (an HTTPS URL that can push; the ledgers are
+  restored from the memory repo on first boot), `OBS_WALLET_DIR=/app/data/wallet`,
+  `OBS_TRADING=off`. Deploy: `railway up -s desk --path-as-root ../../agent --ci`.
+  Logs: `railway logs -s desk`.
+
+The launch watcher stays on the Mac. Its API serves the feed's bytes at
+`/api/obs/feed-tail` behind `OBS_FEED_TOKEN`, reachable at
+`https://feed.obscura.markets` (the Vercel proxy in `ops/vercel-obs-api`,
+kept pointed at the Mac's bridge by `com.obscura.obsvercel`); the desk on
+Railway pulls it every 30 seconds. `obs-api.obscura.markets` points at the
+desk on Railway (a CNAME in Vercel DNS to the Railway domain). Arming on
+Railway: `OBS_WALLET_JSON` as a variable (written to the wallet dir at boot,
+once), then `OBS_TRADING=on`. Two desks must never run against one wallet:
+when Railway is the desk, the Mac's desk timers come down.
+
