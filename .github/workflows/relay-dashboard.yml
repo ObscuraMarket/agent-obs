@@ -1,0 +1,60 @@
+# The relay: every push to main that touches dashboard/ (the integration
+# surface: the reference page, the Angular Agent page, the API contract) is
+# copied into the site repo and opened there as a pull request, so the site
+# team reviews and merges on their side and never has to pull from here.
+#
+# Configure once on this repo (Settings, Secrets and variables, Actions):
+#   variable RELAY_REPO   owner/name of the site repo, for example obscura/website
+#   variable RELAY_PATH   folder inside that repo to receive dashboard/ (default obs-dashboard)
+#   variable RELAY_BASE   branch to open the pull request against (default main)
+#   secret   RELAY_TOKEN  a fine-grained token with Contents and Pull requests write on the site repo
+# Until RELAY_REPO is set the job skips itself.
+name: Relay the dashboard to the site repo
+
+on:
+  push:
+    branches: [main]
+    paths: ["dashboard/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    if: ${{ vars.RELAY_REPO != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v4
+
+      - name: Check out the site repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.RELAY_REPO }}
+          token: ${{ secrets.RELAY_TOKEN }}
+          ref: ${{ vars.RELAY_BASE || 'main' }}
+          path: site
+
+      - name: Copy the integration surface
+        run: |
+          dest="site/${{ vars.RELAY_PATH || 'obs-dashboard' }}"
+          mkdir -p "$dest"
+          rsync -a --delete --exclude node_modules --exclude dist --exclude .angular dashboard/ "$dest/"
+          echo "relayed from ${{ github.repository }}@${{ github.sha }}" > "$dest/RELAY.txt"
+
+      - name: Open or update the pull request on the site repo
+        uses: peter-evans/create-pull-request@v6
+        with:
+          path: site
+          token: ${{ secrets.RELAY_TOKEN }}
+          branch: obs-dashboard-relay
+          base: ${{ vars.RELAY_BASE || 'main' }}
+          commit-message: "chore(obs): dashboard relay from ${{ github.repository }}@${{ github.sha }}"
+          title: "OBS dashboard update from ${{ github.repository }}"
+          body: |
+            Relayed automatically from `${{ github.repository }}` at `${{ github.sha }}`.
+
+            What changed on our side: ${{ github.event.head_commit.message }}
+
+            The API contract is `INTEGRATION.md` in the relayed folder. Fields are only ever added, never renamed or removed, so a component that ignores new fields keeps working.

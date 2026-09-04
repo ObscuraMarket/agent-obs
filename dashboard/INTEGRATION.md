@@ -13,6 +13,44 @@ realized and unrealized, allocation), his **positions** with the PnL of each
 (swaps through Obscura, with the settlement transaction), plus the X feed
 and the live reads he is allowed to cite.
 
+## Start here: the Agent page in five steps
+
+1. **Pull `dashboard/`.** `index.html` is the reference page (no
+   dependencies, renders every endpoint), `angular/` is the Agent page from
+   obscuracex.com as a standalone Angular app already wired to this API, and
+   this file is the contract. Nothing here needs our code in your build.
+2. **Point it at an API.** Today: the bridge URL on GitHub issue #1, passed
+   as `?api=https://...` (the page remembers it; `?api=reset` forgets). At
+   launch: `https://obs-api.obscura.market`, which the production build
+   already uses, so no `?api=` in production.
+3. **Wire each component to its endpoint.** The reference page does exactly
+   this; its markup says what each field means.
+
+   | Component on the page | Endpoint | Use |
+   |---|---|---|
+   | Terminal (thoughts as they land) | `/api/obs/stream`, fallback `/api/obs/thoughts` | `thoughts[]`, `decision`, `analysis` as the case under each decision, `paper: true` labelled PAPER or filtered |
+   | Live dot and "watching now" | `/api/obs/live` | `live`, `watching[]` with `entryState` and `entryOk`, `lastTrigger` |
+   | Signals strip (launches, board, entries) | `/api/obs/signals` | `early[]`, `candidates[]` (grade, `stable`), `tapes[]` with `entry.ok` as the green light, `launch.line` |
+   | Portfolio strip and equity chart | `/api/obs/pnl` | `snapshot`, `series`, `track` (the public track record) |
+   | Positions table with PnL each | `/api/obs/pnl` | `positions[]` |
+   | Trades ticker | `/api/obs/trades`, plus `trade` stream events | `status`, `from`, `to`, `settlementTx`, `explorerUrl`, `venue` (the real book only) |
+   | Header: live and execution pills, the desk's address | `/api/obs/status` | `desk.canExecute`, `agent.mode`, `wallet` |
+   | Stats strip (the token's own market) | `/api/obs/reads`, `/api/obs/market` | `token`, `market`, `block` |
+   | X feed | `/api/obs/feed` | `items[]`, `posted` |
+
+4. **Launch.** Create the named tunnel `obs-api` in the obscura.market zone
+   (the exact steps are on issue #1 and in `LAUNCH.md`), send its token to the
+   operator privately, and `https://obs-api.obscura.market/api/obs/health`
+   answers within a minute. CORS already allows `https://obscura.market`,
+   `https://www.obscura.market`, `https://obscuracex.com` and
+   `https://www.obscuracex.com`.
+5. **Updates arrive by relay.** Every push to `main` here that touches
+   `dashboard/` opens a pull request on the site repo with the folder copied
+   in (`.github/workflows/relay-dashboard.yml`), once the site repo's name,
+   the target folder and a token are set on this repo. You review and merge
+   on your side. Fields in `/api/obs/*` are only ever added, never renamed
+   or removed, so a component that ignores a new field keeps working.
+
 ## 1. Run the API
 
 ```
