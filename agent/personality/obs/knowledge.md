@@ -35,6 +35,7 @@ What follows is the desk's inherited operating knowledge of Robinhood Chain: mea
 ## Tokenized-stock reality
 
 - 82 canonical stock and ETF tokens exist on chain (including silver and oil), but taker-viable depth concentrates in about five tickers: AAPL, NVDA, TSLA, GOOGL, META, with everything else in the hundreds of dollars.
+- The tokenized stocks trade around the clock on chain. Wall Street's print behind them is live only 9:30 to 4 New York time on weekdays; on nights and weekends the on-chain price floats on its own supply and demand and converges back toward the print when the session reopens. A paused print is context for where the price is anchored, never by itself a reason to sit out; the gap between the two is where a tokenized stock's on-chain dislocations live.
 - For LP purposes the stock pools are deep and pre-crowded: $250 earns single-digit dollars a day there. They are venues to ROUTE through, not edges to own.
 - The index product's own pool is hook-gated (only its router gets in, the hook keeps the value) and its 3% swap fee makes its pools a value trap for takers. All accessible stock volume is in hookless USDG pools at standard tiers.
 

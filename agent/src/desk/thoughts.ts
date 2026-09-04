@@ -75,7 +75,14 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
     if (i.market.btcChange24hPct != null || i.market.ethChange24hPct != null) lines.push(`Backdrop: BTC ${pct(i.market.btcChange24hPct)} and ETH ${pct(i.market.ethChange24hPct)} over 24h on the wider market.`);
     if (i.market.nvdaDepthUsd != null) lines.push(`NVDA pool depth: ${usd(i.market.nvdaDepthUsd)} moves it 2%${i.market.nvdaDepthBaselineUsd != null ? `, against ${usd(i.market.nvdaDepthBaselineUsd)} when the pool was last measured for the chain memory` : ""}.`);
   }
-  if (i.session) lines.push(`US equities: ${i.session.label}${i.session.minutesToChange != null ? ` (${i.session.open ? "closes" : "opens"} in ${Math.round(i.session.minutesToChange / 60)}h${i.session.minutesToChange % 60}m)` : ""}. NVDA's pool tracks the live print only while the session is open; off-hours it drifts from a stale one.`);
+  if (i.session) {
+    const when = i.session.minutesToChange != null ? ` (${i.session.open ? "pauses" : "resumes"} in ${Math.floor(i.session.minutesToChange / 60)}h${i.session.minutesToChange % 60}m)` : "";
+    lines.push(
+      i.session.open
+        ? `NVDA trades around the clock on chain, and right now the Nasdaq print behind it is live${when}: the pool price and the print are pulling on each other.`
+        : `NVDA trades around the clock on chain; the Nasdaq print behind it is paused (${i.session.label}${when}). While it is paused the on-chain price floats on its own supply and demand and converges back toward the print when Wall Street reopens. That is context for where the price stands, never a reason by itself to sit out.`,
+    );
+  }
   const pending = i.open.filter((t) => t.status === "pending");
   const proposed = i.open.filter((t) => t.status === "proposed");
   if (pending.length) lines.push(`In flight: ${pending.map((t) => `${qty(t.from.amount)} ${t.from.asset} to ${t.to.asset} via ${t.partner ?? "a route"}`).join("; ")}.`);
@@ -114,7 +121,7 @@ export function buildThoughtPrompt(observation: string[], recent: Thought[], jou
     "",
     past ? `Your last public thoughts, newest first:\n${past}\n` : "",
     journal ? `Your private notes to yourself from earlier cycles, oldest first:\n${journal}\n` : "",
-    `Work like an analyst, not a reflex. First read every data point above: the book, the quotes and what each route costs, the 24-hour moves and 7-day ranges, the typical 30-minute move, relative value, the wider market, pool depth, the session, the candidates and their hourly trails. Then either form ONE specific thesis for ONE trade (which asset, which direction, why now, what would prove it wrong) or conclude there is none. Most cycles there is none, and saying so precisely is the job. A swap is only executed when it is argued for: a thesis, at least three EVIDENCE lines each quoting a figure from the observation, an INVALIDATION, and CONVICTION of 4 or 5; anything less is recorded as a hold with the shortfall stated in public. Entries are also spaced and counted by the rails.`,
+    `Tokenized stocks trade 24 hours a day on this chain; a paused Nasdaq print changes what the price is anchored to, it is never by itself a reason to hold. Work like an analyst, not a reflex. First read every data point above: the book, the quotes and what each route costs, the 24-hour moves and 7-day ranges, the typical 30-minute move, relative value, the wider market, pool depth, the session, the candidates and their hourly trails. Then either form ONE specific thesis for ONE trade (which asset, which direction, why now, what would prove it wrong) or conclude there is none. Most cycles there is none, and saying so precisely is the job. A swap is only executed when it is argued for: a thesis, at least three EVIDENCE lines each quoting a figure from the observation, an INVALIDATION, and CONVICTION of 4 or 5; anything less is recorded as a hold with the shortfall stated in public. Entries are also spaced and counted by the rails.`,
     "",
     `Think out loud, in public. Two to five short lines that a person on obscura.market will read as your reasoning: what you see, what it means, what you would do and why not yet. Plain first-person sentences. Every figure must appear in the observation above; anything else is "not measured". No addresses of any kind, no advice, no price predictions, no dates, no em dashes, no quotation marks.`,
     "",

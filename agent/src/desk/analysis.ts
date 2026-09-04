@@ -2,8 +2,9 @@
 // the rule that a swap must be argued from them. Price samples the desk takes
 // itself each cycle (obs-prices.jsonl) become 24-hour moves, 7-day ranges,
 // the typical 30-minute move and ETH-against-NVDA relative value; the US
-// equity session says whether NVDA's pool is tracking a live print or
-// drifting from a stale one. None of it is a signal on its own. It is the
+// equity session says whether the Nasdaq print behind NVDA is live or
+// paused (the token itself trades around the clock on chain). None of it is
+// a signal on its own. It is the
 // material the model must cite: a swap decision needs a thesis, at least a
 // few evidence lines that each quote an observed figure, an invalidation,
 // and high conviction, or it is a hold with the shortfall stated in public.
@@ -104,7 +105,7 @@ export interface Session {
   minutesToChange: number | null;
 }
 
-/** PURE: the US equity session at `now`, New York time. NVDA's pool tracks the print only while it is open. */
+/** PURE: the US equity session at `now`, New York time. Tokenized stocks trade around the clock on chain; this says whether the print behind them is live or paused. */
 export function usSession(now: number): Session {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date(now));
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
