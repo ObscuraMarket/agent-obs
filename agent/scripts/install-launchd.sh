@@ -20,6 +20,7 @@ echo "Timers:     launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsdesk.pli
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsfeedsync.plist  (the launch feed to the server, every minute; needs OBS_SERVER in .env)"
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsvercel.plist    (keeps obs-api.obscura.markets pointed at the bridge, every 2 min)"
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obssite.plist      (the fork's main to obscura.markets when it moves, every 10 min)"
+echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsdeploy.plist    (this repo's main to the desk on Railway when it moves, every 10 min)"
 echo "            (com.obscura.obstick, the old five-minute tick, is superseded by obslive; load one or the other)"
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsx.plist"
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsengage.plist"
