@@ -532,7 +532,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
 // Compare paths, not URL strings: a space in the checkout path is "%20" in
 // import.meta.url and a literal space in argv, so the string form never matched.
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  createServer(handle).listen(PORT, () => {
+  createServer(handle).listen(PORT, process.env.OBS_DASHBOARD_HOST || "127.0.0.1", () => {
     console.log(`[obs] dashboard API on http://localhost:${PORT} (page at /, JSON under /api/obs/*)`);
   });
 }
