@@ -155,11 +155,20 @@ in anyone else's zone:
   Vercel project `obscura-exchange`. The project is not connected to the
   fork's git, so after merging a relay pull request run
   `scripts/deploy-site.sh` (pull, build, deploy to production).
-- `obs-api.obscura.markets`: the API's public name, Vercel project
-  `obs-api` (`ops/vercel-obs-api`), a rewrite that proxies `/api/obs/*` to
-  the desk. `com.obscura.obsvercel` on the Mac keeps the destination
-  current when the bridge hostname changes; when the desk moves to a server
-  the destination becomes that server and the name never changes.
+- `obs-api.obscura.markets`: the API's public name, a CNAME in Vercel DNS
+  to the desk on Railway (`pgp525ws.up.railway.app`, project `obs`, service
+  `desk`, port 4671; see DEPLOY.md, Railway). Real time: the stream passes.
+- `feed.obscura.markets`: the Mac's bridge under a stable name, Vercel
+  project `obs-api` (`ops/vercel-obs-api`), a rewrite that proxies
+  `/api/obs/*` to the bridge. The desk on Railway pulls the launch feed
+  from it (`/api/obs/feed-tail`, behind `OBS_FEED_TOKEN`).
+  `com.obscura.obsvercel` on the Mac keeps the destination current when
+  the bridge hostname changes.
+
+The Mac's role from 2026-09-04 evening: the launch watcher and its feed
+(`obsapi` + `obstunnel` + `obsvercel`), the site deploys (`obssite`) and
+the desk deploys (`obsdeploy`). The Mac's own desk and live watch are
+booted out (`obsdesk`, `obslive`): Railway is the one desk.
 
 The page's production environment points at `obs-api.obscura.markets`.
 
