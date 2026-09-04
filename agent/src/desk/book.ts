@@ -163,12 +163,33 @@ export function snapshotFromChain(flows: CapitalFlow[], trades: Trade[], balance
   return { at: now, source: "chain", holdings, equityUsd, inFlightUsd, netCapitalUsd: net, pnlUsd, pnlPct, unpriced };
 }
 
-/** PURE: the PnL curve from stored snapshots, oldest first, within a window. */
+/** PURE: a mark with no holdings between two marks that hold something is a failed wallet read, not an empty desk. */
+export function isFailedReadMark(prev: BookSnapshot | undefined, s: BookSnapshot, next: BookSnapshot | undefined): boolean {
+  const held = (x: BookSnapshot | undefined) => !!x && Object.values(x.holdings ?? {}).some((q) => q > 0);
+  return !held(s) && held(prev) && held(next);
+}
+
+/** PURE: the PnL curve from stored snapshots, oldest first, within a window; failed-read marks are skipped. */
 export function series(snapshots: BookSnapshot[], sinceMs: number, now: number): Array<{ at: number; equityUsd: number | null; pnlUsd: number | null }> {
-  return snapshots
-    .filter((s) => s.at >= now - sinceMs)
-    .sort((a, b) => a.at - b.at)
+  const sorted = [...snapshots].sort((a, b) => a.at - b.at);
+  return sorted
+    .filter((s, i) => s.at >= now - sinceMs && !isFailedReadMark(sorted[i - 1], s, sorted[i + 1]))
     .map((s) => ({ at: s.at, equityUsd: s.equityUsd, pnlUsd: s.pnlUsd }));
+}
+
+/**
+ * PURE: whether a fresh mark deserves to be recorded. It does not when a
+ * balance the book relied on last time could not be read this time, or when
+ * the wallet answered nothing at all while the last mark held something.
+ */
+export function markIsTrustworthy(mark: BookSnapshot, previous: BookSnapshot | null, unread: string[]): boolean {
+  if (!previous) return true;
+  const prevHeld = Object.entries(previous.holdings ?? {}).filter(([, q]) => q > 0).map(([s]) => s);
+  if (!prevHeld.length) return true;
+  const nowHeld = Object.values(mark.holdings ?? {}).some((q) => q > 0);
+  if (!nowHeld) return false;
+  const unreadSymbols = new Set(unread.map((k) => k.split("@")[0]));
+  return !prevHeld.some((s) => unreadSymbols.has(s));
 }
 
 // Positions: each holding with what it cost. Average cost from the ledgers,

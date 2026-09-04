@@ -9,7 +9,7 @@ import { GatewayClient } from "@openhermit/sdk";
 import { AGENT_ID, DRY } from "../config.ts";
 import { liveReads, assetPrices, walletBalances } from "../obscura/reads.ts";
 import { quoteWatchlist, parseWatchlist, DEFAULT_WATCHLIST } from "../obscura/orders.ts";
-import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, type Trade } from "./book.ts";
+import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, type Trade, markIsTrustworthy } from "./book.ts";
 import { observationLines, buildThoughtPrompt, parseThoughtReply, guardThoughts, readThoughts, recordThought, type QuoteRead, type Thought } from "./thoughts.ts";
 import { recallForPrompt, remember } from "../journal.ts";
 import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity } from "./rails.ts";
@@ -203,7 +203,10 @@ if (DRY) {
   process.exit(0);
 }
 recordThought(entry);
-if (PAPER) appendLedger(PAPER_BOOK, mark as unknown as Record<string, unknown>);
+// A mark built on a failed wallet read would put a false point on the curve; it is logged, not recorded.
+const lastMark = book.snapshots.length ? book.snapshots.reduce((a, b) => (b.at > a.at ? b : a)) : null;
+if (!markIsTrustworthy(mark, lastMark, chain?.unread ?? [])) console.log(`[desk] mark not recorded: unread balances (${(chain?.unread ?? []).join(", ") || "all"})`);
+else if (PAPER) appendLedger(PAPER_BOOK, mark as unknown as Record<string, unknown>);
 else recordSnapshot(mark);
 if (proposal) recordTrade(proposal);
 remember(AGENT_ID, { decision: decision.kind === "hold" ? "hold" : "post", note: parsed.note });

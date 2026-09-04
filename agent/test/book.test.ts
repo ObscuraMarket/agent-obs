@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions } from "../src/desk/book.ts";
+import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy } from "../src/desk/book.ts";
 
 const flows: CapitalFlow[] = [
   { at: 1, kind: "deposit", asset: "ETH", amount: 1, usd: 2500 },
@@ -98,4 +98,18 @@ test("a pending swap parks its cost in flight, and an unrecorded cost stays unkn
   // Selling more than the ledger knew of poisons the basis rather than faking a gain.
   const over = positions(flows, [{ at: 3, id: "o", status: "settled" as const, from: { asset: "ETH", amount: 2, usd: 5000 }, to: { asset: "USDG", amount: 4990, usd: 4990 }, partner: null }], { ETH: 0.5, USDG: 4990 }, { ETH: 2600 });
   assert.equal(over.positions.find((x) => x.asset === "ETH")!.avgCostUsd, null);
+});
+
+test("a failed wallet read never becomes a point on the curve, and is not recorded as a mark", () => {
+  const snap = (at: number, holdings: Record<string, number>, equityUsd: number | null) => ({ at, holdings, equityUsd, inFlightUsd: 0, netCapitalUsd: 948, pnlUsd: equityUsd == null ? null : equityUsd - 948, pnlPct: null, unpriced: [] as string[] });
+  const good1 = snap(1000, { ETH: 0.41 }, 1027);
+  const bad = snap(2000, {}, 0);
+  const good2 = snap(3000, { ETH: 0.41 }, 1027.2);
+  assert.equal(isFailedReadMark(good1, bad, good2), true);
+  assert.equal(isFailedReadMark(undefined, snap(500, {}, 0), good1), false, "an empty desk at the very start is an empty desk");
+  assert.deepEqual(series([good2, bad, good1], 10_000, 3000).map((p) => p.equityUsd), [1027, 1027.2], "the curve skips it, whatever order the rows came in");
+  assert.equal(markIsTrustworthy(bad, good1, ["ETH@robinhood", "USDG@robinhood"]), false, "nothing read while the last mark held something");
+  assert.equal(markIsTrustworthy(snap(4000, { USDG: 5 }, 5), good1, ["ETH@robinhood"]), false, "the asset held last time could not be read");
+  assert.equal(markIsTrustworthy(snap(4000, { ETH: 0.41 }, 1030), good1, ["USDC@erc20"]), true, "an unread asset the book never held does not matter");
+  assert.equal(markIsTrustworthy(bad, null, ["ETH@robinhood"]), true, "no previous mark, nothing to contradict");
 });
