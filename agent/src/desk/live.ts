@@ -8,7 +8,7 @@
 // heartbeat goes to data/obs-live.json for the page. Replaces the
 // five-minute tick. OBS_PAPER=on watches the paper book instead.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR, ROOT_DIR, dataPath } from "../config.ts";
 import { readFeed, resolveAny, dynamicPoolSpec, dynamicAssets, earlyAsCandidate, curveKey } from "./candidates.ts";
@@ -39,18 +39,38 @@ let lastBeat = 0;
 /** Each watched pool's window, in memory between looks; cleared after a cycle, which appends to the same files. */
 const tapeCache = new Map<string, SwapRow[]>();
 
-/** What the wallet (or the paper book) holds among the dynamic tokens, refreshed every minute. */
-async function refreshHeld(now: number): Promise<void> {
-  if (now - balancesAt < BALANCES_MS) return;
+/** What the wallet (or the paper book) holds among the dynamic tokens, refreshed every minute, off the loop's critical path. */
+let heldInFlight = false;
+function refreshHeld(now: number): void {
+  if (heldInFlight || now - balancesAt < BALANCES_MS) return;
+  heldInFlight = true;
   balancesAt = now;
+  liveReads()
+    .then((reads) => {
+      const chain = reads.wallet ? walletBalances(reads.wallet) : null;
+      if (!chain) return;
+      const by = PAPER ? paperBalances(chain.bySymbol, readPaper()) : chain.bySymbol;
+      held = Object.values(dynamicAssets()).filter((a) => (by[a.symbol] ?? 0) > 0).map((a) => a.symbol);
+    })
+    .catch((e) => console.log(`[live] balances not read: ${e instanceof Error ? e.message : String(e)}`))
+    .finally(() => {
+      heldInFlight = false;
+    });
+}
+
+/** Tape files are caches rebuilt from the chain; drop the ones nothing has touched in three days. */
+let prunedAt = 0;
+function pruneTapes(now: number): void {
+  if (now - prunedAt < 3600e3) return;
+  prunedAt = now;
   try {
-    const reads = await liveReads();
-    const chain = reads.wallet ? walletBalances(reads.wallet) : null;
-    if (!chain) return;
-    const by = PAPER ? paperBalances(chain.bySymbol, readPaper()) : chain.bySymbol;
-    held = Object.values(dynamicAssets()).filter((a) => (by[a.symbol] ?? 0) > 0).map((a) => a.symbol);
-  } catch (e) {
-    console.log(`[live] balances not read: ${e instanceof Error ? e.message : String(e)}`);
+    const dir = join(DATA_DIR, "tape");
+    for (const f of readdirSync(dir)) {
+      const p = join(dir, f);
+      if (f.endsWith(".jsonl") && now - statSync(p).mtimeMs > 3 * 24 * 3600e3) unlinkSync(p);
+    }
+  } catch {
+    /* nothing to prune */
   }
 }
 
@@ -78,8 +98,11 @@ function runCycle(reason: string, symbol: string, now: number): void {
   });
 }
 
+const looks: number[] = [];
+
 async function step(now: number): Promise<void> {
-  await refreshHeld(now);
+  refreshHeld(now);
+  pruneTapes(now);
   const feed = readFeed(now);
   const inPlay: Array<{ symbol: string; role: Role }> = held.map((symbol) => ({ symbol, role: "held" as const }));
   const add = (symbol: string, role: Role) => {
@@ -110,10 +133,13 @@ async function step(now: number): Promise<void> {
   prev = Object.fromEntries(states.map((s) => [s.symbol, s]));
   if (triggers.length && !running) runCycle(triggers[0].reason, triggers[0].symbol, now);
   const lookMs = Date.now() - now;
+  looks.push(lookMs);
   writeFileSync(dataPath(LIVE_FILE), JSON.stringify({ at: Date.now(), block, paper: PAPER, pollMs: POLL_MS, lookMs, watching: states, lastTrigger, cycles, cycleRunning: !!running }));
   if (now - lastBeat >= 60_000) {
     lastBeat = now;
-    console.log(heartbeatLine(states, block, lastTrigger, lookMs));
+    const mean = looks.reduce((s, v) => s + v, 0) / Math.max(1, looks.length);
+    looks.length = 0;
+    console.log(heartbeatLine(states, block, lastTrigger, mean));
   }
 }
 

@@ -6,7 +6,8 @@
 // proposal. Meant to run on a timer (launchd, see scripts/). DRY_RUN=1 runs
 // the model call and writes nothing, and never executes.
 import { GatewayClient } from "@openhermit/sdk";
-import { AGENT_ID, DRY } from "../config.ts";
+import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { AGENT_ID, DRY, dataPath } from "../config.ts";
 import { liveReads, assetPrices, walletBalances } from "../obscura/reads.ts";
 import { quoteWatchlist, parseWatchlist, DEFAULT_WATCHLIST } from "../obscura/orders.ts";
 import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, type Trade, markIsTrustworthy } from "./book.ts";
@@ -30,6 +31,38 @@ import { positions } from "./book.ts";
 
 const MIN_GAP_MIN = Number(process.env.OBS_MIN_THOUGHT_GAP_MIN ?? 25);
 const ARMED = tradingArmed() && !DRY;
+
+// One cycle at a time. The 30-minute timer, the live watch and an operator's
+// own run must never overlap, or two could take the same position before
+// either records it. The lock names its pid; a lock whose pid is gone, or
+// older than 15 minutes, is stale and taken over. Dry runs take no lock.
+const LOCK = dataPath("obs-cycle.lock");
+if (!DRY) {
+  try {
+    const l = JSON.parse(readFileSync(LOCK, "utf8")) as { pid: number; at: number };
+    let alive = false;
+    try {
+      process.kill(l.pid, 0);
+      alive = true;
+    } catch {
+      alive = false;
+    }
+    if (alive && Date.now() - l.at < 15 * 60e3) {
+      console.log(`[desk] another cycle is running (pid ${l.pid}, started ${((Date.now() - l.at) / 60e3).toFixed(0)} min ago); leaving`);
+      process.exit(0);
+    }
+  } catch {
+    /* no lock, or an unreadable one: take it */
+  }
+  writeFileSync(LOCK, JSON.stringify({ pid: process.pid, at: Date.now() }));
+  process.on("exit", () => {
+    try {
+      if ((JSON.parse(readFileSync(LOCK, "utf8")) as { pid: number }).pid === process.pid) unlinkSync(LOCK);
+    } catch {
+      /* already gone */
+    }
+  });
+}
 // Paper: everything but the send, at full size, in its own ledger. Never while armed.
 const PAPER = (process.env.OBS_PAPER ?? "off") === "on" && !ARMED && !DRY;
 // Where a decided swap runs: the pools on Robinhood Chain from the desk's own

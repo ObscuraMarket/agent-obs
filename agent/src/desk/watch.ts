@@ -72,5 +72,5 @@ export function triggersFor(prev: Record<string, WatchState>, next: WatchState[]
 /** PURE: one line for the log, once a minute. */
 export function heartbeatLine(states: WatchState[], block: number | null, lastTrigger: string | null, lookMs: number | null = null): string {
   const what = states.length ? states.map((s) => `${s.symbol} ${s.role} ${s.entryOk ? "ENTRY" : s.entryState}${s.role === "held" ? `/${s.trend}` : ""}`).join(", ") : "nothing in play";
-  return `[live] block ${block ?? "?"}${lookMs != null ? ` (look took ${(lookMs / 1000).toFixed(1)} s)` : ""}: ${what}${lastTrigger ? `; last trigger ${lastTrigger}` : ""}`;
+  return `[live] block ${block ?? "?"}${lookMs != null ? ` (looks ${(lookMs / 1000).toFixed(1)} s)` : ""}: ${what}${lastTrigger ? `; last trigger ${lastTrigger}` : ""}`;
 }

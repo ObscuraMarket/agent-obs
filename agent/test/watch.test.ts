@@ -34,6 +34,6 @@ test("exits come before entries before reviews, and the heartbeat reads at a gla
   assert.deepEqual(t.map((x) => `${x.kind}:${x.symbol}`), ["exit:C", "entry:B", "held:A"]);
   assert.equal(heartbeatLine(states, 1234, null), "[live] block 1234: A held waiting/holding, B launch ENTRY, C held waiting/rolling over");
   assert.equal(heartbeatLine([], null, "10:00:00Z x"), "[live] block ?: nothing in play; last trigger 10:00:00Z x");
-  assert.equal(heartbeatLine([], 7, null, 1234), "[live] block 7 (look took 1.2 s): nothing in play");
+  assert.equal(heartbeatLine([], 7, null, 1234), "[live] block 7 (looks 1.2 s): nothing in play");
   assert.equal(watchRulesFromEnv({ OBS_CANDIDATE_TRAIL_PCT: "20" } as NodeJS.ProcessEnv).giveBackPct, 20, "the give-back follows the trailing stop unless set");
 });
