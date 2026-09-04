@@ -210,7 +210,12 @@ export interface CgMarket {
  *      domain (`obs-api.` + the site's apex), so each site talks to its own name;
  *   4. otherwise `environment.obsApiUrl` ('' means same-origin, see proxy.conf.json).
  */
+/** The desk's direct address, used when a site's own API name does not answer (DNS or certificate not ready). */
+export const OBS_API_FALLBACK = 'https://desk-production-18ad.up.railway.app';
+let resolved: string | null = null;
+
 export function resolveObsApiUrl(): string {
+  if (resolved !== null) { return resolved; }
   const KEY = 'obsApiUrl';
   let url = environment.obsApiUrl;
   try {
@@ -227,14 +232,32 @@ export function resolveObsApiUrl(): string {
     const saved = localStorage.getItem(KEY);
     if (saved !== null) { url = saved; }
   } catch { /* no window/localStorage (tests, SSR): keep the environment value */ }
-  return url.replace(/\/+$/, '');
+  resolved = url.replace(/\/+$/, '');
+  return resolved;
+}
+
+/**
+ * If the chosen name does not answer within a few seconds (a fresh DNS record, a
+ * certificate still being issued), switch to the desk's direct address for this
+ * page load. The service reads `base` on every call, so the next poll uses it.
+ */
+export function probeObsApiUrl(): void {
+  const url = resolveObsApiUrl();
+  if (!url || url === OBS_API_FALLBACK || typeof fetch === 'undefined') { return; }
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = setTimeout(() => ctl?.abort(), 4000);
+  fetch(`${url}/api/obs/health`, { signal: ctl?.signal, cache: 'no-store' })
+    .then((r) => { if (!r.ok) { resolved = OBS_API_FALLBACK; } })
+    .catch(() => { resolved = OBS_API_FALLBACK; })
+    .finally(() => clearTimeout(timer));
 }
 
 @Injectable({ providedIn: 'root' })
 export class ObsDeskService {
-  readonly base = resolveObsApiUrl();
+  /** Read on every call, so a fallback chosen by the probe takes effect on the next request. */
+  get base(): string { return resolveObsApiUrl(); }
 
-  constructor(private http: HttpClient) {}
+  constructor(private http: HttpClient) { probeObsApiUrl(); }
 
   status(): Observable<ObsStatus> {
     return this.http.get<ObsStatus>(`${this.base}/api/obs/status`);
