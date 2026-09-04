@@ -66,17 +66,45 @@ domain).
 
 ## The site team's side
 
-- Point the Agent page at the API: `?api=<tunnel url>` for a test,
-  `environment.prod.ts` for the build. The API's CORS list already names
-  `https://obscuracex.com`, `https://www.obscuracex.com`,
-  `https://obscura.market` and `https://www.obscura.market`; add any other
-  origin to `OBS_DASHBOARD_ORIGINS` in `agent/.env` and restart the API
-  service (`launchctl kickstart -k gui/$(id -u)/com.obscura.obsapi`).
-- The stream is server-sent events; a proxy in front must not buffer it.
-- Read `dashboard/INTEGRATION.md` for the contract. Fields are only ever
-  added.
-- For the day after launch: run the desk on a box you own (`DEPLOY.md`),
-  seeded from the memory repo, so nothing depends on a laptop.
+**Tonight, a test.** `npm run bridge:url` in `agent/` prints the current
+public URL of the API and a ready page link. Open the Agent page with
+`?api=<that url>`; it is remembered in the browser, `?api=reset` forgets
+it. The URL changes when the tunnel restarts, so it is for testing only.
+
+**For launch, a stable name.** The page's production build already points
+at `https://obs-api.obscura.market` (`environment.prod.ts`). Make that name
+exist with a named Cloudflare tunnel in the site's own zone; nothing on
+the agent's side changes but one line of `.env`.
+
+In the Cloudflare dashboard (Zero Trust, Networks, Tunnels):
+1. Create a tunnel, connector type Cloudflared, name it `obs-api`.
+2. Copy the token it shows (the long string after `--token` in the install
+   command). Send that token to the operator, privately.
+3. Public hostname: subdomain `obs-api`, domain `obscura.market`, service
+   type HTTP, URL `127.0.0.1:4671`. Save. (The origin is the operator's
+   machine; the tunnel reaches it from inside, no port is opened.)
+
+Or with the CLI, logged into the zone:
+```
+cloudflared tunnel create obs-api
+cloudflared tunnel route dns obs-api obs-api.obscura.market
+cloudflared tunnel token obs-api        # send this to the operator
+```
+
+The operator then puts the token in `agent/.env` as `OBS_TUNNEL_TOKEN` and
+restarts the bridge (`launchctl kickstart -k gui/$(id -u)/com.obscura.obstunnel`).
+Within a minute `https://obs-api.obscura.market/api/obs/health` answers and
+the production page needs no `?api=`.
+
+Also true already: the API's CORS list names `https://obscuracex.com`,
+`https://www.obscuracex.com`, `https://obscura.market` and
+`https://www.obscura.market` (add any other origin to
+`OBS_DASHBOARD_ORIGINS` in `agent/.env` and `launchctl kickstart -k
+gui/$(id -u)/com.obscura.obsapi`). The stream is server-sent events, and
+Cloudflare tunnels pass it as is. `dashboard/INTEGRATION.md` is the
+contract; fields are only ever added. For the day after launch, run the
+desk on a box you own (`DEPLOY.md`), seeded from the memory repo, so
+nothing depends on a laptop.
 
 ## The last look before going live
 
