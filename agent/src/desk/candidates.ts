@@ -207,7 +207,8 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
       .sort((a, b) => a.tierPct - b.tierPct);
     if (l.symbol && !ASSETS[`${l.symbol}@robinhood`]) early.push(l);
   }
-  early.sort((a, b) => b.at - a.at);
+  // Ignited launches first, then the newest: what can be acted on is never crowded out by fresh noise.
+  early.sort((a, b) => (b.ignitedAfterMin != null ? 1 : 0) - (a.ignitedAfterMin != null ? 1 : 0) || b.at - a.at);
   return { candidates, early, hourly };
 }
 

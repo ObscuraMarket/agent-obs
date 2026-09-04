@@ -161,7 +161,7 @@ test("early launches: seconds and milliseconds both read as time, ignition and a
     { kind: "side-pool", id: "0x" + "9".repeat(64), token: "0xddd0000000000000000000000000000000000004", fee: 30000, tickSpacing: 300, launch: "pons-v2", ts: now - 4 * 60e3 },
   ].map((r) => JSON.stringify(r)).join("\n");
   const snap = parseFeed(feedEarly, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
-  assert.deepEqual(snap.early.map((e) => e.symbol), ["SC69", "TAXY", "DATA"], "newest first, the three-hour-old one is out of the window");
+  assert.deepEqual(snap.early.map((e) => e.symbol), ["TAXY", "DATA", "SC69"], "ignited launches first, then newest; the three-hour-old one is out of the window");
   const data = snap.early.find((e) => e.symbol === "DATA")!;
   assert.equal(data.ignitedAfterMin, 8);
   assert.equal(data.sidePools[0].tierPct, 4);

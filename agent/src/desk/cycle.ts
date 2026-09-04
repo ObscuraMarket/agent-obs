@@ -72,13 +72,22 @@ if (ARMED && readTokens().length) {
 // regardless. The 30-minute desk cycle is unchanged.
 if (process.env.OBS_TICK === "fast" && !DRY) {
   const feedNow = readFeed(now);
-  const ignited = feedNow.early.some((l) => l.gateOk && l.ignitedAfterMin != null && (l.creatorTaxBps == null || l.creatorTaxBps <= 100));
+  const wantIgnition = (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off";
+  let probeable: string | null = null;
+  for (const l of feedNow.early.slice(0, 8)) {
+    if (!l.gateOk || (wantIgnition && l.ignitedAfterMin == null) || (l.creatorTaxBps != null && l.creatorTaxBps > 100)) continue;
+    const key = !l.sidePools.length && l.curvePoolId ? await curveKey(l.curvePoolId as `0x${string}`) : null;
+    if (earlyAsCandidate(l, now, wantIgnition, key)) {
+      probeable = l.symbol;
+      break;
+    }
+  }
   const holding = readTokens().length > 0;
-  if (!ignited && !holding) {
+  if (!probeable && !holding) {
     console.log("[desk] fast tick: nothing in play, no model call");
     process.exit(0);
   }
-  console.log(`[desk] fast tick: ${ignited ? "an ignited launch is in the window" : "a launch token is held"}, thinking`);
+  console.log(`[desk] fast tick: ${probeable ? `${probeable} is probeable now` : "a launch token is held"}, thinking`);
 }
 
 // Cadence floor, before any model call.
