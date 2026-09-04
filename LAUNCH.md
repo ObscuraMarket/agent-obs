@@ -66,7 +66,13 @@ domain).
 
 ## The site team's side
 
-**Tonight, a test.** `npm run bridge:url` in `agent/` prints the current
+**Tonight's test URL (2026-09-04, changes if the bridge restarts):**
+`https://stripes-estimates-parent-save.trycloudflare.com`
+Open the Agent page as `http://127.0.0.1:4200/?api=https://stripes-estimates-parent-save.trycloudflare.com`
+(or the deployed page with the same `?api=`). If it stops answering, ask the
+operator for a fresh one.
+
+**In general.** `npm run bridge:url` in `agent/` prints the current
 public URL of the API and a ready page link. Open the Agent page with
 `?api=<that url>`; it is remembered in the browser, `?api=reset` forgets
 it. The URL changes when the tunnel restarts, so it is for testing only.
