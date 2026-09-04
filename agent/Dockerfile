@@ -7,10 +7,11 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-RUN addgroup -S obs && adduser -S obs -G obs \
+RUN apk add --no-cache su-exec \
+  && addgroup -S obs && adduser -S obs -G obs \
   && mkdir -p /app/data /memory /wallet \
-  && chown -R obs:obs /app /memory
-USER obs
+  && chown -R obs:obs /app /memory /wallet
+# The entrypoint starts as root only to own the mounted volumes, then drops to obs for everything else.
 ENV OBS_DATA_DIR=/app/data \
     OBS_MEMORY_REPO_DIR=/memory \
     OBS_WALLET_DIR=/wallet \
@@ -18,4 +19,5 @@ ENV OBS_DATA_DIR=/app/data \
     OBS_DASHBOARD_ORIGINS=*
 EXPOSE 4671
 HEALTHCHECK --interval=60s --timeout=5s --start-period=30s CMD wget -qO- http://127.0.0.1:4671/api/obs/health >/dev/null || exit 1
+ENTRYPOINT ["bash", "scripts/entrypoint.sh"]
 CMD ["bash", "scripts/run.sh"]
