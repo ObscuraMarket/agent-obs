@@ -114,7 +114,60 @@ What the desk is watching and how close each signal is to acting:
 ```
 `basis.side` is `buy` when NVDA's pool is cheap against the 24-hour
 reference by more than the round trip plus the bar, `sell` when rich, else
-`none`. Nulls mean a source did not answer; nothing is guessed.
+`none`. Nulls mean a source did not answer; nothing is guessed. `basis`,
+`reference`, `ratio` and `session` are `null` while the tokenized-stock
+side trade is switched off (the default); the token lanes below are always
+present.
+
+Additive fields, the token lanes (since September 3 and 4):
+
+- `candidates[]` also carry `stable`: `null` when the token's hourly trail
+  was not read, else `{ stable, activeHours, hoursKnown, why }`. A stable
+  token (`stable: true`) is a survivor: it traded in most of its hours for
+  six hours or more inside a held range, and it grades `B` with `why`
+  beginning `stable:`. Show it as a swing candidate, not a launch.
+- `early[]`: launches inside the early window, newest first, each
+  `{ symbol, source, ageMin, gateOk, creatorTaxBps, ignitedAfterMin,
+  sidePoolTierPct, tradable, via }`. `tradable: true` means the desk can
+  reach the token right now, through `via` (`curve` or `side pool`); whether
+  it may buy is the entry read in `tapes[].entry`.
+- `tapes[]`: one per token in play (held, probeable, or graded), read from
+  the pool's own swap events: `{ symbol, trend, swaps, buyPressurePct,
+  movePct, offPeakPct, entry }`. `trend` is `rising`, `holding`, `rolling
+  over`, `thin`, or `unknown` when the pool could not be read yet. `entry`
+  is the entry read, the desk's timing rule: `{ state, ok, why, pickup,
+  offPeakPct, recentBuyPressurePct }` where `state` is one of `quiet`,
+  `spike`, `pullback`, `base`, `breakdown`, `waiting` and `ok: true` means a
+  buy is allowed on this read. Render `ok` as the green light and `state`
+  as the label; `why` is the sentence to show on hover. `entry` is `null`
+  when the tape is not readable yet.
+- `launch`: the launch record, every closed launch trade: `{ trades, wins,
+  losses, realizedUsd, avgHoldH, byExit, byGrade, paperTrades }`, plus
+  `line`, the same as one sentence.
+- `live`: the live watch's heartbeat, see `/api/obs/live` below.
+
+### `GET /api/obs/live`
+The live watch: the desk in real time. A long-running process follows the
+pool of every token in play a few seconds apart and runs a desk cycle the
+moment a held token's tape breaks or an entry appears.
+```json
+{
+  "live": true, "at": 1788540000000, "block": 54435542, "paper": false, "pollMs": 3000, "lookMs": 340,
+  "watching": [
+    { "symbol": "BOLD", "role": "launch", "entryState": "quiet", "entryOk": false, "trend": "holding",
+      "offPeakPct": 12.4, "swaps": 210, "lastSwapAgoMin": 0.3, "why": "no volume pickup (the last 10 min ran 0.4x the earlier tape, 2x needed)" }
+  ],
+  "lastTrigger": "14:02:11Z BOLD gave an entry: pullback holding, entry allowed",
+  "cycles": 3, "cycleRunning": false
+}
+```
+`live` is `true` when the heartbeat is under 30 seconds old; show a live
+dot from it. `role` is `held`, `launch` or `stable`. `entryOk` is the same
+green light as `tapes[].entry.ok` in `/api/obs/signals`, refreshed every
+look rather than every cycle. `lastTrigger` is the last reason the watch
+ran the desk, with its UTC time. `paper: true` means the watch is following
+the paper book. Polling every 5 s is fine; the file behind it is rewritten
+every look.
 
 ### `GET /api/obs/market?hours=168`
 The $OBS price over time, sampled from the pool once a minute at most
@@ -143,6 +196,20 @@ are two.
 Newest first. `observation` is the measured input the agent was handed, so a
 reader can check the thinking against it. `decision.kind` is `hold` or
 `propose-swap` (with `from`, `to`, `amount`). Private notes never appear.
+
+Additive fields (since September 3):
+
+- `paper: true` marks a thought from a paper session: the agent decided at
+  real size and nothing was sent. Label these plainly (the reference page
+  prints them as PAPER) or filter them out of the public terminal; never
+  present a paper decision as a trade. Paper trades themselves never appear
+  in `/api/obs/trades`; that endpoint is the real book only.
+- `analysis`: the argument behind the decision, `{ thesis, evidence,
+  invalidation, conviction }`, with `evidence` an array of sentences that
+  each quote a figure from `observation` and `conviction` 1 to 5 (or
+  `null`). A swap is only executed when this argument cleared the evidence
+  rule; a hold's `decision.reason` states the shortfall when it did not.
+  This is the block to render as the "case" under each decision.
 
 ### `GET /api/obs/trades?limit=50`
 ```json
@@ -233,6 +300,8 @@ data: { "at": ..., "id": "...", "status": "pending", "from": {...}, "to": {...},
 `EventSource` in the browser handles reconnects. The page falls back to
 polling `/api/obs/thoughts` every 15 s if the stream cannot be opened, so a
 proxy that does not pass event streams still gives a working terminal.
+`thought` events carry the same `paper` and `analysis` fields as
+`/api/obs/thoughts`; `trade` events are the real book only.
 
 ### `GET /api/obs/feed?limit=30`
 The X feed: `{ items: [{ at, kind: "post"|"reply", text, posted, mode, id?, url?, inReplyToId? }], at }`.

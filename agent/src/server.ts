@@ -15,8 +15,9 @@ import { liveReads, readsBlock, assetPrices, readMarketSamples, marketSeries, ch
 import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { trackRecord, basisSignal, ratioStats, readPrices, usSession } from "./desk/analysis.ts";
 import { stockReference } from "./obscura/stockRef.ts";
-import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, readTokens } from "./desk/candidates.ts";
-import { readCloses, launchRecord } from "./desk/trade-memory.ts";
+import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, readTokens, resolveAny } from "./desk/candidates.ts";
+import { entryRead, entryRulesFromEnv } from "./desk/entry.ts";
+import { readCloses, launchRecord, launchRecordLine } from "./desk/trade-memory.ts";
 import { readTape, tapeStats } from "./desk/tape.ts";
 import { poolRead } from "./obscura/pools.ts";
 import { readThoughts } from "./desk/thoughts.ts";
@@ -423,24 +424,40 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         const basis = ref && nvda ? basisSignal(nvda, ref, 0.62, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
         const feed = readFeed(now);
         const rules = gradeRulesFromEnv();
-        const candidates = [];
+        const candidates: Array<{ symbol: string; grade: "A" | "B" | "C" | null; [k: string]: unknown }> = [];
         for (const c of feed.candidates.slice(0, 4)) {
           const spec = dynamicPoolSpec(candidateAsset(c));
           const depth = spec ? await poolRead(spec).then((p) => p?.depthUsd2pct ?? null).catch(() => null) : null;
           const g = gradeCandidate(c, feed.hourly[c.poolId.toLowerCase()] ?? [], depth, rules);
-          candidates.push({ symbol: c.symbol, hour: c.hour, volUsd: c.volUsd, movePct: c.movePct, senders: c.senders, tierPct: c.tierPct, grade: g.grade, capUsd: g.capUsd, why: g.why, depthUsd: g.depthUsd, trend: g.trend });
+          candidates.push({ symbol: c.symbol, stable: c.stable ? { stable: c.stable.stable, activeHours: c.stable.activeHours, hoursKnown: c.stable.hoursKnown, why: c.stable.why } : null, hour: c.hour, volUsd: c.volUsd, movePct: c.movePct, senders: c.senders, tierPct: c.tierPct, grade: g.grade, capUsd: g.capUsd, why: g.why, depthUsd: g.depthUsd, trend: g.trend });
         }
-        const early = feed.early.slice(0, 6).map((l) => ({ symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null }));
+        const early = feed.early.slice(0, 6).map((l) => ({ symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null, tradable: !!resolveAny(`${l.symbol}@robinhood`, feed)?.candidate, via: l.sidePools.length ? "side pool" : "curve" }));
         // Tokens in play and their tapes, and the launch record: what the desk is actually doing.
         const held = readTokens().map((t) => t.symbol);
         const inPlay = [...new Set([...held, ...early.filter((e) => e.ignitedAfterMin != null && e.gateOk).map((e) => e.symbol), ...candidates.filter((c) => c.grade).map((c) => c.symbol)])].slice(0, 6);
+        const entryRules = entryRulesFromEnv();
         const tapes = inPlay.map((sym) => {
-          const c = feed.candidates.find((x) => x.symbol === sym);
-          if (!c) return { symbol: sym, trend: "unknown", swaps: null, buyPressurePct: null };
-          const st = tapeStats(readTape(c.poolId), sym, now, 15);
-          return { symbol: sym, trend: st.trend, swaps: st.swaps, buyPressurePct: st.buyPressurePct, movePct: st.movePct, offPeakPct: st.offPeakPct };
+          const a = resolveAny(`${sym}@robinhood`, feed);
+          const spec = a?.candidate ? dynamicPoolSpec(a) : null;
+          if (!spec?.id) return { symbol: sym, trend: "unknown", swaps: null, buyPressurePct: null, entry: null };
+          const rows = readTape(spec.id);
+          const st = tapeStats(rows, sym, now, 15);
+          const g = candidates.find((x) => x.symbol === sym)?.grade;
+          const er = entryRead(rows, sym, now, entryRules, held.includes(sym) || g === "A" || g === "B");
+          return { symbol: sym, trend: st.trend, swaps: st.swaps, buyPressurePct: st.buyPressurePct, movePct: st.movePct, offPeakPct: st.offPeakPct, entry: { state: er.state, ok: er.ok, why: er.why, pickup: er.pickup, offPeakPct: er.offPeakPct, recentBuyPressurePct: er.recentBuyPressurePct } };
         });
-        json(res, 200, { basis, reference: ref ? { printStatus: ref.printStatus, printAt: ref.printAt, perpTradesDay: ref.perpTradesDay, perpChangeDayPct: ref.perpChangeDayPct } : null, ratio: basisOn ? ratioStats(readPrices(), "ETH", "NVDA", now) : null, session: basisOn ? usSession(now) : null, candidates, early, tapes, launch: launchRecord(readCloses()), market: r.market ?? null, at: now });
+        // The live watch's heartbeat, when it is running: what it follows and its last trigger.
+        let live: Record<string, unknown> = { live: false, watching: [] };
+        try {
+          const lp = dataPath("obs-live.json");
+          if (existsSync(lp)) {
+            const b = JSON.parse(readFileSync(lp, "utf8")) as { at: number };
+            live = { live: now - Number(b.at) < 30_000, ...b };
+          }
+        } catch {
+          /* not live */
+        }
+        json(res, 200, { live, basis, reference: ref ? { printStatus: ref.printStatus, printAt: ref.printAt, perpTradesDay: ref.perpTradesDay, perpChangeDayPct: ref.perpChangeDayPct } : null, ratio: basisOn ? ratioStats(readPrices(), "ETH", "NVDA", now) : null, session: basisOn ? usSession(now) : null, candidates, early, tapes, launch: { ...launchRecord(readCloses()), line: launchRecordLine(launchRecord(readCloses())) }, market: r.market ?? null, at: now });
       })
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "signals unavailable" }));
     return;
