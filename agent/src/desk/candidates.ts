@@ -459,17 +459,47 @@ export interface ExitRails {
   candidateMaxHoldH: number;
   candidateFloorPct: number;
   candidateVolumeDropPct: number;
+  /** Take profit: sell this share of the position once it is up this much. Zero disables. */
+  candidateTakeProfitPct?: number;
+  candidateTakeProfitShare?: number;
+  /** Trail: once up at least the arm level, sell everything when the price falls this far from its peak since entry. */
+  candidateTrailArmPct?: number;
+  candidateTrailPct?: number;
 }
-/** PURE: why a held launch token must be sold now, or null. Time stop, floor, or volume rolling over two hours running. */
-export function exitSignal(input: { ageH: number; pnlPct: number | null; hourly: HourlyStat[] }, r: ExitRails): string | null {
-  if (input.ageH >= r.candidateMaxHoldH) return `held ${input.ageH.toFixed(1)}h, past the ${r.candidateMaxHoldH}h time stop`;
-  if (input.pnlPct != null && input.pnlPct <= -r.candidateFloorPct) return `down ${Math.abs(input.pnlPct).toFixed(1)}%, through the ${r.candidateFloorPct}% floor`;
+export interface ExitVerdict {
+  reason: string;
+  /** Share of the position to sell, 0 to 1. */
+  share: number;
+  kind: "time-stop" | "floor" | "volume" | "take-profit" | "trail";
+}
+/**
+ * PURE: what to do with a held launch token now, or null. In order: the
+ * time stop, the floor, volume rolling over two hours running (all of it),
+ * then the trader's exits: a trailing stop off the peak once the trade is
+ * armed, and a partial take-profit into strength.
+ */
+export function exitVerdict(input: { ageH: number; pnlPct: number | null; hourly: HourlyStat[]; peakPnlPct?: number | null; tookProfit?: boolean }, r: ExitRails): ExitVerdict | null {
+  if (input.ageH >= r.candidateMaxHoldH) return { kind: "time-stop", share: 1, reason: `held ${input.ageH.toFixed(1)}h, past the ${r.candidateMaxHoldH}h time stop` };
+  if (input.pnlPct != null && input.pnlPct <= -r.candidateFloorPct) return { kind: "floor", share: 1, reason: `down ${Math.abs(input.pnlPct).toFixed(1)}%, through the ${r.candidateFloorPct}% floor` };
   const h = input.hourly.slice(-3);
   if (h.length === 3) {
     const k = 1 - r.candidateVolumeDropPct / 100;
-    if (h[2].usd < h[1].usd * k && h[1].usd < h[0].usd * k) return `volume rolled over: $${h[0].usd.toFixed(0)} then $${h[1].usd.toFixed(0)} then $${h[2].usd.toFixed(0)} an hour`;
+    if (h[2].usd < h[1].usd * k && h[1].usd < h[0].usd * k) return { kind: "volume", share: 1, reason: `volume rolled over: $${h[0].usd.toFixed(0)} then $${h[1].usd.toFixed(0)} then $${h[2].usd.toFixed(0)} an hour` };
   }
+  const trailArm = r.candidateTrailArmPct ?? 0;
+  const trail = r.candidateTrailPct ?? 0;
+  if (trail > 0 && input.pnlPct != null && input.peakPnlPct != null && input.peakPnlPct >= trailArm) {
+    const giveBack = ((1 + input.peakPnlPct / 100) - (1 + input.pnlPct / 100)) / (1 + input.peakPnlPct / 100) * 100;
+    if (giveBack >= trail) return { kind: "trail", share: 1, reason: `trailing stop: peaked at +${input.peakPnlPct.toFixed(0)}%, gave back ${giveBack.toFixed(0)}% from the peak (${trail}% trail)` };
+  }
+  const tp = r.candidateTakeProfitPct ?? 0;
+  const tpShare = r.candidateTakeProfitShare ?? 0.5;
+  if (tp > 0 && !input.tookProfit && input.pnlPct != null && input.pnlPct >= tp) return { kind: "take-profit", share: Math.min(1, Math.max(0.1, tpShare)), reason: `take profit: up ${input.pnlPct.toFixed(0)}%, selling ${Math.round(tpShare * 100)}% into strength and trailing the rest` };
   return null;
+}
+/** PURE: the old single-answer form, kept for callers that only need a reason. */
+export function exitSignal(input: { ageH: number; pnlPct: number | null; hourly: HourlyStat[] }, r: ExitRails): string | null {
+  return exitVerdict(input, r)?.reason ?? null;
 }
 
 // ---- The bar. Which candidates are worth a probe, which are worth size. ----

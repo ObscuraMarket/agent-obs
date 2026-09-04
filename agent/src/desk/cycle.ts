@@ -66,6 +66,21 @@ if (ARMED && readTokens().length) {
   }
 }
 
+// The fast tick (OBS_TICK=fast, a timer every few minutes): it only spends a
+// model call when a token is in play, an ignited launch inside the window or
+// a held launch token; otherwise it leaves quietly. Forced exits above ran
+// regardless. The 30-minute desk cycle is unchanged.
+if (process.env.OBS_TICK === "fast" && !DRY) {
+  const feedNow = readFeed(now);
+  const ignited = feedNow.early.some((l) => l.gateOk && l.ignitedAfterMin != null && (l.creatorTaxBps == null || l.creatorTaxBps <= 100));
+  const holding = readTokens().length > 0;
+  if (!ignited && !holding) {
+    console.log("[desk] fast tick: nothing in play, no model call");
+    process.exit(0);
+  }
+  console.log(`[desk] fast tick: ${ignited ? "an ignited launch is in the window" : "a launch token is held"}, thinking`);
+}
+
 // Cadence floor, before any model call.
 const last = readThoughts(1)[0];
 if (last && !DRY && (now - last.at) / 60000 < MIN_GAP_MIN) {
@@ -133,7 +148,7 @@ const heldCandidates = heldDyn.map((a) => {
   return { symbol: a.symbol, qty: chain?.bySymbol[a.symbol] ?? 0, costUsd: p?.costUsd ?? null, valueUsd: p?.valueUsd ?? null, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, ageH: (now - firstBuy) / 3600e3, trail: a.candidate ? trailOf(a.candidate.poolId) : "unknown" };
 });
 // The desk's own price samples, and what they say: 24h moves, 7-day ranges, the typical 30-minute move, relative value.
-if (!DRY) recordPrices({ ETH: prices.ETH ?? reads.prices.ethUsd ?? null, NVDA: prices.NVDA ?? null, OBS: reads.market?.priceUsd ?? null }, now);
+if (!DRY) recordPrices({ ETH: prices.ETH ?? reads.prices.ethUsd ?? null, NVDA: prices.NVDA ?? null, OBS: reads.market?.priceUsd ?? null, ...Object.fromEntries(heldDyn.map((a) => [a.symbol, prices[a.symbol] ?? null])) }, now);
 const priceRows = readPrices();
 const market = {
   stats: ["ETH", "NVDA"].map((sym) => priceStats(priceRows, sym, now)),

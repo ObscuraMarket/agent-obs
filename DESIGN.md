@@ -219,6 +219,22 @@ grade C size, the sell is proven right after, and it scales only if the
 token later clears the bar. Minute-one buying loses on average across the
 tape, so ignition is the earliest signal the desk will probe.
 
+**The trader's exits and the fast tick.** A held launch token leaves on
+the hard stops first (time stop, floor, volume rolling over two hours
+running), then on the trader's exits: a partial take-profit into strength
+(`OBS_CANDIDATE_TAKE_PROFIT_PCT`, share `OBS_CANDIDATE_TAKE_PROFIT_SHARE`,
+once) and a trailing stop off the peak since entry once the trade is armed
+(`OBS_CANDIDATE_TRAIL_ARM_PCT`, `OBS_CANDIDATE_TRAIL_PCT`); the peak comes
+from the desk's own price samples, which now include every held launch
+token. Because launches live for hours, a second timer, the fast tick
+(`com.obscura.obstick`, every 5 minutes, `scripts/_obs-tick.sh`), runs a
+cycle that spends a model call only when a token is in play, an ignited
+launch inside the window or a held launch token, and exits quietly
+otherwise; forced exits on held tokens run on every tick when armed. The
+30-minute desk cycle is unchanged. The persona and the prompt now lead
+with the tokens: the launches and candidates are the job, the basis on the
+tokenized stock a side trade.
+
 **The bar.** Not every candidate is worth a probe and few are worth size,
 so each is graded in code from its row, its hourly trail and its pool's
 depth read live (`gradeCandidate`, knobs `OBS_GRADE_*`). GRADE A clears

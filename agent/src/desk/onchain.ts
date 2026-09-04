@@ -19,7 +19,8 @@ import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { recordTrade, readBook, latestTrades, type Trade } from "./book.ts";
 import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx } from "./signer.ts";
 import { WALLET_ADDRESS } from "../config.ts";
-import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitSignal, type FeedSnapshot } from "./candidates.ts";
+import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, type FeedSnapshot } from "./candidates.ts";
+import { readPrices } from "./analysis.ts";
 import { positions } from "./book.ts";
 import type { QuoteRead } from "./thoughts.ts";
 
@@ -389,13 +390,20 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
     if (!(held > 0) || !a.candidate) continue;
     const p = pos.find((x) => x.asset === a.symbol);
     const hourly = feed.hourly[a.candidate.poolId.toLowerCase()] ?? [];
-    const firstBuy = allTrades.filter((t) => t.to.asset === a.symbol && (t.status === "settled" || t.status === "pending")).map((t) => t.at).sort()[0] ?? a.candidate.seenAt;
-    const why = exitSignal({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly }, ctx.rails);
-    if (!why) continue;
-    const usd = prices[a.symbol] != null ? held * (prices[a.symbol] as number) : null;
-    const r = await exec({ from: a, to: eth, amount: held, usd, exit: true }, ctx, now);
+    const buys = allTrades.filter((t) => t.to.asset === a.symbol && (t.status === "settled" || t.status === "pending"));
+    const firstBuy = buys.map((t) => t.at).sort()[0] ?? a.candidate.seenAt;
+    // The peak since entry, from the desk's own price samples, against the position's average cost.
+    const avgCost = p?.avgCostUsd ?? null;
+    const peakPx = readPrices().filter((s) => s.symbol === a.symbol && s.at >= firstBuy).reduce((m, s) => Math.max(m, s.priceUsd), prices[a.symbol] ?? 0);
+    const peakPnlPct = avgCost != null && avgCost > 0 && peakPx > 0 ? ((peakPx - avgCost) / avgCost) * 100 : null;
+    const tookProfit = allTrades.some((t) => t.from.asset === a.symbol && t.exit && (t.note ?? "").includes("take profit"));
+    const v = exitVerdict({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly, peakPnlPct, tookProfit }, ctx.rails);
+    if (!v) continue;
+    const amount = v.share >= 1 ? held : Number((held * v.share).toPrecision(8));
+    const usd = prices[a.symbol] != null ? amount * (prices[a.symbol] as number) : null;
+    const r = await exec({ from: a, to: eth, amount, usd, exit: true }, ctx, now);
     if (r.ok) {
-      const row: Trade = { ...r.trade, note: `exit, ${why}; ${r.trade.note ?? ""}` };
+      const row: Trade = { ...r.trade, note: `exit (${v.kind}), ${v.reason}; ${r.trade.note ?? ""}` };
       if (exec === executeOnChain) recordTrade(row);
       out.push(row);
     } else if ("trade" in r && r.trade) out.push(r.trade);

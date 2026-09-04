@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseFeed, deriveTickSpacing, poolIdFor, exitSignal, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs } from "../src/desk/candidates.ts";
+import { parseFeed, deriveTickSpacing, poolIdFor, exitSignal, exitVerdict, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs } from "../src/desk/candidates.ts";
 import { checkCandidate, railsFromEnv, checkRails, type Intent } from "../src/desk/rails.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 import { routeFor, costFloorPct, encodeSwap } from "../src/desk/onchain.ts";
@@ -201,4 +201,21 @@ test("an ignited launch with no side pool trades through its curve: the key from
   assert.deepEqual(sell.hops.map((h) => h.key), ["NVDA/SC69", "NVDA/USDG", "ETH/USDG"]);
   const tx = encodeSwap(buy, 10n ** 16n, 1n, "0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", 1n, "0x8876789976dEcBfCbBbe364623C63652db8C0904");
   assert.ok(tx.data.toLowerCase().includes(key.hooks.slice(2)), "the hook address rides in the path");
+});
+
+test("the trader's exits: take profit into strength once, then trail the rest off the peak; the hard stops come first", () => {
+  const r = { candidateMaxHoldH: 8, candidateFloorPct: 40, candidateVolumeDropPct: 30, candidateTakeProfitPct: 60, candidateTakeProfitShare: 0.5, candidateTrailArmPct: 30, candidateTrailPct: 25 };
+  const quiet: never[] = [];
+  const tp = exitVerdict({ ageH: 1, pnlPct: 65, hourly: quiet, peakPnlPct: 70, tookProfit: false }, r)!;
+  assert.equal(tp.kind, "take-profit");
+  assert.equal(tp.share, 0.5);
+  assert.equal(exitVerdict({ ageH: 1, pnlPct: 65, hourly: quiet, peakPnlPct: 70, tookProfit: true }, r), null, "profit taken once; still inside the trail");
+  const trail = exitVerdict({ ageH: 1, pnlPct: 40, hourly: quiet, peakPnlPct: 100, tookProfit: true }, r)!;
+  assert.equal(trail.kind, "trail");
+  assert.equal(trail.share, 1);
+  assert.match(trail.reason, /peaked at \+100%, gave back 30%/);
+  assert.equal(exitVerdict({ ageH: 1, pnlPct: 10, hourly: quiet, peakPnlPct: 20, tookProfit: false }, r), null, "not armed yet: a 20% peak is under the 30% arm");
+  assert.equal(exitVerdict({ ageH: 9, pnlPct: 65, hourly: quiet, peakPnlPct: 70, tookProfit: false }, r)!.kind, "time-stop", "the hard stops outrank the trader's exits");
+  assert.equal(exitVerdict({ ageH: 1, pnlPct: -45, hourly: quiet, peakPnlPct: 5 }, r)!.kind, "floor");
+  assert.equal(exitSignal({ ageH: 9, pnlPct: 0, hourly: [] }, r)!.includes("time stop"), true, "the old form still answers");
 });

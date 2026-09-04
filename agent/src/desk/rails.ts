@@ -32,6 +32,11 @@ export interface Rails {
   candidateMaxHoldH: number;
   candidateFloorPct: number;
   candidateVolumeDropPct: number;
+  /** The trader's exits on a launch token: take part off at a gain, trail the rest off its peak once armed. */
+  candidateTakeProfitPct: number;
+  candidateTakeProfitShare: number;
+  candidateTrailArmPct: number;
+  candidateTrailPct: number;
   /** The whole-book brake: once the day's drawdown from its opening mark passes either limit, no new entries until the next UTC day. Exits still run. */
   dailyLossUsd: number;
   dailyLossPct: number;
@@ -70,6 +75,10 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     candidateMaxHoldH: Number(env.OBS_CANDIDATE_MAX_HOLD_H ?? 8),
     candidateFloorPct: Number(env.OBS_CANDIDATE_FLOOR_PCT ?? 40),
     candidateVolumeDropPct: Number(env.OBS_CANDIDATE_VOLUME_DROP_PCT ?? 30),
+    candidateTakeProfitPct: Number(env.OBS_CANDIDATE_TAKE_PROFIT_PCT ?? 60),
+    candidateTakeProfitShare: Number(env.OBS_CANDIDATE_TAKE_PROFIT_SHARE ?? 0.5),
+    candidateTrailArmPct: Number(env.OBS_CANDIDATE_TRAIL_ARM_PCT ?? 30),
+    candidateTrailPct: Number(env.OBS_CANDIDATE_TRAIL_PCT ?? 25),
     dailyLossUsd: Number(env.OBS_DAILY_LOSS_USD ?? 50),
     dailyLossPct: Number(env.OBS_DAILY_LOSS_PCT ?? 5),
     minHoursBetweenEntries: Number(env.OBS_MIN_HOURS_BETWEEN_ENTRIES ?? 2),
