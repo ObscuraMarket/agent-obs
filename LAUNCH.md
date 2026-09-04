@@ -146,3 +146,20 @@ account fails at startup (a one-step ping included), which points at the
 account's Actions billing or spending limit (github.com/settings/billing);
 until that is cleared, run the relay by hand after a dashboard push.
 
+## The site and the API on obscura.markets (our domain, Vercel)
+
+Both names live on the domain we own, in our Vercel account, with no tunnel
+in anyone else's zone:
+
+- `obscura.markets` and `www.obscura.markets`: the site (the fork's `main`),
+  Vercel project `obscura-exchange`. The project is not connected to the
+  fork's git, so after merging a relay pull request run
+  `scripts/deploy-site.sh` (pull, build, deploy to production).
+- `obs-api.obscura.markets`: the API's public name, Vercel project
+  `obs-api` (`ops/vercel-obs-api`), a rewrite that proxies `/api/obs/*` to
+  the desk. `com.obscura.obsvercel` on the Mac keeps the destination
+  current when the bridge hostname changes; when the desk moves to a server
+  the destination becomes that server and the name never changes.
+
+The page's production environment points at `obs-api.obscura.markets`.
+
