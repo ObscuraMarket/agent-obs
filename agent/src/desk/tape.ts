@@ -60,14 +60,14 @@ export function dedupeRows(rows: SwapRow[]): SwapRow[] {
   return out.sort((a, b) => a.block - b.block || a.at - b.at);
 }
 
-/** PURE: a v4 Swap event decoded into a row. Amounts are the pool's deltas: positive means the pool received that currency, so the user sold it. */
+/** PURE: a v4 Swap event decoded into a row. In v4 the event carries the swapper's deltas: a positive token amount means the user received the token (a buy), a negative one that the user paid it (a sell). */
 export function decodeSwap(args: { amount0: bigint; amount1: bigint; sqrtPriceX96: bigint }, spec: PoolSpec, tokenIs0: boolean, at: number, block: number, tx: string): SwapRow | null {
   const tokenRaw = tokenIs0 ? args.amount0 : args.amount1;
   const quoteRaw = tokenIs0 ? args.amount1 : args.amount0;
   const tokenDec = tokenIs0 ? spec.decimals0 : spec.decimals1;
   const quoteDec = tokenIs0 ? spec.decimals1 : spec.decimals0;
   if (tokenRaw === 0n) return null;
-  const side: SwapRow["side"] = tokenRaw < 0n ? "buy" : "sell";
+  const side: SwapRow["side"] = tokenRaw > 0n ? "buy" : "sell";
   const tokenAmount = Number(tokenRaw < 0n ? -tokenRaw : tokenRaw) / 10 ** tokenDec;
   const quoteAmount = Number(quoteRaw < 0n ? -quoteRaw : quoteRaw) / 10 ** quoteDec;
   const t1per0 = priceFromSqrtPriceX96(args.sqrtPriceX96, spec.decimals0, spec.decimals1);

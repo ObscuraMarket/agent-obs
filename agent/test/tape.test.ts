@@ -7,13 +7,13 @@ import { exitVerdict } from "../src/desk/candidates.ts";
 const spec = { venue: "uniswap-v4" as const, id: "0x01", token0: "USDG", token1: "TOK", decimals0: 6, decimals1: 18, usdToken: 0 as const, feePct: 4, tickSpacing: 400 };
 const Q96 = 2n ** 96n;
 
-test("a swap decodes by the pool's deltas: the pool giving the token out is a buy, taking it in is a sell", () => {
+test("a swap decodes by the swapper's deltas (v4): receiving the token is a buy, paying it is a sell", () => {
   const sqrtP = Q96; // price 1 in raw units -> 1e-12 USDG per token at these decimals
-  const buy = decodeSwap({ amount0: 10_000_000n, amount1: -(5n * 10n ** 18n), sqrtPriceX96: sqrtP }, spec, false, 1000, 10, "a")!;
+  const buy = decodeSwap({ amount0: -10_000_000n, amount1: 5n * 10n ** 18n, sqrtPriceX96: sqrtP }, spec, false, 1000, 10, "a")!;
   assert.equal(buy.side, "buy");
   assert.equal(buy.tokenAmount, 5);
   assert.equal(buy.quoteAmount, 10);
-  const sell = decodeSwap({ amount0: -4_000_000n, amount1: 2n * 10n ** 18n, sqrtPriceX96: sqrtP }, spec, false, 2000, 11, "b")!;
+  const sell = decodeSwap({ amount0: 4_000_000n, amount1: -(2n * 10n ** 18n), sqrtPriceX96: sqrtP }, spec, false, 2000, 11, "b")!;
   assert.equal(sell.side, "sell");
   assert.equal(sell.quoteAmount, 4);
   assert.equal(decodeSwap({ amount0: 1n, amount1: 0n, sqrtPriceX96: sqrtP }, spec, false, 1, 1, "c"), null, "no token moved, no row");
