@@ -48,13 +48,13 @@ export interface Rails {
   minConviction: number;
 }
 
-// The mandate: this desk trades on Robinhood Chain only, in the majors,
-// the dollar stables and the tokenized stocks. ETH, USDG and NVDA: the pool
-// lane routes all three (USDG is the dollar leg of the basis trade; Obscura
-// itself quotes no USDG leg, which only matters for the Obscura lane). The
-// Ethereum entries in the registry are read and marked, never traded: the
-// chain rail refuses them.
-export const DEFAULT_TRADE_ASSETS = "ETH@robinhood,USDG@robinhood,NVDA@robinhood";
+// The mandate: this desk trades tokens on Robinhood Chain. ETH is the base
+// and USDG the dollar leg; launch tokens join the allowlist by their grade.
+// The tokenized stock in the registry is read and marked if held and only
+// traded when the operator turns the basis on (OBS_BASIS=on adds it). The
+// Ethereum entries are read and marked, never traded: the chain rail
+// refuses them.
+export const DEFAULT_TRADE_ASSETS = "ETH@robinhood,USDG@robinhood";
 export const DEFAULT_TRADE_CHAINS = "robinhood";
 
 export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
@@ -66,7 +66,7 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     maxOpenOrders: Number(env.OBS_MAX_OPEN_ORDERS ?? 1),
     gasReserveEth: Number(env.OBS_GAS_RESERVE_ETH ?? 0.002),
     allowedPartners: partners.length ? new Set(partners) : null,
-    allowedAssets: new Set((env.OBS_TRADE_ASSETS ?? DEFAULT_TRADE_ASSETS).split(",").map((s) => s.trim()).filter(Boolean)),
+    allowedAssets: new Set(((env.OBS_TRADE_ASSETS ?? DEFAULT_TRADE_ASSETS) + ((env.OBS_BASIS ?? "off") === "on" ? ",NVDA@robinhood" : "")).split(",").map((s) => s.trim()).filter(Boolean)),
     allowedChains: new Set((env.OBS_TRADE_CHAINS ?? DEFAULT_TRADE_CHAINS).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)),
     minFillRatio: Number(env.OBS_MIN_FILL_RATIO ?? 0.97),
     candidatesOn: (env.OBS_CANDIDATES ?? "on") !== "off",

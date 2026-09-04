@@ -244,11 +244,11 @@
     </div>
 
     <div class="strip" style="margin-top:20px" id="signals">
-      <div><div class="lbl">Basis vs perp</div><div class="val num" id="g-perp">n/a</div><div class="sub num" id="g-perp-s">pool against the 24h reference</div></div>
-      <div><div class="lbl">Net edge</div><div class="val num" id="g-edge">n/a</div><div class="sub num" id="g-edge-s">after the round trip</div></div>
-      <div><div class="lbl">Vs last print</div><div class="val num" id="g-print">n/a</div><div class="sub" id="g-print-s">print paused</div></div>
-      <div><div class="lbl">ETH / NVDA</div><div class="val num" id="g-ratio">n/a</div><div class="sub" id="g-ratio-s">vs 7-day average</div></div>
+      <div><div class="lbl">Launches</div><div class="val num" id="g-early">0</div><div class="sub" id="g-early-s">none in the window</div></div>
+      <div><div class="lbl">Ignited</div><div class="val num" id="g-ign">0</div><div class="sub" id="g-ign-s">nothing probeable</div></div>
       <div><div class="lbl">Launch bar</div><div class="val num" id="g-cand">0</div><div class="sub" id="g-cand-s">no candidates</div></div>
+      <div><div class="lbl">Tape</div><div class="val num" id="g-tape">idle</div><div class="sub" id="g-tape-s">no token in play</div></div>
+      <div><div class="lbl">Launch record</div><div class="val num" id="g-launch">0</div><div class="sub num" id="g-launch-s">no closed launch trades yet</div></div>
       <div><div class="lbl">Track record</div><div class="val num" id="g-track">0</div><div class="sub num" id="g-track-s">no round trips yet</div></div>
     </div>
 
@@ -564,15 +564,19 @@
       el("pos-s").textContent = (el("pos-s").textContent ? el("pos-s").textContent + " · " : "") + (t.roundTrips ? t.wins + "W " + t.losses + "L, avg win " + usd(t.avgWinUsd || 0) + (t.avgLossUsd != null ? ", avg loss " + usd(t.avgLossUsd) : "") : "");
     }
     function signals(g) {
-      var b = g.basis;
-      if (b && b.gapToPerpPct != null) { setv("g-perp", pct(b.gapToPerpPct), dir(-b.gapToPerpPct)); el("g-perp-s").textContent = "pool " + usd(b.poolUsd) + " · perp " + usd(b.perpUsd) + (g.reference && g.reference.perpTradesDay ? " · " + g.reference.perpTradesDay.toLocaleString("en-US") + " trades" : ""); }
-      if (b && b.netEdgePct != null) { setv("g-edge", pct(b.netEdgePct), b.side !== "none" ? "up" : ""); el("g-edge-s").textContent = b.side === "buy" ? "BUY signal on: pool is cheap" : b.side === "sell" ? "SELL signal on: pool is rich" : "needs " + pct(b.minEdgePct) + " · cost " + b.roundTripCostPct.toFixed(2) + "%"; }
-      if (b && b.gapToPrintPct != null) { setv("g-print", pct(b.gapToPrintPct), ""); el("g-print-s").textContent = "print " + usd(b.printUsd) + " · market " + (g.reference ? g.reference.printStatus : "?"); }
-      if (g.ratio && g.ratio.ratioNow != null) { setv("g-ratio", g.ratio.ratioNow.toFixed(3), g.ratio.deviationPct != null ? dir(g.ratio.deviationPct) : ""); el("g-ratio-s").textContent = g.ratio.deviationPct != null ? pct(g.ratio.deviationPct) + " vs 7-day average" : "no 7-day average yet"; }
+      var e = g.early || [], ign = e.filter(function (x) { return x.ignitedAfterMin != null && x.gateOk; });
+      setv("g-early", String(e.length), "");
+      el("g-early-s").textContent = e.length ? e.slice(0, 4).map(function (x) { return x.symbol + " " + x.ageMin + "m" + (x.gateOk ? "" : " (gate failed)"); }).join(" · ") : "none in the window";
+      setv("g-ign", String(ign.length), ign.length ? "up" : "");
+      el("g-ign-s").textContent = ign.length ? ign.map(function (x) { return x.symbol + " +" + x.ignitedAfterMin + "m" + (x.sidePoolTierPct != null ? " · side pool " + x.sidePoolTierPct + "%" : " · curve"); }).join(" · ") : "nothing probeable";
       var c = g.candidates || [], tradable = c.filter(function (x) { return x.grade; });
       setv("g-cand", tradable.length + " / " + c.length, tradable.some(function (x) { return x.grade === "A" || x.grade === "B"; }) ? "up" : "");
-      var e = g.early || [];
-      el("g-cand-s").textContent = (c.length ? c.map(function (x) { return x.symbol + " " + (x.grade ? "grade " + x.grade : "below bar"); }).join(" · ") : "no candidates") + (e.length ? " · early: " + e.slice(0, 3).map(function (x) { return x.symbol + (x.ignitedAfterMin != null ? " ignited +" + x.ignitedAfterMin + "m" : " " + x.ageMin + "m"); }).join(", ") : "");
+      el("g-cand-s").textContent = c.length ? c.map(function (x) { return x.symbol + " " + (x.grade ? "grade " + x.grade : "below bar"); }).join(" · ") : "no candidates";
+      var t = g.tapes || [];
+      setv("g-tape", t.length ? t.length + " in play" : "idle", t.some(function (x) { return x.trend === "rising"; }) ? "up" : "");
+      el("g-tape-s").textContent = t.length ? t.map(function (x) { return x.symbol + " " + x.trend + (x.buyPressurePct != null ? " · " + Math.round(x.buyPressurePct) + "% buys" : ""); }).join(" · ") : "no token in play";
+      var l = g.launch;
+      if (l) { setv("g-launch", String(l.trades), l.realizedUsd > 0 ? "up" : l.realizedUsd < 0 ? "down" : ""); el("g-launch-s").textContent = l.trades ? l.wins + "W " + l.losses + "L · " + usd(l.realizedUsd, true) + " · avg hold " + (l.avgHoldH != null ? l.avgHoldH.toFixed(1) + "h" : "?") + (l.paperTrades ? " · " + l.paperTrades + " paper" : "") : "no closed launch trades yet"; }
     }
     function portfolio(p) {
       var s = p.snapshot;

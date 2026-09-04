@@ -15,7 +15,9 @@ import { liveReads, readsBlock, assetPrices, readMarketSamples, marketSeries, ch
 import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { trackRecord, basisSignal, ratioStats, readPrices, usSession } from "./desk/analysis.ts";
 import { stockReference } from "./obscura/stockRef.ts";
-import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset } from "./desk/candidates.ts";
+import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, readTokens } from "./desk/candidates.ts";
+import { readCloses, launchRecord } from "./desk/trade-memory.ts";
+import { readTape, tapeStats } from "./desk/tape.ts";
 import { poolRead } from "./obscura/pools.ts";
 import { readThoughts } from "./desk/thoughts.ts";
 import { tradingArmed, railsFromEnv, sentTodayUsd, type Rails } from "./desk/rails.ts";
@@ -399,10 +401,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     // What the desk is watching and how close each is to acting, for the page's signals strip.
     cachedReads()
       .then(async (r) => {
-        const prices = await cachedPrices(["ETH", "NVDA"]);
-        const ref = await stockReference("NVDA", now);
-        const nvda = prices.NVDA ?? null;
-        const basis = nvda ? basisSignal(nvda, ref, 0.62, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
+        const basisOn = (process.env.OBS_BASIS ?? "off") === "on";
+        const prices = await cachedPrices(basisOn ? ["ETH", "NVDA"] : ["ETH"]);
+        const ref = basisOn ? await stockReference("NVDA", now) : null;
+        const nvda = basisOn ? prices.NVDA ?? null : null;
+        const basis = ref && nvda ? basisSignal(nvda, ref, 0.62, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
         const feed = readFeed(now);
         const rules = gradeRulesFromEnv();
         const candidates = [];
@@ -413,7 +416,16 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           candidates.push({ symbol: c.symbol, hour: c.hour, volUsd: c.volUsd, movePct: c.movePct, senders: c.senders, tierPct: c.tierPct, grade: g.grade, capUsd: g.capUsd, why: g.why, depthUsd: g.depthUsd, trend: g.trend });
         }
         const early = feed.early.slice(0, 6).map((l) => ({ symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null }));
-        json(res, 200, { basis, reference: { printStatus: ref.printStatus, printAt: ref.printAt, perpTradesDay: ref.perpTradesDay, perpChangeDayPct: ref.perpChangeDayPct }, ratio: ratioStats(readPrices(), "ETH", "NVDA", now), session: usSession(now), candidates, early, market: r.market ?? null, at: now });
+        // Tokens in play and their tapes, and the launch record: what the desk is actually doing.
+        const held = readTokens().map((t) => t.symbol);
+        const inPlay = [...new Set([...held, ...early.filter((e) => e.ignitedAfterMin != null && e.gateOk).map((e) => e.symbol), ...candidates.filter((c) => c.grade).map((c) => c.symbol)])].slice(0, 6);
+        const tapes = inPlay.map((sym) => {
+          const c = feed.candidates.find((x) => x.symbol === sym);
+          if (!c) return { symbol: sym, trend: "unknown", swaps: null, buyPressurePct: null };
+          const st = tapeStats(readTape(c.poolId), sym, now, 15);
+          return { symbol: sym, trend: st.trend, swaps: st.swaps, buyPressurePct: st.buyPressurePct, movePct: st.movePct, offPeakPct: st.offPeakPct };
+        });
+        json(res, 200, { basis, reference: ref ? { printStatus: ref.printStatus, printAt: ref.printAt, perpTradesDay: ref.perpTradesDay, perpChangeDayPct: ref.perpChangeDayPct } : null, ratio: basisOn ? ratioStats(readPrices(), "ETH", "NVDA", now) : null, session: basisOn ? usSession(now) : null, candidates, early, tapes, launch: launchRecord(readCloses()), market: r.market ?? null, at: now });
       })
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "signals unavailable" }));
     return;

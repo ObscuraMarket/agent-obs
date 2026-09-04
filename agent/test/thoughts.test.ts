@@ -66,7 +66,9 @@ test("the prompt tells the truth about whether a swap can execute", () => {
   const p = buildThoughtPrompt(["Book: empty."], [], "", "2026-09-01T12:00:00.000Z", false);
   assert.match(p, /You cannot execute anything yet/);
   assert.match(p, /DECISION: swap <amount> <FROM> -> <TO>/);
-  assert.match(p, /Assets you may name: ETH@robinhood, USDG@robinhood, NVDA@robinhood\./, "the default allowlist is what he may name");
+  assert.match(p, /Assets you may name: ETH@robinhood, USDG@robinhood\./, "the default allowlist is what he may name");
+  assert.ok(!/basis/i.test(p), "the basis is not in the prompt unless switched on");
+  assert.match(buildThoughtPrompt([], [], "", "2026-09-01T12:00:00.000Z", false, undefined, "pool", [], false, true), /a side trade is the basis/);
   assert.match(p, /Both legs of every swap stay on Robinhood Chain/);
   assert.match(buildThoughtPrompt([], [], "", "2026-09-01T12:00:00.000Z", false, ["ETH@robinhood", "USDG@robinhood"]), /Assets you may name: ETH@robinhood, USDG@robinhood\./);
   assert.ok(!/—/.test(p));

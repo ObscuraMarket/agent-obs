@@ -22,7 +22,8 @@ test("the registry resolves symbols, defaults networks, and refuses strangers", 
   assert.equal(resolveAsset("WBTC@erc20")!.decimals, 8);
   for (const s of ["LINK", "UNI", "AAVE", "DAI"]) assert.equal(assetKey(resolveAsset(s)!), `${s}@erc20`);
   const rails = railsFromEnv({} as NodeJS.ProcessEnv);
-  assert.deepEqual([...rails.allowedAssets].sort(), ["ETH@robinhood", "NVDA@robinhood", "USDG@robinhood"], "the default allowlist is the Robinhood legs the pool lane routes");
+  assert.deepEqual([...rails.allowedAssets].sort(), ["ETH@robinhood", "USDG@robinhood"], "the default allowlist is the base and the dollar leg; tokens join by grade");
+  assert.ok(railsFromEnv({ OBS_BASIS: "on" } as NodeJS.ProcessEnv).allowedAssets.has("NVDA@robinhood"), "the stock only joins when the basis is switched on");
   assert.deepEqual([...rails.allowedChains], ["robinhood"], "the mandate: Robinhood Chain only");
   for (const k of ["WBTC@erc20", "LINK@erc20", "DAI@erc20", "USDC@erc20", "ETH@eth"]) assert.ok(!rails.allowedAssets.has(k), `${k} is registered and read, never traded`);
   assert.ok(resolveAsset("USDG@robinhood"), "the dollar leg of the basis trade");

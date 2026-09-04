@@ -79,7 +79,7 @@ test("entries are spaced and counted; exits are neither", () => {
   const st = entryStats(trades, now);
   assert.equal(st.entriesToday, 2, "a and c; the exit and the failure do not count, the old one is out of the day");
   assert.equal(st.lastEntryAt, now - 1 * H);
-  const rails = railsFromEnv({ OBS_TRADING: "on", OBS_MIN_HOURS_BETWEEN_ENTRIES: "2", OBS_MAX_ENTRIES_PER_DAY: "3" } as NodeJS.ProcessEnv);
+  const rails = railsFromEnv({ OBS_TRADING: "on", OBS_MIN_HOURS_BETWEEN_ENTRIES: "2", OBS_MAX_ENTRIES_PER_DAY: "3", OBS_TRADE_ASSETS: "ETH@robinhood,USDG@robinhood,NVDA@robinhood" } as NodeJS.ProcessEnv);
   const ETH = resolveAsset("ETH@robinhood")!, NVDA = resolveAsset("NVDA@robinhood")!;
   const ctx = { rails, balances: { "ETH@robinhood": 0.4, "NVDA@robinhood": 1 }, nativeOnFromChain: 0.4, openOrders: 0, sentTodayUsd: 0, now, lastEntryAt: now - 1 * H, entriesToday: 2 };
   assert.match((checkRails({ from: ETH, to: NVDA, amount: 0.01, usd: 24 }, ctx) as { reason: string }).reason, /at least 2h apart/);

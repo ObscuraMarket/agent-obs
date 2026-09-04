@@ -34,6 +34,8 @@ const PAPER = (process.env.OBS_PAPER ?? "off") === "on" && !ARMED && !DRY;
 // Where a decided swap runs: the pools on Robinhood Chain from the desk's own
 // wallet (the default), or Obscura's routes. Both sit behind the same rails.
 const VENUE: "pool" | "obscura" = (process.env.OBS_VENUE ?? "pool").toLowerCase() === "obscura" ? "obscura" : "pool";
+// The basis on the tokenized stock is a side trade, off unless the operator turns it on. Tokens are the job.
+const BASIS_ON = (process.env.OBS_BASIS ?? "off") === "on";
 
 const baseUrl = process.env.OPENHERMIT_GATEWAY_URL;
 const token = process.env.GATEWAY_ADMIN_TOKEN;
@@ -109,13 +111,13 @@ const chain = real && PAPER ? { ...real, bySymbol: paperBalances(real.bySymbol, 
 const bookTrades = PAPER ? [...book.trades, ...paperTrades] : book.trades;
 const symbols = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, bookTrades, {}, now).holdings);
 // ETH and NVDA are priced every cycle whether or not they are held: the basis and the samples need them.
-const prices = await assetPrices([...new Set([...symbols, "ETH", "NVDA"])], { OBS: reads.market?.priceUsd ?? null });
+const prices = await assetPrices([...new Set([...symbols, "ETH", ...(BASIS_ON ? ["NVDA"] : [])])], { OBS: reads.market?.priceUsd ?? null });
 const mark = chain ? snapshotFromChain(book.flows, bookTrades, chain.bySymbol, prices, now) : snapshot(book.flows, bookTrades, prices, now);
 const open = latestTrades(book.trades).filter((t) => t.status === "pending" || t.status === "proposed");
 // Obscura quotes only the legs it routes (no USDG leg quotes there); the pools quote every Robinhood leg.
 const obscuraSpec = parseWatchlist(process.env.OBS_QUOTE_WATCHLIST ?? DEFAULT_WATCHLIST).filter((w) => w.from.code !== "usdg" && w.to.code !== "usdg").map((w) => `${w.from.code}/${w.from.network}->${w.to.code}/${w.to.network}:${w.amount}`).join(",");
 const obscuraQuotes: QuoteRead[] = obscuraSpec ? await quoteWatchlist(now, obscuraSpec) : [];
-const nvdaDepth = await (async () => { try { const r = await poolRead(chainMemory().referencePools["NVDA/USDG"]); return r?.depthUsd2pct ?? null; } catch { return null; } })();
+const nvdaDepth = BASIS_ON ? await (async () => { try { const r = await poolRead(chainMemory().referencePools["NVDA/USDG"]); return r?.depthUsd2pct ?? null; } catch { return null; } })() : null;
 // The same legs priced in the pools, so he sees the venue he actually trades on beside Obscura's routes.
 const legs = parseWatchlist(process.env.OBS_QUOTE_WATCHLIST ?? DEFAULT_WATCHLIST)
   .map((w) => ({ from: resolveAsset(`${w.from.code}@${w.from.network}`), to: resolveAsset(`${w.to.code}@${w.to.network}`), amount: w.amount }))
@@ -159,23 +161,23 @@ const heldCandidates = heldDyn.map((a) => {
   return { symbol: a.symbol, qty: chain?.bySymbol[a.symbol] ?? 0, costUsd: p?.costUsd ?? null, valueUsd: p?.valueUsd ?? null, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, ageH: (now - firstBuy) / 3600e3, trail: a.candidate ? trailOf(a.candidate.poolId) : "unknown" };
 });
 // The desk's own price samples, and what they say: 24h moves, 7-day ranges, the typical 30-minute move, relative value.
-if (!DRY) recordPrices({ ETH: prices.ETH ?? reads.prices.ethUsd ?? null, NVDA: prices.NVDA ?? null, OBS: reads.market?.priceUsd ?? null, ...Object.fromEntries(heldDyn.map((a) => [a.symbol, prices[a.symbol] ?? null])) }, now);
+if (!DRY) recordPrices({ ETH: prices.ETH ?? reads.prices.ethUsd ?? null, ...(BASIS_ON ? { NVDA: prices.NVDA ?? null } : {}), OBS: reads.market?.priceUsd ?? null, ...Object.fromEntries(heldDyn.map((a) => [a.symbol, prices[a.symbol] ?? null])) }, now);
 const priceRows = readPrices();
 const market = {
-  stats: ["ETH", "NVDA"].map((sym) => priceStats(priceRows, sym, now)),
-  ethPerNvda: ratioStats(priceRows, "ETH", "NVDA", now),
+  stats: (BASIS_ON ? ["ETH", "NVDA"] : ["ETH"]).map((sym) => priceStats(priceRows, sym, now)),
+  ethPerNvda: BASIS_ON ? ratioStats(priceRows, "ETH", "NVDA", now) : null,
   btcChange24hPct: reads.prices.btcChange24hPct ?? null,
   ethChange24hPct: reads.prices.ethChange24hPct ?? null,
   nvdaDepthUsd: nvdaDepth,
-  nvdaDepthBaselineUsd: chainMemory().referencePools["NVDA/USDG"]?.measured?.usdgDepth2pct ?? null,
+  nvdaDepthBaselineUsd: BASIS_ON ? chainMemory().referencePools["NVDA/USDG"]?.measured?.usdgDepth2pct ?? null : null,
 };
-const session = usSession(now);
-// The basis: NVDA's pool against the 24-hour reference, net of what a round trip costs.
-const ref = await stockReference("NVDA", now);
-const nvdaPool = prices.NVDA ?? null;
+const session = BASIS_ON ? usSession(now) : undefined;
+// The basis, only when it is on: the stock's pool against the 24-hour reference, net of what a round trip costs.
+const ref = BASIS_ON ? await stockReference("NVDA", now) : null;
+const nvdaPool = BASIS_ON ? prices.NVDA ?? null : null;
 const usdgLeg = quotes.find((q) => q.partner?.startsWith("pool") && q.from === "USDG" && q.to === "NVDA");
 const roundTripCostPct = usdgLeg && usdgLeg.amountOut != null && nvdaPool ? Math.max(0.3, 2 * (1 - (usdgLeg.amountOut * nvdaPool) / usdgLeg.amountIn) * 100) : 0.62;
-const basis = nvdaPool ? basisSignal(nvdaPool, ref, roundTripCostPct, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
+const basis = ref && nvdaPool ? basisSignal(nvdaPool, ref, roundTripCostPct, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
 // Paper exits: a paper-held launch token past its rails is sold on paper, before the model thinks.
 if (PAPER && chain && heldDyn.length) {
   const ctxP = { rails: railsFromEnv(), balances: chain.byKey, nativeOnFromChain: chain.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookTrades, now) };
@@ -217,11 +219,11 @@ for (const [sym, a] of inPlay) {
   }
 }
 const memory = { record: launchRecordLine(launchRecord(closes)), recalls: recalls.slice(0, 4) };
-const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, early: feed.path ? early : undefined, heldCandidates, paper: PAPER, market, session, basis, reference: { perpTradesDay: ref.perpTradesDay, printStatus: ref.printStatus, printAt: ref.printAt }, tapes, memory: feed.path ? memory : undefined });
+const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, early: feed.path ? early : undefined, heldCandidates, paper: PAPER, market, session, basis, reference: ref ? { perpTradesDay: ref.perpTradesDay, printStatus: ref.printStatus, printAt: ref.printAt } : undefined, tapes, memory: feed.path ? memory : undefined });
 console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  - " + l).join("\n")}`);
 
 // The persona thinks.
-const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED || PAPER, [...railsFromEnv().allowedAssets], VENUE, [...candidates.map((cnd) => `${cnd.symbol}@robinhood`), ...early.filter((e) => e.tradable).map((e) => `${e.symbol}@robinhood`)], PAPER);
+const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED || PAPER, [...railsFromEnv().allowedAssets], VENUE, [...candidates.map((cnd) => `${cnd.symbol}@robinhood`), ...early.filter((e) => e.tradable).map((e) => `${e.symbol}@robinhood`)], PAPER, BASIS_ON);
 const sessionId = "desk-cycle";
 await gw.agent(AGENT_ID).openSession({ sessionId, source: { kind: "api", interactive: true, type: "direct" } }).catch(() => {});
 const resp = await gw.agent(AGENT_ID).postMessageSync(sessionId, { text: prompt }, { timeout: 90_000 });
