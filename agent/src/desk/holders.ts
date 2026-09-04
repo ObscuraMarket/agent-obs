@@ -177,10 +177,13 @@ export function holderRead(rows: TransferRow[], symbol: string, token: string, n
   const wallets = balances.length;
   const top1Pct = circulating > 0 && balances.length ? (balances[0][1] / circulating) * 100 : null;
   const top10Pct = circulating > 0 ? (balances.slice(0, 10).reduce((s, [, v]) => s + v, 0) / circulating) * 100 : null;
-  // The first buyers: transfers out of infrastructure to wallets inside earlySec of the first one.
+  // The first buyers: transfers out of infrastructure to wallets inside earlySec of the first one. Only
+  // meaningful when the read covers the launch, which shows as the mint (a transfer from the zero address)
+  // being the first row; a read cut short of the launch says so instead of guessing.
+  const coversLaunch = rows[0].from === ZERO;
   const buys = rows.filter((x) => infra.has(x.from) && !infra.has(x.to));
   const first = buys[0]?.at ?? rows[0].at;
-  const early = buys.filter((x) => x.at <= first + r.earlySec * 1000);
+  const early = coversLaunch ? buys.filter((x) => x.at <= first + r.earlySec * 1000) : [];
   const byBlock = new Map<number, number>();
   const bySize = new Map<string, number>();
   for (const x of early) {
@@ -191,7 +194,7 @@ export function holderRead(rows: TransferRow[], symbol: string, token: string, n
   const earlySameBlock = early.filter((x) => (byBlock.get(x.block) ?? 0) >= 3).length;
   const earlySameSize = early.filter((x) => (bySize.get(x.amount.toPrecision(6)) ?? 0) >= 3).length;
   const bundled = new Set(early.filter((x) => (byBlock.get(x.block) ?? 0) >= 3 || (bySize.get(x.amount.toPrecision(6)) ?? 0) >= 3).map((x) => x.to)).size;
-  const bundlePct = earlyBuyers ? (bundled / earlyBuyers) * 100 : null;
+  const bundlePct = coversLaunch && earlyBuyers ? (bundled / earlyBuyers) * 100 : null;
   let freshTop10: number | null = null;
   if (txCounts) {
     const top = balances.slice(0, 10).map(([a]) => a);
@@ -212,7 +215,7 @@ export function holderRead(rows: TransferRow[], symbol: string, token: string, n
 /** PURE: the read as one observation line the agent can cite. */
 export function holdersLine(h: HolderRead): string {
   if (!h.transfers) return `Holders ${h.symbol}: not read yet.`;
-  const bits = [`${h.wallets} wallets`, `largest ${h.top1Pct?.toFixed(0) ?? "?"}%`, `top ten ${h.top10Pct?.toFixed(0) ?? "?"}% of circulating`, `first ${h.earlyBuyers} buyers: ${h.earlySameBlock} sharing a block, ${h.earlySameSize} identical sizes${h.bundlePct != null ? ` (${h.bundlePct.toFixed(0)}% bundled)` : ""}`];
+  const bits = [`${h.wallets} wallets`, `largest ${h.top1Pct?.toFixed(0) ?? "?"}%`, `top ten ${h.top10Pct?.toFixed(0) ?? "?"}% of circulating`, h.bundlePct != null ? `first ${h.earlyBuyers} buyers: ${h.earlySameBlock} sharing a block, ${h.earlySameSize} identical sizes (${h.bundlePct.toFixed(0)}% bundled)` : "launch outside the read window, so the first buyers are unknown"];
   if (h.freshTop10 != null) bits.push(`${h.freshTop10} of the top ten wallets are fresh`);
   return `Holders ${h.symbol} (${h.transfers} transfers): ${bits.join("; ")}. ${h.ok ? "HOLDERS OK" : `HOLDERS FAIL: ${h.why}`}.`;
 }
