@@ -152,6 +152,8 @@ for (const l of feed.early.slice(0, 6)) {
   if (asCand && !graded.has(asCand.symbol)) graded.set(asCand.symbol, { grade: "C", capUsd: gradeRules.capUsd.C, why: `ignited launch at +${l.ignitedAfterMin ?? 0} min, ${asCand.curve ? `through its ${asCand.curve.quote} curve (hook fee assumed ${Number(process.env.OBS_CURVE_FEE_PCT ?? 2)}% plus ${((l.creatorTaxBps ?? 0) / 100).toFixed(1)}% tax)` : "through its side pool"}, probe only`, depthUsd: null, drawdownPct: null, trend: "unknown" });
   early.push({ symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, standard: l.standard, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null, tradable: !!asCand, why, via: asCand ? (asCand.curve ? `${asCand.curve.quote} curve` : "side pool") : null });
 }
+// Curve keys first (read from chain once, then cached), so an ignited launch with no side pool resolves in this same cycle.
+for (const l of feed.early.slice(0, 8)) if (l.gateOk && l.ignitedAfterMin != null && !l.sidePools.length && l.curvePoolId && (l.creatorTaxBps == null || l.creatorTaxBps <= 100)) await curveKey(l.curvePoolId as `0x${string}`);
 const dyn = dynamicAssets(feed);
 const heldDyn = Object.values(dyn).filter((a) => (chain?.bySymbol[a.symbol] ?? 0) > 0);
 const pos = positions(book.flows, bookTrades, chain?.bySymbol ?? mark.holdings, prices).positions;

@@ -397,8 +397,10 @@ function tokenAsset(t: DynamicToken): Asset {
 export function dynamicAssets(feed: FeedSnapshot = readFeed()): Record<string, Asset> {
   const out: Record<string, Asset> = {};
   for (const t of readTokens()) out[`${t.symbol}@robinhood`] = tokenAsset(t);
+  const curves = readCurves();
   for (const l of feed.early) {
-    const c = earlyAsCandidate(l, feed.readAt, (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off");
+    const key = !l.sidePools.length && l.curvePoolId ? curves[l.curvePoolId.toLowerCase()] ?? null : null;
+    const c = earlyAsCandidate(l, feed.readAt, (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off", key);
     if (c) out[`${c.symbol}@robinhood`] = candidateAsset(c);
   }
   for (const c of feed.candidates) out[`${c.symbol}@robinhood`] = candidateAsset(c);
