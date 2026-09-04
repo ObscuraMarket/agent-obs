@@ -206,11 +206,17 @@ export interface CgMarket {
  *   1. `?api=https://host` in the address bar wins and is remembered in localStorage,
  *      `?api=reset` forgets it (handy when testing the front end against another backend);
  *   2. otherwise whatever was remembered;
- *   3. otherwise `environment.obsApiUrl` ('' means same-origin, see proxy.conf.json).
+ *   3. otherwise, on obscura.market or obscura.markets, the API name on that same
+ *      domain (`obs-api.` + the site's apex), so each site talks to its own name;
+ *   4. otherwise `environment.obsApiUrl` ('' means same-origin, see proxy.conf.json).
  */
 export function resolveObsApiUrl(): string {
   const KEY = 'obsApiUrl';
   let url = environment.obsApiUrl;
+  try {
+    const host = window.location.hostname.replace(/^www\./, '');
+    if (host === 'obscura.market' || host === 'obscura.markets') { url = `https://obs-api.${host}`; }
+  } catch { /* no window: keep the environment value */ }
   try {
     const q = new URLSearchParams(window.location.search).get('api');
     if (q === 'reset') {
