@@ -31,7 +31,8 @@
     "paper:reset": "node -e \"for (const f of ['obs-paper.jsonl','obs-paper-book.jsonl']) { try { require('fs').unlinkSync(require('path').join(process.env.OBS_DATA_DIR || 'data', f)); console.log('removed', f) } catch {} }\"",
     "paper:trade": "tsx scripts/paperTrade.ts",
     "bridge:url": "node scripts/bridgeUrl.mjs",
-    "paper:session": "bash scripts/_paper-session.sh"
+    "paper:session": "bash scripts/_paper-session.sh",
+    "relay": "bash ../scripts/relay-dashboard.sh"
   },
   "dependencies": {
     "@openhermit/sdk": "^0.7.0",

@@ -138,3 +138,11 @@ fine-grained token scoped to that one repo is the clean choice). Until it
 is set the workflow notes that and does nothing. The site team reviews and
 merges on their side; nothing is pushed to their `main` directly.
 
+The same relay runs from this Mac without Actions: `npm run relay` in
+`agent/` (`scripts/relay-dashboard.sh`) rebuilds the relay branch from the
+site's `main`, copies the same files, and opens or updates the pull request
+with the operator's GitHub login. As of 2026-09-04 every Actions run on this
+account fails at startup (a one-step ping included), which points at the
+account's Actions billing or spending limit (github.com/settings/billing);
+until that is cleared, run the relay by hand after a dashboard push.
+

@@ -51,8 +51,8 @@ and the live reads he is allowed to cite.
    `src/app/service/obs-desk.service.ts`, and this contract plus the
    reference page under `docs/obs/`. Environments, routing and the app
    module are the site's and are never touched. You review and merge on
-   your side (`.github/workflows/relay-dashboard.yml`; it waits for a
-   token on this repo before it does anything). Fields in `/api/obs/*` are
+   your side (`.github/workflows/relay-dashboard.yml`, or `npm run relay`
+   from the operator's machine, which does the same by hand). Fields in `/api/obs/*` are
    only ever added, never renamed or removed, so a component that ignores a
    new field keeps working.
 
