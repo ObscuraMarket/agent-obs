@@ -38,6 +38,17 @@ id obs >/dev/null 2>&1 || useradd -r -m -d /home/obs -s /bin/bash obs
 mkdir -p "$DEST"/{agent-obs,openhermit,feed,memory,wallet,state}
 chmod 700 "$DEST/wallet"
 
+# From a bare box (RUNBOOK.md): clone what the sync did not copy.
+if [ ! -f "$DEST/agent-obs/agent/package.json" ]; then
+  : "${OBS_REPO_URL:?no checkout at $DEST/agent-obs; set OBS_REPO_URL (a URL this box can read) or run scripts/server/sync-to-server.sh from the Mac}"
+  git clone -q "$OBS_REPO_URL" "$DEST/agent-obs" && log "cloned this repo"
+fi
+if [ ! -f "$DEST/openhermit/package.json" ]; then
+  git clone -q "${OPENHERMIT_REPO_URL:-https://github.com/HCF-STUDIOS/openhermit.git}" "$DEST/openhermit" && log "cloned the gateway"
+fi
+[ -f "$DEST/agent-obs/agent/.env" ] || { echo "[bootstrap] no $DEST/agent-obs/agent/.env; copy agent/.env.example and fill it in (RUNBOOK.md, step 4)"; exit 1; }
+[ -f "$DEST/openhermit/.env" ] || { echo "[bootstrap] no $DEST/openhermit/.env; the gateway needs one (RUNBOOK.md, step 3)"; exit 1; }
+
 log "the memory repo's deploy key"
 if [ ! -f "$DEST/state/id_ed25519" ]; then
   ssh-keygen -q -t ed25519 -N "" -f "$DEST/state/id_ed25519" -C "obs-server"

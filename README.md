@@ -16,6 +16,7 @@ Chain. OBS is its operator mind and its voice.
 - Design and every boundary: [DESIGN.md](DESIGN.md)
 - Working agreement for agents and engineers sharing this repo: [AGENTS.md](AGENTS.md)
 - **For Obscura's developers, the dashboard integration:** [dashboard/INTEGRATION.md](dashboard/INTEGRATION.md)
+- **To run the desk yourself, on a box you control:** [RUNBOOK.md](RUNBOOK.md)
 
 ## Site team: start here
 
