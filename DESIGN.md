@@ -238,6 +238,24 @@ spaced (`OBS_MIN_HOURS_BETWEEN_ENTRIES`, default 2) and counted
 (`OBS_MAX_ENTRIES_PER_DAY`, default 3); exits are neither. The argument
 rides in the thought row (`analysis`) and the terminal shows it.
 
+**The basis trade** (`obscura/stockRef.ts`, `desk/analysis.ts`). The
+desk's bread and butter, and the one edge that repeats most days: NVDA's
+pool trades around the clock while the print behind it is live only in US
+hours, so the pool drifts from where NVDA "should" be and converges back.
+Two references, both public reads: the exchange's last official print (and
+whether the market is open), and the perp venue on this chain, which
+prices NVDA 24 hours a day with real volume and is the honest anchor. The
+basis is the pool against the perp, net of the round trip's cost, against
+a bar (`OBS_BASIS_MIN_EDGE_PCT`, default 0.25%): cheap enough, buy NVDA
+with USDG; rich while holding, sell back to USDG. Dollar in, dollar out, no
+ETH exposure; USDG is on the allowlist as that leg. Every cycle's
+observation states the references, the gaps, the cost and the verdict, and
+a swap still has to be argued under the evidence rule. Every settled sell
+becomes a realized event, and the track record (round trips, wins, losses,
+hit rate, average win and loss, realized over 24h and 7d) rides on
+`/api/obs/pnl` as `track`. `/api/obs/signals` serves what he is watching and
+how close each signal is to acting, for the page's signals strip.
+
 **Paper sessions** (`desk/paper.ts`). `OBS_PAPER=on` runs a cycle at full
 size with nothing sent: the real wallet is read, the model decides, the
 rails check the intent, the route is priced from live pool state, the exact

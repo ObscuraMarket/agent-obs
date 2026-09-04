@@ -93,6 +93,29 @@ and `holders`, the explorer's own lagging figures `explorerPriceUsd`,
 value at the pool's own price. The page's stats strip prefers the pool price
 and computes market cap from it and the supply.
 
+`/api/obs/pnl` also carries `track` (additive): `{ roundTrips, wins, losses,
+hitRatePct, avgWinUsd, avgLossUsd, realizedUsd, realized24hUsd,
+realized7dUsd, last: [{ at, asset, usd }] }`, every settled sell of a
+non-stable asset against its average cost.
+
+### `GET /api/obs/signals`
+What the desk is watching and how close each signal is to acting:
+```json
+{
+  "basis": { "poolUsd": 230.06, "perpUsd": 230.66, "printUsd": 228.45, "gapToPerpPct": -0.26, "gapToPrintPct": 0.7,
+             "roundTripCostPct": 0.62, "netEdgePct": -0.36, "side": "none", "minEdgePct": 0.25 },
+  "reference": { "printStatus": "closed", "printAt": "Sep 3, 2026", "perpTradesDay": 15074, "perpChangeDayPct": 2.05 },
+  "ratio": { "ratioNow": 10.92, "avg7d": null, "deviationPct": null },
+  "session": { "open": false, "label": "pre-market", "minutesToChange": 491 },
+  "candidates": [{ "symbol": "LEGS", "grade": null, "capUsd": 0, "why": "below the bar: 45% off its peak", "depthUsd": 871, "trend": "rolling over" }],
+  "market": { "priceUsd": 0.00066, "depthUsd2pct": 197 },
+  "at": 1788500000000
+}
+```
+`basis.side` is `buy` when NVDA's pool is cheap against the 24-hour
+reference by more than the round trip plus the bar, `sell` when rich, else
+`none`. Nulls mean a source did not answer; nothing is guessed.
+
 ### `GET /api/obs/market?hours=168`
 The $OBS price over time, sampled from the pool once a minute at most
 whenever a read succeeds (the desk cycle, the dashboard's own reads):
