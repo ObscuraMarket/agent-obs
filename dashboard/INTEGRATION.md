@@ -71,7 +71,10 @@ runs, on the same box the agent's timers run on (the ledgers live there).
 Put it behind your domain, for example `obs-api.obscura.market`.
 
 CORS: `OBS_DASHBOARD_ORIGINS=*` by default; set it to
-`https://obscura.market,https://obscuracex.com` in production.
+`https://obscura.market,https://obscuracex.com` in production. An entry may
+carry one wildcard host label, `https://*.vercel.app`, to admit preview
+deployments. A page on an origin not on the list sees "could not reach the
+desk API"; the API logs every origin it refuses.
 
 ## 2. Endpoints
 

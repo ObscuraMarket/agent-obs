@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter } from "../src/server.ts";
+import { originAllowed } from "../src/server.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
 const posts = [
@@ -62,4 +63,16 @@ test("the request budget is per client and slides", () => {
   assert.deepEqual([l.allow("a", 0), l.allow("a", 100), l.allow("a", 200), l.allow("a", 300)], [true, true, true, false]);
   assert.equal(l.allow("b", 300), true, "another client has its own budget");
   assert.equal(l.allow("a", 1101), true, "the oldest hit slid out of the window");
+});
+
+test("the origin allowlist matches exactly, or one wildcard subdomain label", () => {
+  const list = ["https://obscura.market", "https://*.vercel.app", "http://localhost:4200"];
+  assert.equal(originAllowed("https://obscura.market", list), true);
+  assert.equal(originAllowed("https://www.obscura.market", list), false, "no wildcard on that entry");
+  assert.equal(originAllowed("https://obscura-exchange-git-main-john.vercel.app", list), true);
+  assert.equal(originAllowed("https://evil.com/?x=.vercel.app", list), false);
+  assert.equal(originAllowed("https://a.b.vercel.app", list), false, "one label only");
+  assert.equal(originAllowed("https://vercel.app", list), false, "the label must exist");
+  assert.equal(originAllowed("", list), false);
+  assert.equal(originAllowed("https://anything.example", ["*"]), true);
 });

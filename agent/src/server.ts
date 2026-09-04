@@ -34,6 +34,23 @@ const RATE_PER_MIN = Number(process.env.OBS_DASHBOARD_RATE_PER_MIN ?? 120);
 const MAX_STREAMS = Number(process.env.OBS_DASHBOARD_MAX_STREAMS ?? 100);
 const MAX_STREAMS_PER_IP = Number(process.env.OBS_DASHBOARD_MAX_STREAMS_PER_IP ?? 4);
 const ORIGINS = (process.env.OBS_DASHBOARD_ORIGINS ?? "*").split(",").map((s) => s.trim()).filter(Boolean);
+
+/** PURE: whether an origin is on the allowlist. An entry may carry one wildcard host label, `https://*.vercel.app`, which admits any single subdomain. */
+export function originAllowed(origin: string, list: string[]): boolean {
+  if (!origin) return false;
+  for (const entry of list) {
+    if (entry === "*" || entry === origin) return true;
+    const star = entry.indexOf("*");
+    if (star < 0) continue;
+    const head = entry.slice(0, star);
+    const tail = entry.slice(star + 1);
+    if (!origin.startsWith(head) || !origin.endsWith(tail)) continue;
+    const label = origin.slice(head.length, origin.length - tail.length);
+    if (label && !label.includes("/") && !label.includes(".")) return true;
+  }
+  return false;
+}
+const refusedOrigins = new Map<string, number>();
 const READS_TTL_MS = 60_000;
 
 export interface FeedItem {
@@ -201,8 +218,13 @@ const deskFromDisk = () => {
 
 function cors(req: IncomingMessage, res: ServerResponse): void {
   const origin = req.headers.origin ?? "";
-  const allow = ORIGINS.includes("*") ? "*" : ORIGINS.includes(origin) ? origin : "";
+  const allow = ORIGINS.includes("*") ? "*" : originAllowed(origin, ORIGINS) ? origin : "";
   if (allow) res.setHeader("Access-Control-Allow-Origin", allow);
+  else if (origin && (Date.now() - (refusedOrigins.get(origin) ?? 0)) > 60_000) {
+    // Say which origin was refused, once a minute per origin, so a page that cannot reach the API can be traced.
+    refusedOrigins.set(origin, Date.now());
+    console.log(`[obs] origin refused by OBS_DASHBOARD_ORIGINS: ${origin}`);
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Cache-Control", "public, max-age=30");
