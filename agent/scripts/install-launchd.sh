@@ -17,6 +17,7 @@ echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsawake.pl
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obstunnel.plist   (public bridge; URL in ~/Library/Logs/obs-tunnel.log)"
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obslive.plist     (the live watch: the desk in real time, kept alive; log in ~/Library/Logs/obs-live.log)"
 echo "Timers:     launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsdesk.plist"
+echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsfeedsync.plist  (the launch feed to the server, every minute; needs OBS_SERVER in .env)"
 echo "            (com.obscura.obstick, the old five-minute tick, is superseded by obslive; load one or the other)"
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsx.plist"
 echo "            launchctl bootstrap gui/\$(id -u) $OUT/com.obscura.obsengage.plist"

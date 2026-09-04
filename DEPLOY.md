@@ -77,3 +77,42 @@ repo, never in any API response. The key, when mounted, is read only at
 signing time inside the desk cycle and never by the API process. The
 memory repo token lives in `agent/.env`, which the image never contains
 (`.dockerignore`) and compose passes as environment.
+
+## The server, as plain services (the launch path)
+
+The container above is one way. The launch path is a small server running
+the same pieces as plain systemd services, with nothing in front of the API
+but Caddy and a hostname you control, and no tunnel anywhere.
+
+**What you need:** a fresh Ubuntu 24.04 box (2 vCPU and 4 GB is plenty) with
+root ssh using this Mac's key, and a hostname whose A record points at it
+(`obs-api.yourdomain` on any DNS you control; `obs-api.<ip>.sslip.io` works
+with no domain at all). The launch watcher stays on this Mac and its feed
+mirrors to the server every minute.
+
+**Move it, from this Mac:**
+```
+scripts/server/sync-to-server.sh root@<ip> obs-api.yourdomain --seed-data
+```
+That copies this repo, the model gateway's source and state, the
+environment with the server's overrides (feed path, memory path, gateway
+URL, trading off), the memory repo checkout and, with `--seed-data`, the
+ledgers; then runs `scripts/server/bootstrap.sh` on the box, which installs
+Node 22, Postgres, Caddy, creates the `obs` user, the gateway's database and
+a deploy key for the memory repo (added to the repo with your gh login),
+provisions the personas, and enables the services: `obs-gateway`,
+`obs-api`, `obs-live`, `obs-desk.timer` (every 30 minutes, backup behind
+it), and the voice timers only when `OBS_VOICE=on`. It also points this
+Mac's feed mirror (`com.obscura.obsfeedsync`) at the server.
+
+**Then:** `https://obs-api.yourdomain/api/obs/health` answers within a minute
+of the certificate being issued. Put that hostname in the site's
+`environment.prod.ts` (one line in the fork) and the page has live data
+with no tunnel. Run the sync again after any change here; it restarts the
+services. Arming on the server is the same deliberate step as anywhere:
+`--with-wallet` once, `OBS_TRADING=on` in `/srv/obs/agent-obs/agent/.env`,
+`systemctl restart obs-live obs-api`. Stop the Mac's timers when the server
+is the desk, so there is one desk, not two:
+`launchctl bootout gui/$(id -u)/com.obscura.obslive` and the same for
+`obsdesk`, `obsapi`, `obstunnel`.
+
