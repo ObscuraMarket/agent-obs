@@ -22,6 +22,7 @@ import { readPaper, paperBalances, paperByKey, paperExecute, PAPER_BOOK } from "
 import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCheck, basisSignal } from "./analysis.ts";
 import { stockReference } from "../obscura/stockRef.ts";
 import { updateTape, tapeStats, tapeLine } from "./tape.ts";
+import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry } from "./trade-memory.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
@@ -193,6 +194,9 @@ for (const e of early.filter((x) => x.tradable).slice(0, 3)) if (!inPlay.has(e.s
 for (const cnd of candidates.filter((x) => x.grade).slice(0, 2)) if (!inPlay.has(cnd.symbol)) inPlay.set(cnd.symbol, resolveAny(`${cnd.symbol}@robinhood`, feed));
 const tapes: string[] = [];
 const tapeTrend = new Map<string, string>();
+// The entry read per token: volume puts it on watch, the price action gives the entry.
+const entryReads = new Map<string, EntryRead>();
+const entryRules = entryRulesFromEnv();
 for (const [sym, a] of inPlay) {
   if (!a?.candidate) continue;
   const spec = dynamicPoolSpec(a);
@@ -203,6 +207,10 @@ for (const [sym, a] of inPlay) {
   const quoteUsd = quote === "USDG" ? 1 : prices[quote] ?? null;
   tapes.push(tapeLine(st, quoteUsd, quote));
   tapeTrend.set(sym, st.trend);
+  const g = graded.get(sym)?.grade;
+  const er = entryRead(rows, sym, now, entryRules, g === "A" || g === "B" || heldDyn.some((h) => h.symbol === sym));
+  entryReads.set(sym, er);
+  tapes.push(entryLine(er));
 }
 // What he learned: the launch record, and the closest past trades to the setups in play.
 const closes = readCloses();
@@ -270,7 +278,10 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
     // A swap must be argued for. An exit of a held position is exempt: leaving is never blocked on paperwork.
     const argued = from.candidate ? { ok: true as const, cited: 0 } : evidenceCheck(parsed.analysis, observation, { minEvidence: rails.minEvidence, minConviction: rails.minConviction });
     const heldPos = to.candidate ? pos.find((x) => x.asset === to.symbol) : undefined;
-    const gate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails, to.candidate ? (graded.get(to.symbol) ?? null) : null, heldPos?.valueUsd ?? 0);
+    const railGate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails, to.candidate ? (graded.get(to.symbol) ?? null) : null, heldPos?.valueUsd ?? 0);
+    // The entry: a launch-token buy also needs the price action to allow it. Volume puts a token on watch; the tape gives the entry.
+    const entry = to.candidate && !from.candidate ? (entryReads.get(to.symbol) ?? null) : null;
+    const gate = railGate.ok && to.candidate && !from.candidate && !entry?.ok ? { ok: false as const, reason: entry ? `the tape gives no entry: ${entry.why}` : `no tape was read for ${to.symbol} this cycle, so there is no entry read` } : railGate;
     let capUsd: number | undefined;
     let addOn = false;
     if (!gate.ok) {

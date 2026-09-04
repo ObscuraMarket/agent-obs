@@ -246,6 +246,20 @@ the prompt tells him to read the tape before the watcher's hourly rows. A
 tape rolling over (three 5-minute buckets falling 30% in a row) exits a
 held token that has not paid; a paid one waits for its trail.
 
+**The entry** (`desk/entry.ts`). Volume puts a token on watch; the price
+action gives the entry. From the same tape over the last half hour the desk
+reads whether volume picked up (the last ten minutes against the twenty
+before, or the hourly figures for a graded or held token), how far the price
+ran to its peak and how far it sits off it, whether the pullback held a
+higher low and turned up with buyers back, or whether the price went quiet
+in a tight range with buyers still present. Each token in play gets an Entry
+line naming its state: SPIKE (the top of a run, never bought), PULLBACK,
+BASE, BREAKDOWN, WAITING or QUIET, with ENTRY ALLOWED only on a pullback
+that held or a base. The rails refuse any launch-token buy, probe or size,
+whose Entry line says NO ENTRY, and the refusal is public. The thresholds
+are `OBS_ENTRY_*` in the environment; more data points belong in this
+module, not in the cycle.
+
 **Trade memory** (`desk/trade-memory.ts`). Every entry into a launch token
 is recorded with its setup (source, grade, tier, ignition minute, curve or
 side pool, size, the argued reason) and every full close with its result
