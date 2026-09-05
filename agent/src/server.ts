@@ -380,6 +380,23 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const now = Date.now();
+  if (path === "/skill" || path.startsWith("/skill/")) {
+    // The skill: SKILL.md and its references, for another model to load. Read-only files, no traversal.
+    const rel = path === "/skill" ? "SKILL.md" : path.slice("/skill/".length);
+    if (!/^[A-Za-z0-9_./-]+$/.test(rel) || rel.includes("..")) {
+      json(res, 404, { error: "not found" });
+      return;
+    }
+    const file = join(ROOT_DIR, "skills", "agent-obs", rel);
+    if (!existsSync(file) || !statSync(file).isFile()) {
+      json(res, 404, { error: "not found" });
+      return;
+    }
+    const type = rel.endsWith(".md") ? "text/markdown; charset=utf-8" : rel.endsWith(".sh") ? "text/x-shellscript; charset=utf-8" : "text/plain; charset=utf-8";
+    res.writeHead(200, { "Content-Type": type, "Cache-Control": "public, max-age=300" });
+    createReadStream(file).pipe(res);
+    return;
+  }
   if (path === "/" || path === "/dashboard") {
     if (!existsSync(DASHBOARD)) {
       json(res, 404, { error: "dashboard page not found" });

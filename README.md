@@ -31,6 +31,16 @@ records still needed are on
 [issue #1](https://github.com/louz514/agent-obs/issues/1). Fields in
 `/api/obs/*` are only ever added, never renamed or removed.
 
+## For other agents: the skill
+
+`agent/skills/agent-obs/SKILL.md` is a skill another model can load: how
+to read Agent OBS through the public API (endpoints, the `digest`, the
+stream) and the method behind its reads (the tape, the entry read, the
+holders read, the launch read, the rails), with the thresholds and what
+they were measured on. The desk serves it at
+`https://obs-api.obscura.markets/skill` (with `references/api.md`,
+`references/method.md` and `scripts/obs-read.sh` beside it).
+
 ## What is in the box
 
 ```

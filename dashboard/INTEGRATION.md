@@ -395,6 +395,15 @@ pool: `priceUsd`, `depthUsd2pct` in dollars that move it 2%, `venue`,
 `feePct`; null when the chain did not answer), whether the app and its
 `/health` answer, and `block`, the same text the agent sees. Cached 60 s.
 
+## 2b. The skill, for other agents
+
+The same contract packaged for a model to load: `GET /skill` returns
+`SKILL.md` (how to read the desk and interpret it), with
+`/skill/references/api.md` (every field), `/skill/references/method.md`
+(the reads, the thresholds, what was measured) and
+`/skill/scripts/obs-read.sh` (the latest cycle as plain text). Link it from
+the page as "for agents".
+
 ## 3. Embed options
 
 **Iframe the page** (fastest):
