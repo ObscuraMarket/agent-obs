@@ -113,6 +113,20 @@ export function deriveTickSpacing(token: `0x${string}`, feePips: number, poolId:
 }
 const usdgIsToken0 = (token: string, usdg = USDG_CONTRACT) => usdg.toLowerCase() < token.toLowerCase();
 
+const NATIVE = "0x0000000000000000000000000000000000000000" as const;
+/**
+ * PURE: the id of a pons v2 launch curve's pool, from what the launch row fixes: the token, its pair
+ * (native ETH, USDG, or the pair address the watcher recorded) and the launcher's constants (fee 0,
+ * tick spacing 200, the pons v2 hook). Verified against the watcher's own ids and the factory's
+ * graduation key on 2026-09-05. Null when the pair cannot be named.
+ */
+export function curvePoolIdFor(token: `0x${string}`, pairSymbol: string | null, pairAddress: `0x${string}` | null, hook: `0x${string}` = ((chainMemory() as { contracts?: { launchpads?: Record<string, string> } }).contracts?.launchpads?.ponsV2Hook ?? "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044") as `0x${string}`): `0x${string}` | null {
+  const pair = pairSymbol === "ETH" ? NATIVE : pairAddress ?? (pairSymbol === "USDG" ? (USDG_CONTRACT as `0x${string}`) : pairSymbol ? (ASSETS[`${pairSymbol}@robinhood`]?.contract as `0x${string}` | undefined) ?? null : null);
+  if (!pair) return null;
+  const [a, b] = pair.toLowerCase() < token.toLowerCase() ? [pair, token] : [token, pair];
+  return poolIdFor(a as `0x${string}`, b as `0x${string}`, 0, 200, hook);
+}
+
 /** PURE: the feed's tail parsed into current candidates and per-pool hourly stats. Bad lines are skipped. */
 export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<FeedSnapshot, "readAt" | "path"> {
   const sidePools = new Map<string, { fee: number; tickSpacing: number }>();
@@ -143,6 +157,11 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
       const at = toMs(r.ts);
       if (!at) continue;
       const gate = (r.gate ?? {}) as Record<string, unknown>;
+      const token = r.token.toLowerCase() as `0x${string}`;
+      const pairSymbol = typeof r.pairSymbol === "string" ? r.pairSymbol.toUpperCase() : null;
+      const pairAddress = typeof r.pair === "string" && /^0x[0-9a-fA-F]{40}$/.test(r.pair) ? (r.pair.toLowerCase() as `0x${string}`) : null;
+      // The watcher sometimes records a launch before its curve pool's id; the id follows from the row, so derive it.
+      const curvePoolId = typeof r.curvePoolId === "string" ? r.curvePoolId : curvePoolIdFor(token, pairSymbol, pairAddress);
       launches.set(r.token.toLowerCase(), {
         at,
         token: r.token.toLowerCase() as `0x${string}`,
@@ -151,12 +170,12 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
         gateOk: gate.ok === true || r.gateOk === true,
         standard: typeof gate.standard === "string" ? gate.standard : null,
         creatorTaxBps: Number.isFinite(Number(r.creatorTaxBps)) && r.creatorTaxBps != null ? Number(r.creatorTaxBps) : null,
-        curvePoolId: typeof r.curvePoolId === "string" ? r.curvePoolId : null,
+        curvePoolId,
         firstSwapAt: toMs(r.firstSwapTs) || null,
         ignitedAfterMin: toMs(r.ignitionTs) ? Math.max(0, Math.round((toMs(r.ignitionTs) - at) / 60e3)) : null,
         sidePools: [],
-        pairSymbol: typeof r.pairSymbol === "string" ? r.pairSymbol.toUpperCase() : null,
-        pairAddress: typeof r.pair === "string" && /^0x[0-9a-fA-F]{40}$/.test(r.pair) ? (r.pair.toLowerCase() as `0x${string}`) : null,
+        pairSymbol,
+        pairAddress,
       });
     } else if (kind === "ignition" && typeof r.token === "string") {
       const m = Number(r.minutesAfterLaunch);

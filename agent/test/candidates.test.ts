@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseFeed, deriveTickSpacing, poolIdFor, exitSignal, exitVerdict, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs } from "../src/desk/candidates.ts";
+import { parseFeed, deriveTickSpacing, poolIdFor, curvePoolIdFor, exitSignal, exitVerdict, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs } from "../src/desk/candidates.ts";
 import { checkCandidate, railsFromEnv, checkRails, type Intent } from "../src/desk/rails.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 import { routeFor, costFloorPct, encodeSwap } from "../src/desk/onchain.ts";
@@ -218,4 +218,18 @@ test("the trader's exits: take profit into strength once, then trail the rest of
   assert.equal(exitVerdict({ ageH: 9, pnlPct: 65, hourly: quiet, peakPnlPct: 70, tookProfit: false }, r)!.kind, "time-stop", "the hard stops outrank the trader's exits");
   assert.equal(exitVerdict({ ageH: 1, pnlPct: -45, hourly: quiet, peakPnlPct: 5 }, r)!.kind, "floor");
   assert.equal(exitSignal({ ageH: 9, pnlPct: 0, hourly: [] }, r)!.includes("time stop"), true, "the old form still answers");
+});
+
+test("a launch's curve pool id follows from its row when the watcher has not recorded one", () => {
+  const token = "0xeb1f90633946139ccdcb3b1bf53aa815b5a52b45" as const;
+  const NVDA = "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec" as const;
+  const known = "0xef6ae4928c618edc9c67bfdd285e9e2a96b8c69dc4f47c898561fe191c498451";
+  assert.equal(curvePoolIdFor(token, "NVDA", NVDA), known, "the pair address names the pool");
+  assert.equal(curvePoolIdFor(token, "NVDA", null), known, "so does the pair symbol through the registry");
+  assert.equal(curvePoolIdFor(token, "ETH", null), poolIdFor("0x0000000000000000000000000000000000000000", token, 0, 200, "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044"), "ETH is the native currency");
+  assert.equal(curvePoolIdFor(token, null, null), null, "no pair, no id");
+  const now = 1_800_000_000_000;
+  const feed = [{ kind: "launch", token, source: "pons-v2", ts: (now - 10 * 60e3) / 1000, symbol: "SC69", gate: { ok: true, standard: "PonsV2LauncherToken" }, creatorTaxBps: 100, pair: NVDA, pairSymbol: "NVDA", ignitionTs: (now - 4 * 60e3) / 1000 }].map((r) => JSON.stringify(r)).join("\n");
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
+  assert.equal(snap.early[0].curvePoolId, known, "the parse fills the id in");
 });
