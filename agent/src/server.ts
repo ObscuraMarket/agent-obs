@@ -406,6 +406,69 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
   });
 }
 
+// The signals strip is computed on a timer and answered from the last result: it parses the launch feed and
+// the tapes, and reads every candidate's pool, which no visitor should wait for. The live heartbeat is read
+// per request, since it is one small file.
+let signalsCache: { at: number; value: Record<string, unknown> } | null = null;
+let signalsRefreshing = false;
+async function computeSignals(now: number): Promise<Record<string, unknown>> {
+  const r = await cachedReads();
+        const basisOn = (process.env.OBS_BASIS ?? "off") === "on";
+        const prices = await cachedPrices(basisOn ? ["ETH", "NVDA"] : ["ETH"]);
+        const ref = basisOn ? await stockReference("NVDA", now) : null;
+        const nvda = basisOn ? prices.NVDA ?? null : null;
+        const basis = ref && nvda ? basisSignal(nvda, ref, 0.62, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
+        const feed = readFeed(now);
+        const rules = gradeRulesFromEnv();
+        const candidates: Array<{ symbol: string; grade: "A" | "B" | "C" | null; [k: string]: unknown }> = [];
+        for (const c of feed.candidates.slice(0, 4)) {
+          const spec = dynamicPoolSpec(candidateAsset(c));
+          const depth = spec ? await poolRead(spec).then((p) => p?.depthUsd2pct ?? null).catch(() => null) : null;
+          const g = gradeCandidate(c, feed.hourly[c.poolId.toLowerCase()] ?? [], depth, rules);
+          candidates.push({ symbol: c.symbol, stable: c.stable ? { stable: c.stable.stable, activeHours: c.stable.activeHours, hoursKnown: c.stable.hoursKnown, why: c.stable.why } : null, hour: c.hour, volUsd: c.volUsd, movePct: c.movePct, senders: c.senders, tierPct: c.tierPct, grade: g.grade, capUsd: g.capUsd, why: g.why, depthUsd: g.depthUsd, trend: g.trend });
+        }
+        const early = feed.early.slice(0, 6).map((l) => ({ symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null, tradable: !!resolveAny(`${l.symbol}@robinhood`, feed)?.candidate, via: l.sidePools.length ? "side pool" : "curve" }));
+        // Tokens in play and their tapes, and the launch record: what the desk is actually doing.
+        const held = readTokens().map((t) => t.symbol);
+        const inPlay = [...new Set([...held, ...early.filter((e) => e.ignitedAfterMin != null && e.gateOk).map((e) => e.symbol), ...candidates.filter((c) => c.grade).map((c) => c.symbol)])].slice(0, 6);
+        const entryRules = entryRulesFromEnv();
+        const tapes = inPlay.map((sym) => {
+          const a = resolveAny(`${sym}@robinhood`, feed);
+          const spec = a?.candidate ? dynamicPoolSpec(a) : null;
+          if (!spec?.id) return { symbol: sym, trend: "unknown", swaps: null, buyPressurePct: null, entry: null };
+          const rows = readTape(spec.id);
+          const st = tapeStats(rows, sym, now, 15);
+          const g = candidates.find((x) => x.symbol === sym)?.grade;
+          const er = entryRead(rows, sym, now, entryRules, held.includes(sym) || g === "A" || g === "B");
+          return { symbol: sym, trend: st.trend, swaps: st.swaps, buyPressurePct: st.buyPressurePct, movePct: st.movePct, offPeakPct: st.offPeakPct, entry: { state: er.state, ok: er.ok, why: er.why, pickup: er.pickup, offPeakPct: er.offPeakPct, recentBuyPressurePct: er.recentBuyPressurePct } };
+        });
+        return { basis, reference: ref ? { printStatus: ref.printStatus, printAt: ref.printAt, perpTradesDay: ref.perpTradesDay, perpChangeDayPct: ref.perpChangeDayPct } : null, ratio: basisOn ? ratioStats(readPrices(), "ETH", "NVDA", now) : null, session: basisOn ? usSession(now) : null, candidates, early, tapes, launch: { ...launchRecord(readCloses()), line: launchRecordLine(launchRecord(readCloses())) }, market: r.market ?? null, at: now };
+}
+async function refreshSignals(): Promise<void> {
+  if (signalsRefreshing) return;
+  signalsRefreshing = true;
+  try {
+    const now = Date.now();
+    signalsCache = { at: now, value: await computeSignals(now) };
+  } catch {
+    /* keep the last result */
+  } finally {
+    signalsRefreshing = false;
+  }
+}
+function liveBlock(now: number): Record<string, unknown> {
+  try {
+    const lp = dataPath("obs-live.json");
+    if (existsSync(lp)) {
+      const b = JSON.parse(readFileSync(lp, "utf8")) as { at: number };
+      return { live: now - Number(b.at) < 30_000, ...b };
+    }
+  } catch {
+    /* not live */
+  }
+  return { live: false, watching: [] };
+}
+
 export function handle(req: IncomingMessage, res: ServerResponse): void {
   cors(req, res);
   if (req.method === "OPTIONS") {
@@ -562,52 +625,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/signals") {
-    // What the desk is watching and how close each is to acting, for the page's signals strip.
-    cachedReads()
-      .then(async (r) => {
-        const basisOn = (process.env.OBS_BASIS ?? "off") === "on";
-        const prices = await cachedPrices(basisOn ? ["ETH", "NVDA"] : ["ETH"]);
-        const ref = basisOn ? await stockReference("NVDA", now) : null;
-        const nvda = basisOn ? prices.NVDA ?? null : null;
-        const basis = ref && nvda ? basisSignal(nvda, ref, 0.62, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
-        const feed = readFeed(now);
-        const rules = gradeRulesFromEnv();
-        const candidates: Array<{ symbol: string; grade: "A" | "B" | "C" | null; [k: string]: unknown }> = [];
-        for (const c of feed.candidates.slice(0, 4)) {
-          const spec = dynamicPoolSpec(candidateAsset(c));
-          const depth = spec ? await poolRead(spec).then((p) => p?.depthUsd2pct ?? null).catch(() => null) : null;
-          const g = gradeCandidate(c, feed.hourly[c.poolId.toLowerCase()] ?? [], depth, rules);
-          candidates.push({ symbol: c.symbol, stable: c.stable ? { stable: c.stable.stable, activeHours: c.stable.activeHours, hoursKnown: c.stable.hoursKnown, why: c.stable.why } : null, hour: c.hour, volUsd: c.volUsd, movePct: c.movePct, senders: c.senders, tierPct: c.tierPct, grade: g.grade, capUsd: g.capUsd, why: g.why, depthUsd: g.depthUsd, trend: g.trend });
-        }
-        const early = feed.early.slice(0, 6).map((l) => ({ symbol: l.symbol, source: l.source, ageMin: Math.round((now - l.at) / 60e3), gateOk: l.gateOk, creatorTaxBps: l.creatorTaxBps, ignitedAfterMin: l.ignitedAfterMin, sidePoolTierPct: l.sidePools[0]?.tierPct ?? null, tradable: !!resolveAny(`${l.symbol}@robinhood`, feed)?.candidate, via: l.sidePools.length ? "side pool" : "curve" }));
-        // Tokens in play and their tapes, and the launch record: what the desk is actually doing.
-        const held = readTokens().map((t) => t.symbol);
-        const inPlay = [...new Set([...held, ...early.filter((e) => e.ignitedAfterMin != null && e.gateOk).map((e) => e.symbol), ...candidates.filter((c) => c.grade).map((c) => c.symbol)])].slice(0, 6);
-        const entryRules = entryRulesFromEnv();
-        const tapes = inPlay.map((sym) => {
-          const a = resolveAny(`${sym}@robinhood`, feed);
-          const spec = a?.candidate ? dynamicPoolSpec(a) : null;
-          if (!spec?.id) return { symbol: sym, trend: "unknown", swaps: null, buyPressurePct: null, entry: null };
-          const rows = readTape(spec.id);
-          const st = tapeStats(rows, sym, now, 15);
-          const g = candidates.find((x) => x.symbol === sym)?.grade;
-          const er = entryRead(rows, sym, now, entryRules, held.includes(sym) || g === "A" || g === "B");
-          return { symbol: sym, trend: st.trend, swaps: st.swaps, buyPressurePct: st.buyPressurePct, movePct: st.movePct, offPeakPct: st.offPeakPct, entry: { state: er.state, ok: er.ok, why: er.why, pickup: er.pickup, offPeakPct: er.offPeakPct, recentBuyPressurePct: er.recentBuyPressurePct } };
-        });
-        // The live watch's heartbeat, when it is running: what it follows and its last trigger.
-        let live: Record<string, unknown> = { live: false, watching: [] };
-        try {
-          const lp = dataPath("obs-live.json");
-          if (existsSync(lp)) {
-            const b = JSON.parse(readFileSync(lp, "utf8")) as { at: number };
-            live = { live: now - Number(b.at) < 30_000, ...b };
-          }
-        } catch {
-          /* not live */
-        }
-        json(res, 200, { live, basis, reference: ref ? { printStatus: ref.printStatus, printAt: ref.printAt, perpTradesDay: ref.perpTradesDay, perpChangeDayPct: ref.perpChangeDayPct } : null, ratio: basisOn ? ratioStats(readPrices(), "ETH", "NVDA", now) : null, session: basisOn ? usSession(now) : null, candidates, early, tapes, launch: { ...launchRecord(readCloses()), line: launchRecordLine(launchRecord(readCloses())) }, market: r.market ?? null, at: now });
-      })
-      .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "signals unavailable" }));
+    // What the desk is watching and how close each is to acting: the last computed strip, with a fresh heartbeat.
+    if (!signalsCache) void refreshSignals();
+    json(res, 200, { ...(signalsCache?.value ?? { pending: true, candidates: [], early: [], tapes: [], launch: null, basis: null, reference: null, ratio: null, session: null, market: null }), live: liveBlock(now), at: now });
     return;
   }
   if (path === "/api/obs/market") {
@@ -635,6 +655,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   void refreshAgentToken();
   setInterval(() => void refreshAgentToken(), 45_000).unref();
+  void refreshSignals();
+  setInterval(() => void refreshSignals(), 20_000).unref();
+  // Warm the reads and prices at boot, and keep them warm, so no visitor ever pays for a cold read.
+  void cachedReads().then(() => cachedPrices(["ETH"])).catch(() => undefined);
+  setInterval(() => { void cachedReads().catch(() => undefined); void cachedPrices(["ETH"]).catch(() => undefined); }, READS_TTL_MS).unref();
   createServer(handle).listen(PORT, process.env.OBS_DASHBOARD_HOST || "127.0.0.1", () => {
     console.log(`[obs] dashboard API on http://localhost:${PORT} (page at /, JSON under /api/obs/*)`);
   });
