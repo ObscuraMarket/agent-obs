@@ -184,7 +184,8 @@ export function launchLine(r: LaunchRead): string {
   if (!r.exists) return `Launch ${r.symbol}: not a pons v2 launch, so no launch read.`;
   const bits: string[] = [];
   bits.push(`pons v2, ${r.phase == null ? "phase unread" : r.phase === 0 ? "on its curve" : r.phase === 2 ? "graduated to its pool" : PHASE_NAME[r.phase] ?? `phase ${r.phase}`}`);
-  if (r.devSharePct != null) bits.push(r.devSharePct === 0 ? "no dev buy" : `dev buy ${r.devSharePct.toFixed(2)}% of supply${r.devBuyQuote != null ? ` for ${r.devBuyQuote.toPrecision(3)} of the pair` : ""}`);
+  const qty = (x: number) => (x >= 100 ? Math.round(x).toLocaleString("en-US") : x >= 1 ? x.toFixed(2) : x.toPrecision(3));
+  if (r.devSharePct != null) bits.push(r.devSharePct === 0 ? "no dev buy" : `dev buy ${r.devSharePct.toFixed(2)}% of supply${r.devBuyQuote != null ? ` for ${qty(r.devBuyQuote)} of the pair` : ""}`);
   if (r.creatorTaxBps != null) bits.push(`creator tax ${r.creatorTaxBps / 100}%, fees to ${r.feeToThirdParty ? "a third party" : "the deployer"}`);
   if (r.exemptions) bits.push(r.exemptions.length ? `${r.exemptions.length} wallet${r.exemptions.length > 1 ? "s" : ""} exempt from the opening tax` : "no wallets exempt from the opening tax");
   if (r.socials) {
