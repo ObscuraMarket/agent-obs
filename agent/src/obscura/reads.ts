@@ -179,9 +179,22 @@ export interface TokenRead {
   explorerPriceUsd: number | null;
   volume24hUsd: number | null;
   marketCapUsd: number | null;
+  /** The 24-hour volume, the holder count and the market's TVL against the oldest sample inside the last day, as fractions; measured by the desk, the same for every viewer. */
+  change24h?: { volume: number | null; holders: number | null; liquidity: number | null };
 }
 
 const TOKEN_CACHE = "obs-token.json";
+const TOKEN_SAMPLES = "obs-token-samples.jsonl";
+interface TokenSample { at: number; volume24hUsd: number | null; holders: number | null; tvlUsd: number | null }
+const frac24 = (a: number | null | undefined, b: number | null | undefined) => (a != null && b != null && a > 0 ? (b - a) / a : null);
+/** Append this read's figures and measure each against the oldest sample inside the last day. */
+function tokenChanges(sample: TokenSample, now: number): NonNullable<TokenRead["change24h"]> {
+  if (!DRY) appendLedger(TOKEN_SAMPLES, sample as unknown as Record<string, unknown>);
+  const rows = readLedger<TokenSample>(TOKEN_SAMPLES).filter((r) => r && Number.isFinite(r.at) && now - r.at <= 24 * 3600e3);
+  if (rows.length < 2) return { volume: null, holders: null, liquidity: null };
+  const first = (k: keyof TokenSample) => rows.find((r) => r[k] != null && (r[k] as number) > 0)?.[k] as number | undefined;
+  return { volume: frac24(first("volume24hUsd"), sample.volume24hUsd), holders: frac24(first("holders"), sample.holders), liquidity: frac24(first("tvlUsd"), sample.tvlUsd) };
+}
 const TOKEN_CACHE_TTL_MS = 24 * 3600e3;
 
 /** The $OBS token as the chain reports it. Name, symbol, decimals and supply
@@ -426,6 +439,8 @@ export async function liveReads(): Promise<Reads> {
   // OBS's market needs the ETH price when its deep pool is the ETH one.
   const market = await obsMarket(p.ethUsd ?? null);
   if (market && !DRY) sampleMarket(market);
+  const now = Date.now();
+  token.change24h = tokenChanges({ at: now, volume24hUsd: token.volume24hUsd, holders: token.holders, tvlUsd: market?.tvlUsd ?? null }, now);
   return { at: Date.now(), token, prices: p, siteUp: up, apiUp: api, wallet, market };
 }
 

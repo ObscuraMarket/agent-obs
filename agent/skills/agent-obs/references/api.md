@@ -94,9 +94,10 @@ launches from the watcher`, `Held launch token SYM`, `Launch record`.
 
 The agent's own token, AOBS (`0x47366e0f257ac009e82bd46fb74e2fb50826ce98`):
 `{ contract, name, symbol, totalSupply, phase, pair, priceUsd, depthUsd2pct,
-marketCapUsd, volume24hUsd, swaps24h, holders, change24hPct, explorerUrl }`, each
-figure null until measured (`change24hPct` is a fraction against the oldest
-sample inside the last day). The desk never trades it.
+marketCapUsd, tvlUsd, volume24hUsd, swaps24h, holders, change24hPct, change24h, explorerUrl }`,
+each figure null until measured; `change24h` is `{ price, liquidity, volume, holders }`
+as fractions against the oldest sample inside the last day. `/api/obs/reads`
+carries `token.change24h` for OBS the same way. The desk never trades it.
 
 ## `/api/obs/research?limit=50`
 

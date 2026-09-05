@@ -311,12 +311,10 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       { lbl: 'Price', val: this.price(p), ...this.chgSub(chg) },
       // Supply is fixed, so the cap moves exactly with the price.
       { lbl: 'Market cap', val: this.compact(cap), ...this.chgSub(chg) },
-      { lbl: 'Vol 24h', val: this.compact(r.token?.volume24hUsd), ...this.chgSub(this.trackPct('obs:vol', r.token?.volume24hUsd)) },
-      // The USDG pool reports what it holds; the v4 ETH pool reports the dollars of buying that move the price 2%.
-      pool?.tvlUsd != null
-        ? { lbl: 'Liquidity', val: this.compact(pool.tvlUsd), ...this.chgSub(this.trackPct('obs:liq', pool.tvlUsd)) }
-        : { lbl: 'Liquidity', val: this.compact(pool?.depthUsd2pct), ...this.chgSub(this.trackPct('obs:depth', pool?.depthUsd2pct)) },
-      { lbl: 'Holders', val: holders != null ? holders.toLocaleString('en-US') : 'n/a', ...this.chgSub(this.trackPct('obs:holders', holders)) },
+      // The changes under volume, liquidity and holders are the API's own, from its samples: the same for every viewer.
+      { lbl: 'Vol 24h', val: this.compact(r.token?.volume24hUsd), ...this.chgSub(r.token?.change24h?.volume ?? null) },
+      { lbl: 'Liquidity', val: this.compact(pool?.tvlUsd ?? pool?.depthUsd2pct), ...this.chgSub(r.token?.change24h?.liquidity ?? null) },
+      { lbl: 'Holders', val: holders != null ? holders.toLocaleString('en-US') : 'n/a', ...this.chgSub(r.token?.change24h?.holders ?? null) },
       { lbl: 'Cashback earned', val: this.usd(cash), valCls: cash > 0 ? 'up' : '', ...this.chgSub(this.trackPct('obs:cash', cash)) }
     ];
   }
@@ -339,14 +337,15 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       ];
       return;
     }
-    const chg = t.change24hPct ?? null;
+    // Every change comes from the API's own samples, the same for each viewer, never from this browser's history.
+    const c = t.change24h || { price: t.change24hPct ?? null, liquidity: null, volume: null, holders: null };
     this.stats = [
-      { lbl: 'Price', val: this.price(t.priceUsd), ...this.chgSub(chg) },
+      { lbl: 'Price', val: this.price(t.priceUsd), ...this.chgSub(c.price) },
       // Supply is fixed, so the cap moves exactly with the price.
-      { lbl: 'Market cap', val: this.compact(t.marketCapUsd), ...this.chgSub(chg) },
-      { lbl: 'Vol 24h', val: this.compact(t.volume24hUsd), ...this.chgSub(this.trackPct('agent:vol', t.volume24hUsd)) },
-      { lbl: 'Liquidity', val: this.compact(t.depthUsd2pct), ...this.chgSub(this.trackPct('agent:depth', t.depthUsd2pct)) },
-      { lbl: 'Holders', val: t.holders != null ? t.holders.toLocaleString('en-US') : 'n/a', ...this.chgSub(this.trackPct('agent:holders', t.holders)) },
+      { lbl: 'Market cap', val: this.compact(t.marketCapUsd), ...this.chgSub(c.price) },
+      { lbl: 'Vol 24h', val: this.compact(t.volume24hUsd), ...this.chgSub(c.volume) },
+      { lbl: 'Liquidity', val: this.compact(t.tvlUsd ?? t.depthUsd2pct), ...this.chgSub(c.liquidity) },
+      { lbl: 'Holders', val: t.holders != null ? t.holders.toLocaleString('en-US') : 'n/a', ...this.chgSub(c.holders) },
       contract
     ];
   }

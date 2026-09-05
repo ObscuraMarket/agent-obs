@@ -177,6 +177,20 @@ const balanceOfData = (holder: string) => "0x70a08231" + holder.toLowerCase().re
  *  pool holds. Null when the chain did not answer this cycle; the reserves
  *  are null on their own if only they did not. */
 /**
+ * PURE: what a full-range position holds at the current price, from the pool's liquidity and its square-root
+ * price: amount0 = L / sqrtP, amount1 = L * sqrtP. A pons v2 graduated pool is one full-range, permanently locked
+ * position, so this is its whole TVL. Returns the two amounts in whole units.
+ */
+export function fullRangeAmounts(liquidity: string, sqrtPriceX96: string, decimals0: number, decimals1: number): { amount0: number; amount1: number } {
+  const L = BigInt(liquidity);
+  const sp = BigInt(sqrtPriceX96);
+  if (L <= 0n || sp <= 0n) return { amount0: 0, amount1: 0 };
+  const amount0 = Number((L * Q96) / sp) / 10 ** decimals0;
+  const amount1 = Number((L * sp) / Q96) / 10 ** decimals1;
+  return { amount0, amount1 };
+}
+
+/**
  * OBS on its own market. Two pools are read: the Ramses USDG pool and, when the chain memory names one and an ETH
  * price is at hand, the v4 OBS/ETH pool. The deeper one (dollars of buying that move the price 2%) sets the price;
  * the USDG pool's holdings are still read for its TVL when it wins.
@@ -190,7 +204,13 @@ export async function obsMarket(ethUsd: number | null = null): Promise<MarketRea
   ]);
   const ethRead = v4 && ethUsd && v4.priceUsd > 0 ? { ...v4, priceUsd: v4.priceUsd * ethUsd, depthUsd2pct: v4.depthUsd2pct * ethUsd } : null;
   if (ethRead && (!ramses || ethRead.depthUsd2pct > ramses.depthUsd2pct)) {
-    return { venue: ethRead.venue, feePct: ethRead.feePct, priceUsd: ethRead.priceUsd, depthUsd2pct: ethRead.depthUsd2pct, liquidity: ethRead.liquidity, at: ethRead.at, usdgInPool: null, obsInPool: null, tvlUsd: null, quote: "ETH" };
+    // The pool is one full-range locked position: its TVL follows from its liquidity and price.
+    const e = m.obsMarket.ethPool as PoolSpec;
+    const { amount0, amount1 } = fullRangeAmounts(ethRead.liquidity, ethRead.sqrtPriceX96, e.decimals0, e.decimals1);
+    const ethAmount = e.usdToken === 0 ? amount0 : amount1;
+    const obsAmount = e.usdToken === 0 ? amount1 : amount0;
+    const tvlUsd = ethAmount * (ethUsd as number) + obsAmount * ethRead.priceUsd;
+    return { venue: ethRead.venue, feePct: ethRead.feePct, priceUsd: ethRead.priceUsd, depthUsd2pct: ethRead.depthUsd2pct, liquidity: ethRead.liquidity, at: ethRead.at, usdgInPool: null, obsInPool: obsAmount, tvlUsd, quote: "ETH" };
   }
   const r = ramses;
   if (!r || !(r.priceUsd > 0)) return null;

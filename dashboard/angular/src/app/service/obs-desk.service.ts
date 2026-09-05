@@ -105,8 +105,12 @@ export interface ObsAgentToken {
   volume24hUsd: number | null;
   swaps24h: number | null;
   holders: number | null;
+  /** What the pool holds, in dollars (one full-range locked position). */
+  tvlUsd?: number | null;
   /** The price against the oldest sample inside the last day, a fraction; null until there are two samples. */
   change24hPct?: number | null;
+  /** The same for TVL, the 24-hour volume and the holder count, measured by the API, not the browser. */
+  change24h?: { price: number | null; liquidity: number | null; volume: number | null; holders: number | null };
   launchedAt: number | null;
   explorerUrl: string;
   at: number;
@@ -240,6 +244,8 @@ export interface ObsReads {
     totalSupply: string | null; holders: number | null;
     /** The explorer's own lagging figures. */
     explorerPriceUsd?: number | null; volume24hUsd?: number | null; marketCapUsd?: number | null;
+    /** 24-hour changes measured by the API from its own samples, as fractions. */
+    change24h?: { volume: number | null; holders: number | null; liquidity: number | null };
   };
   prices: { btcUsd: number | null; ethUsd: number | null };
   market?: ObsPoolRead | null;

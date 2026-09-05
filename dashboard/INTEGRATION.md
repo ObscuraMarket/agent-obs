@@ -402,9 +402,13 @@ The agent's own token (AOBS, `0x47366e0f257ac009e82bd46fb74e2fb50826ce98`
 on Robinhood Chain), for the Market card: `{ contract, name, symbol,
 decimals, totalSupply, phase, pair, poolId, priceUsd, depthUsd2pct,
 marketCapUsd, volume24hUsd, swaps24h, holders, change24hPct, launchedAt, explorerUrl, at }`.
-`change24hPct` is the price against the oldest sample inside the last day, a
-fraction, null until there are two samples; the reference page draws the
-AOBS card with the same six boxes and sub-lines as the OBS card.
+`tvlUsd` is what the pool holds (one full-range locked position, from its
+liquidity and price). `change24hPct` is the price against the oldest sample
+inside the last day, a fraction, null until there are two samples;
+`change24h` gives the same for `price`, `liquidity`, `volume` and `holders`.
+`/api/obs/reads` carries the same for OBS as `token.change24h`
+(`volume`, `holders`, `liquidity`). The reference page draws both cards from
+these, the same for every viewer, never from the browser's own history.
 Price and depth come from its pool, volume from the pool's own swaps over
 the last 24 hours, holders from its Transfer events; each is `null` until
 it can be measured. Cached a minute. The desk never trades this token; the
