@@ -34,6 +34,7 @@
     "paper:session": "bash scripts/_paper-session.sh",
     "relay": "bash ../scripts/relay-dashboard.sh",
     "replay:entries": "tsx scripts/replayEntries.ts",
+    "replay:ignition": "tsx scripts/replayIgnition.ts",
     "book:withdraw": "tsx scripts/withdrawProposals.ts"
   },
   "dependencies": {
