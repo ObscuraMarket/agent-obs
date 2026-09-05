@@ -19,11 +19,12 @@ and the live reads he is allowed to cite.
    dependencies, renders every endpoint), `angular/` is the Agent page from
    obscuracex.com as a standalone Angular app already wired to this API, and
    this file is the contract. Nothing here needs our code in your build.
-2. **Point it at an API.** The page does this itself: on obscura.market it
-   uses `https://obs-api.obscura.market`, on obscura.markets
-   `https://obs-api.obscura.markets`, both the same desk on Railway. If a
-   name does not answer within four seconds (a fresh DNS record, a
-   certificate still being issued), the page falls back to the desk's
+2. **Point it at an API.** The page does this itself: on obscura.market and
+   on obscura.markets it uses `https://obs-api.obscura.markets`, the API
+   name with a certificate today (since September 5; the name in the
+   obscura.market zone still waits on its ownership TXT record, and probing
+   it first cost every visitor four seconds). If the name does not answer
+   within four seconds, the page falls back to the desk's
    direct address, `https://desk-production-18ad.up.railway.app`, for that
    page load. `?api=https://...` still overrides everything and is
    remembered (`?api=reset` forgets it). The only thing obscura.market's

@@ -274,8 +274,9 @@ export interface CgMarket {
  *   1. `?api=https://host` in the address bar wins and is remembered in localStorage,
  *      `?api=reset` forgets it (handy when testing the front end against another backend);
  *   2. otherwise whatever was remembered;
- *   3. otherwise, on obscura.market or obscura.markets, the API name on that same
- *      domain (`obs-api.` + the site's apex), so each site talks to its own name;
+ *   3. otherwise, on obscura.market or obscura.markets, `https://obs-api.obscura.markets`,
+ *      the API name that has a certificate today (the name in the obscura.market zone
+ *      still waits on an ownership record; a probe of it cost every visitor four seconds);
  *   4. otherwise `environment.obsApiUrl` ('' means same-origin, see proxy.conf.json).
  */
 /** The desk's direct address, used when a site's own API name does not answer (DNS or certificate not ready). */
@@ -288,7 +289,9 @@ export function resolveObsApiUrl(): string {
   let url = environment.obsApiUrl;
   try {
     const host = window.location.hostname.replace(/^www\./, '');
-    if (host === 'obscura.market' || host === 'obscura.markets') { url = `https://obs-api.${host}`; }
+    // Both domains use the API name that has a certificate today (obs-api.obscura.markets). The name in the
+    // obscura.market zone waits on an ownership record; probing it first cost every visitor a four-second wait.
+    if (host === 'obscura.market' || host === 'obscura.markets') { url = 'https://obs-api.obscura.markets'; }
   } catch { /* no window: keep the environment value */ }
   try {
     const q = new URLSearchParams(window.location.search).get('api');
