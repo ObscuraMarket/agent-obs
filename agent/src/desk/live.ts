@@ -171,7 +171,7 @@ async function step(now: number): Promise<void> {
       const p = prev[st.symbol];
       if (p && p.entryState === st.entryState && p.entryOk === st.entryOk) continue;
       if (!p && st.entryState === "quiet") continue;
-      const short = st.why.replace(/^[^;:]*;\s*/, "").replace(/:\s*[a-z ]+, (entry allowed|no entry)$/i, "").replace(/^no volume pickup \(/, "").replace(/\)$/, "");
+      const short = st.why.replace(/^[^;:]*;\s*/, "").replace(/:\s*[a-z ]+,? ?(entry allowed|no entry|not allowed).*$/i, "").replace(/^no volume pickup \(/, "").replace(/\)$/, "").trim().slice(0, 110);
       recordResearch({ kind: "entry", symbol: st.symbol, ok: st.entryOk, note: `${st.entryState}|${short}` });
     }
   }

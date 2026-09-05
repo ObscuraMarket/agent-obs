@@ -11,6 +11,7 @@ test("every research event reads as one plain sentence a newcomer follows", () =
   assert.equal(researchLine({ kind: "entry", symbol: "PORK", ok: false, note: "spike" }), "PORK's tape: a spike, the top of a run. Not buying a spike.");
   assert.equal(researchLine({ kind: "entry", symbol: "PORK", ok: true, note: "pullback|20% off the peak, buy pressure 61%" }), "PORK's tape: a pullback that held a higher low and turned up (20% off the peak, buy pressure 61%). Entry allowed, thinking.");
   assert.equal(researchLine({ kind: "entry", symbol: "PORK", ok: false, note: "quiet|the last 10 min ran 0.4x the earlier tape" }), "PORK's tape: quiet, the last 10 min ran 0.4x the earlier tape.");
+  assert.equal(researchLine({ kind: "entry", symbol: "HOODRAT", ok: false, note: "pullback|18% off its peak but buy pressure 49% over the last 10 min (50% needed)" }), "HOODRAT's tape: a pullback, but 18% off its peak but buy pressure 49% over the last 10 min (50% needed). No entry yet.");
   assert.equal(researchLine({ kind: "holders", symbol: "PORK", ok: true, note: "140 wallets, largest 9%, top ten 31%" }), "PORK's holders: 140 wallets, largest 9%, top ten 31%. OK.");
   assert.equal(researchLine({ kind: "holders", symbol: "UNIT", ok: false, note: "largest 50%" }), "UNIT's holders: FAIL, largest 50%. Not buying.");
   assert.equal(researchLine({ kind: "launch-read", symbol: "COFF", ok: false, note: "dev buy 27.3%" }), "COFF's launch: FAIL, dev buy 27.3%. Not buying.");

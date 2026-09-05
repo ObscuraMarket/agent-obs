@@ -49,8 +49,10 @@ export function researchLine(e: ResearchInput): string {
       return `Stopped watching ${s}${e.note ? `: ${e.note}` : ""}.`;
     case "entry": {
       const [state, ...rest] = e.note.split("|");
-      const f = ENTRY[state] ?? ((sym: string, n: string) => `${sym}'s tape: ${state}${n ? `, ${n}` : ""}.`);
-      return f(s, rest.join("|").trim());
+      const n = rest.join("|").trim();
+      if ((state === "pullback" || state === "base") && e.ok === false) return `${s}'s tape: a ${state}, but ${n || "not enough buyers behind it"}. No entry yet.`;
+      const f = ENTRY[state] ?? ((sym: string, note: string) => `${sym}'s tape: ${state}${note ? `, ${note}` : ""}.`);
+      return f(s, n);
     }
     case "holders":
       return e.ok ? `${s}'s holders: ${e.note}. OK.` : `${s}'s holders: FAIL, ${e.note}. Not buying.`;
