@@ -5,7 +5,7 @@
 // engage jobs drift, so the same agent would decline a stranger's question and
 // then volunteer the topic himself an hour later. Safety rules that are
 // copy-pasted stop matching.
-import { OBS_CONTRACT } from "../config.ts";
+import { OBS_CONTRACT, AGENT_TOKEN } from "../config.ts";
 
 /** Strip dashes used as punctuation. House rule bans em AND en dashes. */
 export function stripDashes(s: string): string {
@@ -93,7 +93,7 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   // shows. Any OTHER 40-hex string is a wallet, a deposit address, or an
   // impersonator's lookalike, and none belong on a timeline. A deposit
   // address in particular is how a swap gets hijacked.
-  [new RegExp(`0x(?!${OBS_CONTRACT.slice(2)}\\b)[0-9a-fA-F]{40}\\b`, "i"), "an address that is not the token"],
+  [new RegExp(`0x(?!(${OBS_CONTRACT.slice(2)}|${AGENT_TOKEN.slice(2)})\\b)[0-9a-fA-F]{40}\\b`, "i"), "an address that is not the token"],
   // Privacy is the product; getting around anyone is not. The prompt says
   // it; this enforces it. Scoped to the framing, so "private" and "no KYC"
   // as product facts pass and a how-to never does.

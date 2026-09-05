@@ -5,7 +5,7 @@ import { Subscription, interval } from 'rxjs';
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import {
   CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition,
-  ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
+  ObsAgentToken, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
 } from '../../service/obs-desk.service';
 
 type MarketAssetId = 'agent' | 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
@@ -17,7 +17,7 @@ interface MarqueeItem { kind: 'eth' | 'usdg' | 'obs' | 'stock' | 'pnl'; value?: 
 const MARQUEE_STOCKS = ['aapl', 'amzn', 'googl', 'mcd', 'meta', 'msft', 'nflx', 'nvda', 'pypl', 'tsla'];
 
 /** One cell of a six-cell strip (stats, portfolio). */
-interface StatCell { lbl: string; val: string; valCls?: string; sub?: string; subCls?: string; }
+interface StatCell { lbl: string; val: string; valCls?: string; sub?: string; subCls?: string; /** Clicking the cell copies this. */ copy?: string; }
 
 /** One chip of the live trades ticker. */
 interface TickerChip { side: string; sideCls: string; asset: string; amt: string; status: string; }
@@ -51,6 +51,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   pnl: ObsPnl | null = null;
   reads: ObsReads | null = null;
   obsMarket: ObsMarket | null = null;
+  agentToken: ObsAgentToken | null = null;
+  agentCopied = false;
   feed: ObsFeedItem[] = [];
   err = '';
 
@@ -62,7 +64,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   assetMenuOpen = false;
   readonly marketAssets: Array<{ id: MarketAssetId; label: string }> = [
     { id: 'obs', label: 'OBS' },
-    { id: 'agent', label: 'Agent OBS' },
+    { id: 'agent', label: 'AOBS' },
     { id: 'eth', label: 'Ethereum' },
     { id: 'usdg', label: 'USDG' },
     { id: 'btc', label: 'Bitcoin' },
@@ -223,6 +225,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.err = '';
     const fail = (path: string) => () => { this.err = path; };
     this.obs.status().subscribe({ next: (s) => { this.status = s; this.buildRails(s); this.buildStats(); }, error: fail('status') });
+    this.obs.agentToken().subscribe({ next: (t) => { this.agentToken = t; if (this.marketAsset === 'agent') { this.buildStats(); } }, error: () => { /* the card keeps its placeholders */ } });
     this.obs.reads().subscribe({ next: (r) => { this.reads = r; this.buildWallet(r); this.buildStats(); if (this.chartSeries === 'obs') { this.updateChart(); } }, error: fail('reads') });
     this.obs.pnl(this.chartHours).subscribe({ next: (p) => { this.pnl = p; this.buildPortfolio(p); this.buildPositions(p); this.updateChart(); }, error: fail('pnl') });
     this.obs.market(this.chartHours).subscribe({ next: (m) => { this.obsMarket = m; this.buildStats(); if (this.chartSeries === 'obs') { this.updateChart(); } }, error: fail('market') });
@@ -317,14 +320,38 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   /** The agent's own token, going live: the logo and the honest word on every box until the ticker is announced. Filled from the API once it trades. */
   private buildStatsAgent(): void {
+    const t = this.agentToken;
+    const addr = t?.contract || '';
+    const short = addr ? addr.slice(0, 6) + '\u2026' + addr.slice(-4) : 'TBD';
+    if (!t || t.priceUsd == null) {
+      this.stats = [
+        { lbl: 'Price', val: t?.priceUsd == null ? 'TBD' : this.price(t.priceUsd), sub: t ? 'not priced yet' : 'going live' },
+        { lbl: 'Market cap', val: 'TBD', sub: 'not priced yet' },
+        { lbl: 'Vol 24h', val: t?.volume24hUsd != null ? this.compact(t.volume24hUsd) : 'TBD', sub: t?.swaps24h != null ? t.swaps24h.toLocaleString('en-US') + ' swaps' : 'going live' },
+        { lbl: 'Liquidity', val: 'TBD', sub: 'not priced yet' },
+        { lbl: 'Holders', val: t?.holders != null ? t.holders.toLocaleString('en-US') : 'TBD', sub: t?.phase || 'going live' },
+        { lbl: 'Contract', val: short, sub: this.agentCopied ? 'copied' : (addr ? 'click to copy' : 'announced at launch'), copy: addr || undefined }
+      ];
+      return;
+    }
     this.stats = [
-      { lbl: 'Price', val: 'TBD', sub: 'going live' },
-      { lbl: 'Market cap', val: 'TBD', sub: 'going live' },
-      { lbl: 'Vol 24h', val: 'TBD', sub: 'going live' },
-      { lbl: 'Liquidity', val: 'TBD', sub: 'going live' },
-      { lbl: 'Holders', val: 'TBD', sub: 'going live' },
-      { lbl: 'Ticker', val: 'TBD', sub: 'announced at launch' }
+      { lbl: 'Price', val: this.price(t.priceUsd), sub: t.symbol ? t.symbol + ' / USD' : '' },
+      { lbl: 'Market cap', val: this.compact(t.marketCapUsd), sub: t.totalSupply != null ? this.compactPlain(t.totalSupply) + ' supply' : '' },
+      { lbl: 'Vol 24h', val: this.compact(t.volume24hUsd), sub: t.swaps24h != null ? t.swaps24h.toLocaleString('en-US') + ' swaps' : '' },
+      { lbl: 'Liquidity', val: this.compact(t.depthUsd2pct), sub: 'moves the price 2%' },
+      { lbl: 'Holders', val: t.holders != null ? t.holders.toLocaleString('en-US') : 'n/a', sub: t.phase || '' },
+      { lbl: 'Contract', val: short, sub: this.agentCopied ? 'copied' : 'click to copy', copy: addr }
     ];
+  }
+
+  /** A stat cell that carries an address copies it on click. */
+  copyCell(c: StatCell): void {
+    if (!c.copy || !navigator.clipboard) { return; }
+    navigator.clipboard.writeText(c.copy).then(() => {
+      this.agentCopied = true;
+      this.buildStats();
+      setTimeout(() => { this.agentCopied = false; this.buildStats(); }, 1500);
+    });
   }
 
   private buildStatsCg(): void {

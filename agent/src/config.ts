@@ -43,6 +43,10 @@ export const MAX_TWEET_CHARS = Number(process.env.X_MAX_TWEET_CHARS ?? 280);
 export const RPC_URL = process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com";
 /** The one 40-hex address a post may contain. Anything else is blocked. */
 export const OBS_CONTRACT = (process.env.OBS_CONTRACT || "0xfe242d1da8fd04f6a1f80b6d3d807b02e062ad4e").toLowerCase();
+/** The agent's own token (AOBS on Robinhood Chain). Shown on the page; never traded by the desk. */
+export const AGENT_TOKEN = (process.env.OBS_AGENT_TOKEN || "0x47366e0f257ac009e82bd46fb74e2fb50826ce98").toLowerCase();
+/** Contracts the desk never trades, whatever the feed says: its own token, plus OBS_NEVER_TRADE (comma-separated). */
+export const NEVER_TRADE: ReadonlySet<string> = new Set([AGENT_TOKEN, ...(process.env.OBS_NEVER_TRADE ?? "").split(",").map((s) => s.trim().toLowerCase()).filter((s) => /^0x[0-9a-f]{40}$/.test(s))]);
 export const SITE_URL = (process.env.OBSCURA_SITE_URL || "https://obscura.market").replace(/\/+$/, "");
 export const API_URL = (process.env.OBSCURA_API_URL || "https://api.obscura.market").replace(/\/+$/, "");
 /** OBS's own wallet, public address only. Empty until scripts/wallet.mjs create has run and the operator set it. */

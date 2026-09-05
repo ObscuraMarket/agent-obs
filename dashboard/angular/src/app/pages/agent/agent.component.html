@@ -121,7 +121,7 @@
       </div>
     </div>
     <div class="boxes">
-      <div class="box" *ngFor="let c of stats">
+      <div class="box" *ngFor="let c of stats" [class.copy]="!!c.copy" (click)="copyCell(c)">
         <div class="lbl">{{ c.lbl }}</div>
         <div class="val num" [ngClass]="c.valCls || ''">{{ c.val }}</div>
         <div class="sub num" *ngIf="c.sub" [ngClass]="c.subCls || ''">{{ c.sub }}</div>

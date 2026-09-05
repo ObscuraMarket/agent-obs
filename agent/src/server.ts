@@ -23,6 +23,8 @@ import { poolRead } from "./obscura/pools.ts";
 import { readThoughts, type Thought } from "./desk/thoughts.ts";
 import { digestThought, watchEvent, type WatchEvent } from "./desk/digest.ts";
 import { readResearch } from "./desk/research.ts";
+import { readAgentToken } from "./desk/agentToken.ts";
+import { AGENT_TOKEN } from "./config.ts";
 
 /** A thought as the page reads it: the record plus its digest (verdict, headline, each token's status). Additive. */
 const withDigest = (t: Thought) => ({ ...t, digest: digestThought(t) });
@@ -437,6 +439,14 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   if (path === "/api/obs/stream") {
     const limit = Number(url.searchParams.get("limit") ?? 12);
     stream(req, res, Number.isFinite(limit) && limit > 0 ? Math.min(limit, 50) : 12);
+    return;
+  }
+  if (path === "/api/obs/agent-token") {
+    // The agent's own token, for the Market card: read from its pool and its transfers, never traded by the desk.
+    cachedPrices(["ETH"])
+      .then((p) => readAgentToken(p.ETH ?? null, now))
+      .then((t) => json(res, 200, t))
+      .catch((e) => json(res, 200, { contract: AGENT_TOKEN, error: e instanceof Error ? e.message.slice(0, 120) : "unreadable", at: now }));
     return;
   }
   if (path === "/api/obs/research") {

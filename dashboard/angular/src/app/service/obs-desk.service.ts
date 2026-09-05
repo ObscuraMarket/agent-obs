@@ -89,6 +89,27 @@ export interface ObsThought {
   digest?: ObsDigest;
 }
 
+/** The agent's own token, read from its pool and its transfers; every figure null until it can be measured. */
+export interface ObsAgentToken {
+  contract: string;
+  name: string | null;
+  symbol: string | null;
+  decimals: number;
+  totalSupply: number | null;
+  phase: string | null;
+  pair: string | null;
+  poolId: string | null;
+  priceUsd: number | null;
+  depthUsd2pct: number | null;
+  marketCapUsd: number | null;
+  volume24hUsd: number | null;
+  swaps24h: number | null;
+  holders: number | null;
+  launchedAt: number | null;
+  explorerUrl: string;
+  at: number;
+}
+
 /** One line of the research log: what the desk learned about a token, as it learned it (stream event `research`, endpoint `/api/obs/research`). */
 export interface ObsResearchEvent {
   at: number;
@@ -324,6 +345,10 @@ export class ObsDeskService {
 
   feed(limit = 8): Observable<ObsItems<ObsFeedItem>> {
     return this.http.get<ObsItems<ObsFeedItem>>(`${this.base}/api/obs/feed`, { params: { limit } });
+  }
+
+  agentToken(): Observable<ObsAgentToken> {
+    return this.http.get<ObsAgentToken>(`${this.base}/api/obs/agent-token`);
   }
 
   reads(): Observable<ObsReads> {

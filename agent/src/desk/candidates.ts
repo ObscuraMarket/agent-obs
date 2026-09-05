@@ -11,7 +11,7 @@
 // rule), or whether the token could not be sold and is blacklisted.
 import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync, writeFileSync } from "node:fs";
 import { encodeAbiParameters, keccak256, createPublicClient, http, parseAbi, decodeEventLog } from "viem";
-import { dataPath, USDG_CONTRACT, RPC_URL } from "../config.ts";
+import { dataPath, USDG_CONTRACT, RPC_URL, NEVER_TRADE } from "../config.ts";
 import { chainMemory } from "../obscura/pools.ts";
 import { ASSETS, type Asset } from "./assets.ts";
 import type { PoolSpec } from "../obscura/pools.ts";
@@ -147,6 +147,7 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
     const kind = String(r.kind ?? "");
     const id = typeof r.id === "string" ? r.id.toLowerCase() : "";
     if (kind === "side-pool" && id && Number.isFinite(Number(r.fee)) && Number.isFinite(Number(r.tickSpacing))) {
+      if (typeof r.token === "string" && NEVER_TRADE.has(r.token.toLowerCase())) continue;
       sidePools.set(id, { fee: Number(r.fee), tickSpacing: Number(r.tickSpacing) });
       if (typeof r.token === "string") {
         const list = sidePoolsByToken.get(r.token.toLowerCase()) ?? [];
@@ -154,6 +155,7 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
         sidePoolsByToken.set(r.token.toLowerCase(), list);
       }
     } else if (kind === "launch" && typeof r.token === "string") {
+      if (NEVER_TRADE.has(r.token.toLowerCase())) continue;
       const at = toMs(r.ts);
       if (!at) continue;
       const gate = (r.gate ?? {}) as Record<string, unknown>;
@@ -191,6 +193,7 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
         if (!prev || at >= prev.at) meta.set(id, { token: r.token.toLowerCase() as `0x${string}`, symbol: String(r.symbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12), tierPct: Number(r.tier), gateOk: r.gateOk === true, source: String(r.launchSource ?? ""), at, swaps: Number(r.swaps ?? 0) || 0 });
       }
     } else if (kind === "candidate" && id && typeof r.token === "string") {
+      if (NEVER_TRADE.has(r.token.toLowerCase())) continue;
       const at = Number(r.ts ?? 0);
       const tierPct = Number(r.tier);
       if (!Number.isFinite(at) || !Number.isFinite(tierPct)) continue;
@@ -675,4 +678,3 @@ export function gradeCandidate(c: Candidate, trail: HourlyStat[], depthUsd: numb
   if (cOk) return { grade: "C", capUsd: r.capUsd.C, why: `probe only: ${fails.slice(0, 2).join(", ")}`, depthUsd, drawdownPct, trend };
   return { grade: null, capUsd: 0, why: `below the bar: ${trend === "rolling over" ? "volume rolling over" : `${drawdownPct?.toFixed(0)}% off its peak`}`, depthUsd, drawdownPct, trend };
 }
-

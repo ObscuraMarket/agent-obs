@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { WALLET_ADDRESS } from "../config.ts";
+import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
 import { resolveAsset, assetKey, type Asset } from "./assets.ts";
 import type { Trade, TradeStatus } from "./book.ts";
 
@@ -25,6 +25,8 @@ export interface Rails {
   minFillRatio: number;
   /** Launch candidates from the watcher's feed may be traded in the pool lane. */
   candidatesOn: boolean;
+  /** Contracts the desk never trades, whatever the feed says: its own token first. */
+  neverTrade: ReadonlySet<string>;
   /** The first buy of any launch token is capped here until a sell is proven to work. */
   probeUsd: number;
   /** Launch positions held at once. */
@@ -77,6 +79,7 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     allowedChains: new Set((env.OBS_TRADE_CHAINS ?? DEFAULT_TRADE_CHAINS).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)),
     minFillRatio: Number(env.OBS_MIN_FILL_RATIO ?? 0.97),
     candidatesOn: (env.OBS_CANDIDATES ?? "on") !== "off",
+    neverTrade: NEVER_TRADE,
     probeUsd: Number(env.OBS_PROBE_USD ?? 5),
     maxCandidates: Number(env.OBS_MAX_CANDIDATES ?? 1),
     candidateMaxHoldH: Number(env.OBS_CANDIDATE_MAX_HOLD_H ?? 8),
@@ -231,6 +234,7 @@ export interface CandidateKnowledge {
 export function checkCandidate(i: Intent, known: CandidateKnowledge | null, heldCandidates: string[], r: Rails, graded?: { grade: "A" | "B" | "C" | null; capUsd: number; why: string } | null, heldUsd = 0): { ok: true; maxUsd?: number; addOn?: boolean } | { ok: false; reason: string } {
   if (!i.to.candidate) return { ok: true };
   if (!r.candidatesOn) return { ok: false, reason: "launch candidates are switched off" };
+  if (i.to.contract && r.neverTrade.has(i.to.contract.toLowerCase())) return { ok: false, reason: `${i.to.symbol} is the desk's own token; it is never traded` };
   if (known?.blacklisted) return { ok: false, reason: `${i.to.symbol} could not be sold when probed; it is blacklisted` };
   if (graded && !graded.grade) return { ok: false, reason: `${i.to.symbol} is ${graded.why}` };
   const others = heldCandidates.filter((s) => s !== i.to.symbol);

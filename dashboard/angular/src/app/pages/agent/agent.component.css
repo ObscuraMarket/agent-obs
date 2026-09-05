@@ -1744,3 +1744,12 @@ table.tbl {
     transition: none;
   }
 }
+
+/* A stat cell that carries an address copies it on click. */
+.box.copy {
+  cursor: pointer;
+}
+
+.box.copy:hover .val {
+  color: var(--lime);
+}
