@@ -83,7 +83,7 @@ test("short reasons for chips, plain headlines, and the agent's lines without re
   assert.equal(shortWhy("12 wallets were exempted from the opening tax (2 allowed)"), "12 exempt wallets");
   assert.equal(plainReason("I am holding the book in ether as candidates either fail launch safety checks or are currently gated by the entry rails."), "Candidates either fail launch safety checks or are currently gated by the entry rails.");
   assert.equal(plainReason("I am probing JOHN as it has ignited with no creator tax."), "It has ignited with no creator tax.");
-  const t: Thought = { at: 1, observation: [], thoughts: ["I am holding the book in ether as every candidate is gated.", "HOOTS is in a breakdown, down 94%.", "HOOTS is in a breakdown, down 94%.", "ZZZ is disqualified by its launch score."], decision: { kind: "hold", reason: "I am holding the book in ether as every candidate is gated." } };
+  const t: Thought = { at: 1, observation: [], thoughts: ["I see the desk equity at 1,016.93 dollars and profit is measured at 7.18 percent.", "I am holding the book in ether as every candidate is gated.", "HOOTS is in a breakdown, down 94%.", "HOOTS is in a breakdown, down 94%.", "ZZZ is disqualified by its launch score."], decision: { kind: "hold", reason: "I am holding the book in ether as every candidate is gated." } };
   const d = digestThought(t);
   assert.equal(d.headline, "Every candidate is gated.");
   assert.deepEqual(d.lines, ["HOOTS is in a breakdown, down 94%.", "ZZZ is disqualified by its launch score."]);

@@ -140,9 +140,11 @@ export function digestThought(t: Thought): ThoughtDigest {
   const seen = new Set<string>();
   const norm = (s: string) => s.trim().toLowerCase().replace(/[.\s]+$/, "");
   const lines: string[] = [];
+  // The page shows equity and PnL; a line that only recites them is noise.
+  const recital = /^i see (the )?(desk )?equity (at|is|sits|stands)/i;
   for (const l of t.thoughts ?? []) {
     const k = norm(l);
-    if (!k || seen.has(k) || k === norm(d.reason || "") || k === norm(headline)) continue;
+    if (!k || seen.has(k) || k === norm(d.reason || "") || k === norm(headline) || recital.test(l.trim())) continue;
     seen.add(k);
     lines.push(l);
   }
