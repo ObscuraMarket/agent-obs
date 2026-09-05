@@ -943,15 +943,54 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     tick();
   }
 
+  /**
+   * One cycle, as a reader sees it: the verdict and one sentence, the agent's own lines, the board in
+   * counts, one status line per token in play, the argument when a trade was wanted, and everything it
+   * read folded behind one click. A thought without a digest (an older API) falls back to the raw lines.
+   */
   private cycleLines(t: ObsThought, animate: boolean, withInputs: boolean): TermItem[] {
     const out: TermItem[] = [];
     const d = t.decision || { kind: 'hold' as const };
     const swap = d.kind === 'propose-swap';
-    out.push(this.line('sys cycle', t.at, 'cycle', 'desk cycle, ' + (swap ? 'proposes a swap' : 'holds') + (withInputs ? '' : ' (inputs folded)'), false));
-    if (withInputs) { (t.observation || []).forEach((o) => out.push(this.line('obs', null, 'observe', o, false))); }
+    const g = t.digest;
+    if (!g) {
+      out.push(this.line('sys cycle', t.at, 'cycle', 'desk cycle, ' + (swap ? 'proposes a swap' : 'holds') + (withInputs ? '' : ' (inputs folded)'), false));
+      if (withInputs) { (t.observation || []).forEach((o) => out.push(this.line('obs', null, 'observe', o, false))); }
+      (t.thoughts || []).forEach((l) => out.push(this.line('think', null, 'think', l, animate)));
+      out.push(this.line('decide' + (swap ? ' swap' : ''), null, 'decide', swap ? `swap ${d.amount} ${d.from} -> ${d.to}` : 'hold', animate));
+      if (d.reason) { out.push(this.line('why', null, 'because', d.reason, animate)); }
+      return out;
+    }
+    out.push(this.line('sys cycle v-' + g.verdict, t.at, g.verdict, g.headline, animate));
     (t.thoughts || []).forEach((l) => out.push(this.line('think', null, 'think', l, animate)));
-    out.push(this.line('decide' + (swap ? ' swap' : ''), null, 'decide', swap ? `swap ${d.amount} ${d.from} -> ${d.to}` : 'hold', animate));
-    if (d.reason) { out.push(this.line('why', null, 'because', d.reason, animate)); }
+    if (g.board) {
+      const b = g.board;
+      const bits: string[] = [];
+      if (b.early) { bits.push(`${b.early} early launch${b.early === 1 ? '' : 'es'}, ${b.probeAllowed} probe-allowed, ${b.gateFailed} failed the gate`); }
+      if (b.graded || b.belowBar) { bits.push(`${b.graded} graded candidate${b.graded === 1 ? '' : 's'}, ${b.belowBar} below the bar`); }
+      if (bits.length) { out.push(this.line('board', null, 'board', bits.join('; '), false)); }
+    }
+    g.tokens.forEach((x) => out.push(this.line('tok t-' + x.tone, null, x.symbol, x.line, false)));
+    if (g.argument) {
+      const a = g.argument;
+      out.push(this.line('think', null, 'thesis', a.thesis, animate));
+      a.evidence.forEach((e) => out.push(this.line('obs', null, 'evidence', e, animate)));
+      if (a.invalidation) { out.push(this.line('why', null, 'wrong if', a.invalidation, animate)); }
+      if (a.conviction != null) { out.push(this.line('why', null, 'conviction', `${a.conviction} of 5`, false)); }
+    }
+    const raw = t.observation || [];
+    if (raw.length) {
+      const fold = this.line('fold', null, 'read', `show everything it read (${raw.length} lines)`, false);
+      const box = document.createElement('div');
+      box.className = 'raw';
+      raw.forEach((o) => { const r = document.createElement('div'); r.className = 'r'; r.textContent = o; box.appendChild(r); });
+      fold.row.appendChild(box);
+      fold.row.addEventListener('click', () => {
+        const open = box.classList.toggle('open');
+        fold.tx.textContent = open ? `hide what it read (${raw.length} lines)` : `show everything it read (${raw.length} lines)`;
+      });
+      out.push(fold);
+    }
     return out;
   }
 

@@ -976,6 +976,84 @@
   border-top: 1px dashed var(--line-strong);
 }
 
+/* The digested cycle: a verdict as the tag, one sentence beside it. */
+.term ::ng-deep .cycle .tag {
+  font-weight: 700;
+}
+
+.term ::ng-deep .cycle.v-hold .tag {
+  color: var(--lime);
+}
+
+.term ::ng-deep .cycle.v-probe .tag,
+.term ::ng-deep .cycle.v-swap .tag,
+.term ::ng-deep .cycle.v-sell .tag {
+  color: var(--amber);
+}
+
+.term ::ng-deep .cycle.v-refused .tag {
+  color: var(--red);
+}
+
+.term ::ng-deep .board {
+  color: var(--white);
+  opacity: 0.7;
+}
+
+/* One line per token in play: its symbol as the tag, its gates as the text. */
+.term ::ng-deep .tok .tag {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 11.5px;
+  color: var(--white);
+}
+
+.term ::ng-deep .tok.t-good .tx {
+  color: var(--lime);
+}
+
+.term ::ng-deep .tok.t-bad .tx {
+  color: var(--red);
+}
+
+.term ::ng-deep .tok.t-quiet .tx {
+  color: var(--white);
+  opacity: 0.65;
+}
+
+/* Everything it read, folded behind one click. */
+.term ::ng-deep .fold {
+  cursor: pointer;
+}
+
+.term ::ng-deep .fold .tx {
+  text-decoration: underline dotted;
+  opacity: 0.7;
+}
+
+.term ::ng-deep .fold:hover .tx {
+  opacity: 1;
+}
+
+.term ::ng-deep .raw {
+  grid-column: 1 / -1;
+  display: none;
+  margin: 6px 0 4px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--line-strong);
+  opacity: 0.75;
+}
+
+.term ::ng-deep .raw.open {
+  display: block;
+}
+
+.term ::ng-deep .raw .r {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-bottom: 2px;
+}
+
 .term ::ng-deep .cur {
   display: inline-block;
   width: 7px;

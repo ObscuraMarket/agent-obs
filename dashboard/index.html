@@ -138,6 +138,21 @@
     .term .trade.bad, .term .trade.bad .tag { color: var(--red); }
     .term .sys { color: var(--dim); }
     .term .cycle { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+    .term .cycle .tag { font-weight: 700; }
+    .term .cycle.v-hold .tag { color: var(--green); }
+    .term .cycle.v-probe .tag, .term .cycle.v-swap .tag, .term .cycle.v-sell .tag { color: var(--amber); }
+    .term .cycle.v-refused .tag { color: var(--red); }
+    .term .board { color: var(--muted); }
+    .term .tok .tag { text-transform: none; letter-spacing: .02em; font-size: 11.5px; color: var(--fg); }
+    .term .tok.t-good .tx { color: var(--green); }
+    .term .tok.t-bad .tx { color: var(--red); }
+    .term .tok.t-quiet .tx { color: var(--muted); }
+    .term .fold { cursor: pointer; }
+    .term .fold .tx { text-decoration: underline dotted; color: var(--muted); }
+    .term .fold:hover .tx { color: var(--fg); }
+    .term .raw { grid-column: 1 / -1; display: none; margin: 6px 0 4px; padding: 8px 10px; border-left: 2px solid var(--line); color: var(--muted); }
+    .term .raw.open { display: block; }
+    .term .raw .r { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 2px; }
     .term .cur { display: inline-block; width: 7px; height: 13px; background: var(--green); vertical-align: -2px; margin-left: 2px; animation: blink 1s steps(1) infinite; }
     @keyframes blink { 50% { opacity: 0; } }
 
@@ -377,19 +392,44 @@
       })();
     }
     function cycleLines(t, animate, withInputs) {
-      var out = [], d = t.decision || { kind: "hold" }, swap = d.kind === "propose-swap";
-      out.push(line("sys cycle", t.at, "cycle", (t.paper ? "paper cycle, nothing sent, " : "desk cycle, ") + (swap ? "proposes a swap" : "holds") + (withInputs ? "" : " (inputs folded)"), false));
-      if (withInputs) (t.observation || []).forEach(function (o) { out.push(line("obs", null, "observe", o, false)); });
-      (t.thoughts || []).forEach(function (l) { out.push(line("think", null, "think", l, animate)); });
-      var an = t.analysis;
-      if (an) {
-        if (an.thesis) out.push(line("think", null, "thesis", an.thesis, animate));
-        (an.evidence || []).forEach(function (e) { out.push(line("obs", null, "evidence", e, animate)); });
-        if (an.invalidation) out.push(line("why", null, "invalid.", an.invalidation, animate));
-        if (an.conviction != null) out.push(line("why", null, "conviction", an.conviction + " of 5", animate));
+      var out = [], d = t.decision || { kind: "hold" }, swap = d.kind === "propose-swap", g = t.digest;
+      if (!g) {
+        out.push(line("sys cycle", t.at, "cycle", (t.paper ? "paper cycle, nothing sent, " : "desk cycle, ") + (swap ? "proposes a swap" : "holds") + (withInputs ? "" : " (inputs folded)"), false));
+        if (withInputs) (t.observation || []).forEach(function (o) { out.push(line("obs", null, "observe", o, false)); });
+        (t.thoughts || []).forEach(function (l) { out.push(line("think", null, "think", l, animate)); });
+        out.push(line("decide" + (swap ? " swap" : ""), null, "decide", swap ? "swap " + d.amount + " " + d.from + " -> " + d.to : "hold", animate));
+        if (d.reason) out.push(line("why", null, "because", d.reason, animate));
+        return out;
       }
-      out.push(line("decide" + (swap ? " swap" : ""), null, "decide", swap ? "swap " + d.amount + " " + d.from + " -> " + d.to : "hold", animate));
-      if (d.reason) out.push(line("why", null, "because", d.reason, animate));
+      // The digested cycle: the verdict and one sentence, the agent's lines, the board, one line per token, the argument, the raw lines folded.
+      out.push(line("sys cycle v-" + g.verdict, t.at, (t.paper ? "paper " : "") + g.verdict, g.headline, animate));
+      (t.thoughts || []).forEach(function (l) { out.push(line("think", null, "think", l, animate)); });
+      if (g.board) {
+        var b = g.board, bits = [];
+        if (b.early) bits.push(b.early + " early launch" + (b.early === 1 ? "" : "es") + ", " + b.probeAllowed + " probe-allowed, " + b.gateFailed + " failed the gate");
+        if (b.graded || b.belowBar) bits.push(b.graded + " graded candidate" + (b.graded === 1 ? "" : "s") + ", " + b.belowBar + " below the bar");
+        if (bits.length) out.push(line("board", null, "board", bits.join("; "), false));
+      }
+      (g.tokens || []).forEach(function (x) { out.push(line("tok t-" + x.tone, null, x.symbol, x.line, false)); });
+      if (g.argument) {
+        var a = g.argument;
+        out.push(line("think", null, "thesis", a.thesis, animate));
+        (a.evidence || []).forEach(function (e) { out.push(line("obs", null, "evidence", e, animate)); });
+        if (a.invalidation) out.push(line("why", null, "wrong if", a.invalidation, animate));
+        if (a.conviction != null) out.push(line("why", null, "conviction", a.conviction + " of 5", false));
+      }
+      var raw = t.observation || [];
+      if (raw.length) {
+        var fold = line("fold", null, "read", "show everything it read (" + raw.length + " lines)", false);
+        var box = document.createElement("div"); box.className = "raw";
+        raw.forEach(function (o) { var r = document.createElement("div"); r.className = "r"; r.textContent = o; box.appendChild(r); });
+        fold.row.appendChild(box);
+        fold.row.addEventListener("click", function () {
+          var open = box.classList.toggle("open");
+          fold.tx.textContent = (open ? "hide what it read (" : "show everything it read (") + raw.length + " lines)";
+        });
+        out.push(fold);
+      }
       return out;
     }
     function tradeLine(x, animate) {

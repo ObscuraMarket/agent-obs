@@ -55,11 +55,30 @@ export interface ObsDecision {
   amount?: number;
 }
 
+/** One token in play, as the desk digested it for the page. */
+export interface ObsTokenDigest {
+  symbol: string;
+  role: 'held' | 'launch';
+  line: string;
+  tone: 'good' | 'bad' | 'quiet';
+}
+
+/** The cycle digested for a reader: the verdict, one sentence, each token's status, the argument when there was one. Additive. */
+export interface ObsDigest {
+  verdict: 'hold' | 'probe' | 'sell' | 'swap' | 'refused';
+  headline: string;
+  wanted?: string;
+  tokens: ObsTokenDigest[];
+  board?: { early: number; probeAllowed: number; gateFailed: number; graded: number; belowBar: number };
+  argument?: { thesis: string; evidence: string[]; invalidation: string; conviction: number | null };
+}
+
 export interface ObsThought {
   at: number;
   observation: string[];
   thoughts: string[];
   decision: ObsDecision;
+  digest?: ObsDigest;
 }
 
 export interface ObsTradeLeg { asset: string; network: string; amount: number | null; usd: number | null; }

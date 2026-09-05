@@ -268,6 +268,20 @@ Additive fields (since September 3):
   `null`). A swap is only executed when this argument cleared the evidence
   rule; a hold's `decision.reason` states the shortfall when it did not.
   This is the block to render as the "case" under each decision.
+- `digest` (since September 5): the cycle reduced for a reader, computed
+  by the desk from the fields above and nothing else. `verdict` is one of
+  `hold`, `probe` (a launch token bought from ETH), `sell`, `swap`,
+  `refused` (the agent wanted a swap and a rail said no); `headline` is one
+  sentence; `wanted` is the swap in question as `0.002 ETH to COFF` when
+  there was one; `tokens[]` is one entry per token in play with `symbol`,
+  `role` (`held` or `launch`), a ready `line` such as
+  `entry: pullback, allowed · holders: ok · launch: FAIL, the dev buy is 27.3% of supply (8% allowed)`
+  and a `tone` (`good`, `bad`, `quiet`) to colour it; `board` counts the
+  early launches (`early`, `probeAllowed`, `gateFailed`) and the graded
+  candidates (`graded`, `belowBar`); `argument` repeats `analysis` only
+  when a trade was wanted. The reference page draws the terminal from this
+  block and keeps `observation` folded behind one click. The stream's
+  `thought` events carry the same field.
 
 ### `GET /api/obs/trades?limit=50`
 ```json

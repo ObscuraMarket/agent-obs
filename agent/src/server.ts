@@ -20,7 +20,11 @@ import { entryRead, entryRulesFromEnv } from "./desk/entry.ts";
 import { readCloses, launchRecord, launchRecordLine } from "./desk/trade-memory.ts";
 import { readTape, tapeStats } from "./desk/tape.ts";
 import { poolRead } from "./obscura/pools.ts";
-import { readThoughts } from "./desk/thoughts.ts";
+import { readThoughts, type Thought } from "./desk/thoughts.ts";
+import { digestThought } from "./desk/digest.ts";
+
+/** A thought as the page reads it: the record plus its digest (verdict, headline, each token's status). Additive. */
+const withDigest = (t: Thought) => ({ ...t, digest: digestThought(t) });
 import { tradingArmed, railsFromEnv, sentTodayUsd, type Rails } from "./desk/rails.ts";
 import { walletBalances } from "./obscura/reads.ts";
 import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL, dataPath } from "./config.ts";
@@ -303,14 +307,14 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
   let lastTradeAt = trades.length ? Math.max(...trades.map((t) => t.updatedAt ?? t.at)) : 0;
   let thoughtsSize = sizeOf("obs-thoughts.jsonl");
   let tradesSize = sizeOf("obs-trades.jsonl");
-  res.write(sseFrame("hello", { at: Date.now(), thoughts: history, trades, canExecute: tradingArmed() }));
+  res.write(sseFrame("hello", { at: Date.now(), thoughts: history.map(withDigest), trades, canExecute: tradingArmed() }));
   const look = () => {
     const ts = sizeOf("obs-thoughts.jsonl");
     if (ts !== thoughtsSize) {
       thoughtsSize = ts;
       for (const t of newerThan(readThoughts(50), lastThoughtAt)) {
         lastThoughtAt = t.at;
-        res.write(sseFrame("thought", t));
+        res.write(sseFrame("thought", withDigest(t)));
       }
     }
     const rs = sizeOf("obs-trades.jsonl");
@@ -383,7 +387,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   }
   if (path === "/api/obs/thoughts") {
     const limit = Number(url.searchParams.get("limit") ?? 20);
-    json(res, 200, { items: readThoughts(Number.isFinite(limit) ? limit : 20), at: now });
+    json(res, 200, { items: readThoughts(Number.isFinite(limit) ? limit : 20).map(withDigest), at: now });
     return;
   }
   if (path === "/api/obs/trades") {
