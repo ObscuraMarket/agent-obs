@@ -93,10 +93,13 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
   const proposed = i.open.filter((t) => t.status === "proposed");
   if (pending.length) lines.push(`In flight: ${pending.map((t) => `${qty(t.from.amount)} ${t.from.asset} to ${t.to.asset} via ${t.partner ?? "a route"}`).join("; ")}.`);
   if (proposed.length) lines.push(`Proposed and awaiting the operator: ${proposed.map((t) => `${qty(t.from.amount)} ${t.from.asset} to ${t.to.asset}`).join("; ")}.`);
-  if (i.quotes.length) {
+  if (i.paper) lines.push("PAPER SESSION: the book above includes simulated trades at full size; nothing has been sent on chain.");
+  if (i.quotes.length) lines.push(`Quotes this cycle: ${i.quotes.map((q) => `${qty(q.amountIn)} ${q.from} to ${q.amountOut == null ? "no quote" : `${qty(q.amountOut)} ${q.to}`}${q.partner ? ` (${q.partner})` : ""}`).join("; ")}.`);
+  // The launches are the job: candidates, early launches, the tapes, the record and what is held reach the model
+  // whether or not the reference legs quoted this cycle. (Until 2026-09-05 they hung off the quotes and vanished
+  // whenever the quote watchlist failed to parse, and the model was asked about tokens it had never been shown.)
+  {
     lines.push(
-      ...(i.paper ? ["PAPER SESSION: the book above includes simulated trades at full size; nothing has been sent on chain."] : []),
-      `Quotes this cycle: ${i.quotes.map((q) => `${qty(q.amountIn)} ${q.from} to ${q.amountOut == null ? "no quote" : `${qty(q.amountOut)} ${q.to}`}${q.partner ? ` (${q.partner})` : ""}`).join("; ")}.`,
       ...(i.candidates?.length
         ? [`Launch candidates from the watcher, graded against the bar: ${i.candidates.map((c) => `${c.symbol}@robinhood ${c.grade ? `GRADE ${c.grade}, up to ${usd(c.capUsd ?? 0)}${c.grade === "C" ? " probe only" : ""}` : "BELOW THE BAR, not tradable"}${c.why ? ` (${c.why})` : ""}: hour ${c.hour}, ${c.ageH.toFixed(1)}h ago, $${Math.round(c.volUsd).toLocaleString("en-US")} prior-hour volume, ${c.movePct >= 0 ? "+" : ""}${c.movePct.toFixed(1)}% move, ${c.senders} senders, ${c.tierPct}% fee each way${c.depthUsd != null ? `, ${usd(c.depthUsd)} of 2% depth` : ""}; since then ${c.trail}`).join("; ")}.`]
         : i.candidates ? ["Launch candidates from the watcher: none in the window."] : []),

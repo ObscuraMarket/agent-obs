@@ -126,7 +126,8 @@ export interface WatchItem {
 /** PURE: "eth/eth->usdc/erc20:0.1,btc/btc->eth/eth:0.01". Bad entries are dropped. */
 export function parseWatchlist(spec: string): WatchItem[] {
   const out: WatchItem[] = [];
-  for (const part of (spec ?? "").split(",")) {
+  // A value pasted from a .env line keeps its shell quotes on a host that does not source it; they are not part of the list.
+  for (const part of (spec ?? "").trim().replace(/^["']|["']$/g, "").split(",")) {
     const m = part.trim().match(/^([a-z0-9]+)\/([a-z0-9-]+)\s*->\s*([a-z0-9]+)\/([a-z0-9-]+)\s*:\s*([\d.]+)$/i);
     if (!m) continue;
     const amount = Number(m[5]);

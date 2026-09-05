@@ -39,6 +39,18 @@ test("a funded desk observes its book, in-flight swaps and quotes", () => {
   assert.ok(lines.some((l) => /Quotes this cycle: 0\.1 ETH to 244\.2 USDG \(SwapSpace\)/.test(l)));
 });
 
+test("the launches reach the model even when no reference leg quoted this cycle", () => {
+  const book = snapshot([{ at: 1, kind: "deposit" as const, asset: "ETH", amount: 0.41, usd: 948 }], [], { ETH: 2450 }, 3);
+  const candidates = [{ symbol: "CATSTRO", hour: 3, volUsd: 4200, movePct: 12.5, senders: 61, tierPct: 1, ageH: 2.1, trail: "$900, $1,200 per hour", grade: "B" as const, capUsd: 25, why: "stable: 6 active hours" }];
+  const lines = observationLines({ reads, book, quotes: [], open: [], now: 3, candidates, early: [], tapes: ["Entry CATSTRO: base, entry allowed.", "HOLDERS OK CATSTRO: 61 wallets."], memory: { record: "Launch record: no closed trades yet.", recalls: [] } });
+  assert.ok(!lines.some((l) => /Quotes this cycle/.test(l)), "no quote line without quotes");
+  assert.ok(lines.some((l) => /Launch candidates from the watcher, graded against the bar: CATSTRO@robinhood GRADE B/.test(l)));
+  assert.ok(lines.some((l) => /Early launches from the watcher: none/.test(l)));
+  assert.ok(lines.includes("Entry CATSTRO: base, entry allowed."));
+  assert.ok(lines.includes("HOLDERS OK CATSTRO: 61 wallets."));
+  assert.ok(lines.includes("Launch record: no closed trades yet."));
+});
+
 test("the reply parses into public thoughts, a decision, and a private note", () => {
   const r = parseThoughtReply("THOUGHT: The desk holds nothing, so there is nothing to mark.\nTHOUGHT: ETH sits at 2,455 dollars and the app is up.\nDECISION: hold\nREASON: no capital.\nNOTE: watch for the first deposit.");
   assert.equal(r.thoughts.length, 2);

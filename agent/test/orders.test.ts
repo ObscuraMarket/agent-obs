@@ -32,4 +32,7 @@ test("the watchlist spec parses and bad entries are dropped", () => {
   assert.equal(w.length, 2);
   assert.deepEqual(w[0], { from: { code: "eth", network: "eth" }, to: { code: "usdc", network: "erc20" }, amount: 0.1 });
   assert.deepEqual(w[1].to, { code: "eth", network: "eth" });
+  const quoted = parseWatchlist('"eth/robinhood->usdg/robinhood:0.05,usdg/robinhood->eth/robinhood:100"');
+  assert.equal(quoted.length, 2, "a value that kept its .env quotes still parses (Railway does not source a file)");
+  assert.equal(quoted[1].amount, 100);
 });
