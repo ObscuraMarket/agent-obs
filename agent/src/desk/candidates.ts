@@ -86,6 +86,8 @@ export interface FeedSnapshot {
 }
 export interface FeedOptions {
   maxAgeMs: number;
+  /** A token younger than this since its launch is not a candidate at all (OBS_CANDIDATE_MIN_AGE_H); zero admits every age. */
+  minTokenAgeMs?: number;
   /** Stability rules; when set, tokens with a stable hourly trail join the candidates. */
   stable?: StabilityRules;
   maxTierPct: number;
@@ -128,6 +130,11 @@ export function curvePoolIdFor(token: `0x${string}`, pairSymbol: string | null, 
 }
 
 /** PURE: the feed's tail parsed into current candidates and per-pool hourly stats. Bad lines are skipped. */
+/** PURE: how old a token is now, from a row's hour-since-launch and the row's own age. */
+export function tokenAgeMs(hour: number, rowAt: number, now: number): number {
+  return Math.max(0, hour) * 3600e3 + Math.max(0, now - rowAt);
+}
+
 export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<FeedSnapshot, "readAt" | "path"> {
   const sidePools = new Map<string, { fee: number; tickSpacing: number }>();
   const sidePoolsByToken = new Map<string, Array<{ poolId: `0x${string}`; feePips: number; tickSpacing: number }>>();
@@ -225,6 +232,7 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
   const candidates: Candidate[] = [];
   for (const c of byToken.values()) {
     if (now - c.at > opts.maxAgeMs) continue;
+    if (tokenAgeMs(c.hour, c.at, now) < (opts.minTokenAgeMs ?? 0)) continue;
     if (opts.requireGate && !c.gateOk) continue;
     if (!(c.tierPct > 0) || c.tierPct > opts.maxTierPct) continue;
     if (!c.symbol || ASSETS[`${c.symbol}@robinhood`]) continue;
@@ -281,6 +289,7 @@ export function parseFeed(text: string, now: number, opts: FeedOptions): Omit<Fe
         usdgIs0: usdgIsToken0(m.token),
         stable: read,
       };
+      if (tokenAgeMs(lastRow.hour, lastRow.at, now) < (opts.minTokenAgeMs ?? 0)) continue;
       candidates.push(c);
       have.set(c.token, c);
     }
@@ -384,7 +393,7 @@ export function earlyAsCandidate(l: EarlyLaunch, now: number, requireIgnition = 
 }
 
 export function feedOptions(env: NodeJS.ProcessEnv = process.env): FeedOptions {
-  return { maxAgeMs: Number(env.OBS_CANDIDATE_MAX_AGE_H ?? 6) * 3600e3, maxTierPct: Number(env.OBS_CANDIDATE_MAX_TIER_PCT ?? 5), requireGate: (env.OBS_CANDIDATE_REQUIRE_GATE ?? "on") !== "off", earlyMaxAgeMs: Number(env.OBS_EARLY_MAX_AGE_MIN ?? 90) * 60e3, ...((env.OBS_STABLE ?? "on") !== "off" ? { stable: stabilityRulesFromEnv(env) } : {}) };
+  return { maxAgeMs: Number(env.OBS_CANDIDATE_MAX_AGE_H ?? 6) * 3600e3, minTokenAgeMs: Number(env.OBS_CANDIDATE_MIN_AGE_H ?? 0) * 3600e3, maxTierPct: Number(env.OBS_CANDIDATE_MAX_TIER_PCT ?? 5), requireGate: (env.OBS_CANDIDATE_REQUIRE_GATE ?? "on") !== "off", earlyMaxAgeMs: Number(env.OBS_EARLY_MAX_AGE_MIN ?? 90) * 60e3, ...((env.OBS_STABLE ?? "on") !== "off" ? { stable: stabilityRulesFromEnv(env) } : {}) };
 }
 
 /** The last few megabytes of the feed file; the feed is append-only so the tail is the present. */
@@ -626,6 +635,8 @@ export interface GradeRules {
   capUsd: Record<Grade, number>;
   /** An hour whose volume fell below this share of the hour before counts as rolling over. */
   trendFloor: number;
+  /** Only a token whose hourly trail reads stable gets a grade at all (OBS_CANDIDATE_REQUIRE_STABLE): a trading record before any size. */
+  requireStable: boolean;
 }
 export function gradeRulesFromEnv(env: NodeJS.ProcessEnv = process.env): GradeRules {
   const n = (k: string, d: number) => Number(env[k] ?? d);
@@ -634,6 +645,7 @@ export function gradeRulesFromEnv(env: NodeJS.ProcessEnv = process.env): GradeRu
     gradeB: { minVolUsd: n("OBS_GRADE_B_MIN_VOL_USD", 100_000), minSenders: n("OBS_GRADE_B_MIN_SENDERS", 20), maxMovePct: n("OBS_GRADE_B_MAX_MOVE_PCT", 50), maxTierPct: n("OBS_GRADE_B_MAX_TIER_PCT", 4), maxDrawdownPct: n("OBS_GRADE_B_MAX_DRAWDOWN_PCT", 40) },
     capUsd: { A: n("OBS_CANDIDATE_MAX_USD_A", 75), B: n("OBS_CANDIDATE_MAX_USD_B", 25), C: n("OBS_CANDIDATE_MAX_USD_C", 5) },
     trendFloor: 1 - n("OBS_CANDIDATE_VOLUME_DROP_PCT", 30) / 100,
+    requireStable: (env.OBS_CANDIDATE_REQUIRE_STABLE ?? "off") === "on",
   };
 }
 
@@ -658,6 +670,8 @@ export function gradeCandidate(c: Candidate, trail: HourlyStat[], depthUsd: numb
   const t = trail.slice(-2);
   const trend: Graded["trend"] = t.length === 2 ? (t[1].usd < t[0].usd * r.trendFloor ? "rolling over" : "holding") : "unknown";
   const move = Math.abs(c.movePct);
+  // A trading record first: with the rule on, a token whose hourly trail does not read stable is not graded, whatever its last hour printed.
+  if (r.requireStable && !c.stable?.stable) return { grade: null, capUsd: 0, why: `no trading record yet: ${c.stable ? c.stable.why : "its hourly trail was not read"}`, depthUsd, drawdownPct, trend };
   const fails: string[] = [];
   const a = r.gradeA;
   if (c.volUsd < a.minVolUsd) fails.push(`prior-hour volume $${Math.round(c.volUsd).toLocaleString("en-US")} under $${a.minVolUsd.toLocaleString("en-US")}`);

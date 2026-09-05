@@ -164,6 +164,16 @@ export function scoreLaunch(f: LaunchFacts): LaunchScore {
   return { total: Math.max(0, Math.min(100, s)), reasons: r };
 }
 
+/**
+ * PURE: the rules for a token with a trading record behind it. Socials and the
+ * score bar are launch-day questions; a day of real trading answers them
+ * better. The hard rules stay: a swept or rescued launch, a heavy dev buy, a
+ * high creator tax, a declared bundle and a serial deployer.
+ */
+export function launchRulesForRecord(rules: LaunchRules): LaunchRules {
+  return { ...rules, requireSocials: false, minScore: 0 };
+}
+
 /** PURE: the gate. Only a pons v2 launch has a verdict; anything else passes with no launch read. */
 export function launchVerdict(f: LaunchFacts, score: LaunchScore | null, rules: LaunchRules): LaunchVerdict {
   if (!f.exists) return { ok: true, why: "not a pons v2 launch, no launch read" };

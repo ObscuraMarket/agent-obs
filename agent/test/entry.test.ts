@@ -44,6 +44,16 @@ test("a pullback that held a higher low and turned up with buyers back is an ent
   assert.match(entryLine(e), /PULLBACK, ENTRY ALLOWED/);
 });
 
+test("with pullbacks switched off the same tape is read as a pullback and refused: the desk buys bases only", () => {
+  const rows = [quietStart, row(9, "buy", 100, 1.2), row(7, "buy", 300, 1.5), row(6, "buy", 400, 1.6), row(3, "sell", 200, 1.35), row(1, "buy", 250, 1.42)];
+  const e = entryRead(rows, "TOK", now, { ...R, allowPullback: false });
+  assert.equal(e.state, "pullback");
+  assert.equal(e.ok, false);
+  assert.match(e.why, /buys bases only, no entry/);
+  assert.equal(entryRulesFromEnv({ OBS_ENTRY_PULLBACK: "off" } as unknown as NodeJS.ProcessEnv).allowPullback, false);
+  assert.equal(R.allowPullback, true, "on by default");
+});
+
 test("a pullback met with selling is not held yet, and not an entry", () => {
   const rows = [quietStart, row(9, "buy", 100, 1.2), row(7, "buy", 300, 1.5), row(6, "buy", 400, 1.6), row(3, "sell", 1500, 1.35), row(1, "buy", 50, 1.42)];
   const e = entryRead(rows, "TOK", now, R);

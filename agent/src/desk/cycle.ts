@@ -26,7 +26,7 @@ import { updateTape, tapeStats, tapeLine } from "./tape.ts";
 import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry.ts";
 import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, type HolderRead } from "./holders.ts";
 import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
-import { readLaunch, launchLine, launchRulesFromEnv, type LaunchRead } from "./launch.ts";
+import { readLaunch, launchLine, launchRulesFromEnv, launchRulesForRecord, type LaunchRead } from "./launch.ts";
 import { recordResearch } from "./research.ts";
 import { digestThought, shortWhy } from "./digest.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry } from "./trade-memory.ts";
@@ -266,6 +266,8 @@ const holderRules = holderRulesFromEnv();
 // The launch itself: the dev buy, the declared bundle, the creator tax and its recipient, the deployer's record, the phase.
 const launchReads = new Map<string, LaunchRead>();
 const launchRules = launchRulesFromEnv();
+/** Hours of trading after which a token is read on the launch read's hard rules only (OBS_LAUNCH_RECORD_AGE_H). */
+const recordAgeH = Number(process.env.OBS_LAUNCH_RECORD_AGE_H ?? 24);
 const entryRules = entryRulesFromEnv();
 for (const [sym, a] of inPlay) {
   if (!a?.candidate) continue;
@@ -302,8 +304,12 @@ for (const [sym, a] of inPlay) {
   }
   if (a.contract) {
     try {
-      const launchAt = feed.early.find((x) => x.symbol === sym)?.at ?? feed.candidates.find((x) => x.symbol === sym)?.at ?? null;
-      const lr = await readLaunch(a.contract as `0x${string}`, sym, launchAt, launchRules, now);
+      const cand = feed.candidates.find((x) => x.symbol === sym);
+      const launchAt = feed.early.find((x) => x.symbol === sym)?.at ?? cand?.at ?? null;
+      // A token with a day of trading behind it is read on the hard rules only: socials and the score are launch-day questions.
+      const tokenAgeH = cand ? (Math.max(0, cand.hour) * 3600e3 + Math.max(0, now - cand.at)) / 3600e3 : 0;
+      const rulesFor = tokenAgeH >= recordAgeH ? launchRulesForRecord(launchRules) : launchRules;
+      const lr = await readLaunch(a.contract as `0x${string}`, sym, launchAt, rulesFor, now);
       launchReads.set(sym, lr);
       recordResearch({ kind: "launch-read", symbol: sym, ok: lr.exists ? lr.verdict.ok : null, note: !lr.exists ? "not a pons v2 launch, nothing to read" : lr.verdict.ok ? `${lr.devSharePct != null ? `dev buy ${lr.devSharePct.toFixed(1)}%, ` : ""}${lr.exemptions ? (lr.exemptions.length ? `${lr.exemptions.length} exempt wallets, ` : "no exempt wallets, ") : ""}${lr.socials && (lr.socials.twitter || lr.socials.website || lr.socials.telegram) ? "links set, " : ""}score ${lr.score?.total ?? "n/a"}` : shortWhy(lr.verdict.why) });
       tapes.push(launchLine(lr));

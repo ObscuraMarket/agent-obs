@@ -29,6 +29,8 @@ export interface EntryRules {
   baseMin: number;
   /** Buy pressure over the last ten minutes must be at least this for any entry. */
   minBuyPressurePct: number;
+  /** Whether a held pullback after a run counts as an entry (OBS_ENTRY_PULLBACK). Off, the desk buys bases only. */
+  allowPullback: boolean;
 }
 
 export function entryRulesFromEnv(env: NodeJS.ProcessEnv = process.env): EntryRules {
@@ -45,6 +47,7 @@ export function entryRulesFromEnv(env: NodeJS.ProcessEnv = process.env): EntryRu
     baseRangePct: n("OBS_ENTRY_BASE_RANGE_PCT", 6),
     baseMin: n("OBS_ENTRY_BASE_MIN", 10),
     minBuyPressurePct: n("OBS_ENTRY_MIN_BUY_PRESSURE_PCT", 50),
+    allowPullback: (env.OBS_ENTRY_PULLBACK ?? "on") !== "off",
   };
 }
 
@@ -124,6 +127,7 @@ export function entryRead(rows: SwapRow[], symbol: string, now: number, r: Entry
   }
   if (offPeakPct >= r.pullbackMinPct) {
     if (higherLow && bouncePct >= r.bounceMinPct && pressureOk) {
+      if (!r.allowPullback) return { ...read, state: "pullback", why: `ran ${pct(runPct)} to its peak, now ${offPeakPct.toFixed(0)}% off it and holding, ${pressureNote}: a pullback after a run, and the desk buys bases only, no entry` };
       return { ...read, state: "pullback", ok: true, why: `ran ${pct(runPct)} to its peak, now ${offPeakPct.toFixed(0)}% off it, held a higher low and turned up ${pct(bouncePct)} off the trough, ${pressureNote}: pullback holding, entry allowed` };
     }
     const miss = !higherLow ? "the pullback went below where the window started" : bouncePct < r.bounceMinPct ? `it has not turned up yet (${pct(bouncePct)} off the trough, ${r.bounceMinPct}% needed)` : `${pressureNote} (${r.minBuyPressurePct}% needed)`;

@@ -1,7 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { encodeFunctionData } from "viem";
-import { scoreLaunch, launchVerdict, launchLine, decodeLaunchCall, launchRulesFromEnv, ROUTER_ABI, type LaunchFacts } from "../src/desk/launch.ts";
+import { scoreLaunch, launchVerdict, launchLine, decodeLaunchCall, launchRulesFromEnv, launchRulesForRecord, ROUTER_ABI, type LaunchFacts } from "../src/desk/launch.ts";
+
+test("a token with a trading record is read on the hard rules only: no socials and no score bar, the dev buy and the bundle still count", () => {
+  const rules = launchRulesFromEnv({} as NodeJS.ProcessEnv);
+  const record = launchRulesForRecord(rules);
+  assert.equal(record.requireSocials, false);
+  assert.equal(record.minScore, 0);
+  assert.equal(record.maxDevSharePct, rules.maxDevSharePct);
+  assert.equal(record.maxExempt, rules.maxExempt);
+  assert.equal(rules.requireSocials, true, "the launch-day rules are untouched");
+});
 
 const R = launchRulesFromEnv({} as NodeJS.ProcessEnv);
 const base: LaunchFacts = {

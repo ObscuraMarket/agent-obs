@@ -113,6 +113,15 @@ test("the bar: grade A clears every threshold and earns size, B ordinary size, C
   assert.equal(b.grade, "B", "a 4% tier is short of A but fine for B");
   assert.equal(b.capUsd, 25);
   assert.match(b.why, /tier 4% over 3%/);
+  // A trading record first: with the rule on, a token without a stable read is not graded at all.
+  const record = gradeCandidate(strong, holding, 30000, { ...r, requireStable: true });
+  assert.equal(record.grade, null);
+  assert.match(record.why, /no trading record yet/);
+  assert.equal(gradeRulesFromEnv({ OBS_CANDIDATE_REQUIRE_STABLE: "on" } as unknown as NodeJS.ProcessEnv).requireStable, true);
+  assert.equal(r.requireStable, false, "off by default");
+  // The age floor: BLOKKS is two hours old (hour 1, its row an hour old), so a day's floor drops it and an hour's keeps it.
+  assert.equal(parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, minTokenAgeMs: 24 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 }).candidates.length, 0);
+  assert.equal(parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, minTokenAgeMs: 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 }).candidates.length, snap.candidates.length);
   const shallow = gradeCandidate(strong, holding, 5000, r);
   assert.equal(shallow.grade, "B", "thin depth is short of A");
   const c = gradeCandidate({ ...strong, volUsd: 40000, senders: 8 }, holding, 30000, r);
