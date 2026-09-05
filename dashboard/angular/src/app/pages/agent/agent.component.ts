@@ -5,7 +5,7 @@ import { Subscription, interval } from 'rxjs';
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import {
   CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition,
-  ObsRails, ObsReads, ObsStatus, ObsThought, ObsTrade
+  ObsRails, ObsReads, ObsStatus, ObsThought, ObsTrade, ObsWatchEvent
 } from '../../service/obs-desk.service';
 
 type MarketAssetId = 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
@@ -842,13 +842,15 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (typeof EventSource === 'undefined') { this.startPollFallback(); return; }
     try { this.es = new EventSource(this.obs.streamUrl(12)); } catch { this.startPollFallback(); return; }
     this.es.addEventListener('hello', (ev) => {
-      const h = JSON.parse((ev as MessageEvent).data) as { thoughts?: ObsThought[]; trades?: ObsTrade[]; canExecute?: boolean };
+      const h = JSON.parse((ev as MessageEvent).data) as { thoughts?: ObsThought[]; trades?: ObsTrade[]; canExecute?: boolean; watch?: ObsWatchEvent };
+      if (h.watch) { setTimeout(() => this.onWatch(h.watch as ObsWatchEvent), 0); }
       this.esFails = 0;
       this.setStreamState('live');
       if (this.term()) { this.seed(h.thoughts || [], h.trades || [], !!h.canExecute); }
       else { this.pendingSeed = { thoughts: h.thoughts || [], trades: h.trades || [], canExecute: !!h.canExecute }; }
     });
     this.es.addEventListener('thought', (ev) => this.onThought(JSON.parse((ev as MessageEvent).data) as ObsThought));
+    this.es.addEventListener('watch', (ev) => this.onWatch(JSON.parse((ev as MessageEvent).data) as ObsWatchEvent));
     this.es.addEventListener('trade', (ev) => this.onTrade(JSON.parse((ev as MessageEvent).data) as ObsTrade));
     this.es.onerror = () => {
       this.esFails++;
@@ -1029,6 +1031,19 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.push(this.cycleLines(t, true, true));
     if (this.refreshTimer) { clearTimeout(this.refreshTimer); }
     this.refreshTimer = setTimeout(() => this.zone.run(() => this.refresh()), 3000);
+  }
+
+  /** The live watch between cycles: a dim line a minute, and a trigger line the moment a tape gives an entry. */
+  private lastWatchTrigger: string | null = null;
+  private onWatch(w: ObsWatchEvent): void {
+    if (!this.termSeeded) { return; }
+    const items: TermItem[] = [];
+    if (w.trigger && w.trigger !== this.lastWatchTrigger) {
+      this.lastWatchTrigger = w.trigger;
+      items.push(this.line('trigger', w.at, 'trigger', w.trigger + (w.cycleRunning ? ' (thinking)' : ''), true));
+    }
+    items.push(this.line('watch', w.at, 'watch', w.line, false));
+    this.push(items);
   }
 
   private onTrade(x: ObsTrade): void {

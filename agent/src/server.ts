@@ -21,10 +21,23 @@ import { readCloses, launchRecord, launchRecordLine } from "./desk/trade-memory.
 import { readTape, tapeStats } from "./desk/tape.ts";
 import { poolRead } from "./obscura/pools.ts";
 import { readThoughts, type Thought } from "./desk/thoughts.ts";
-import { digestThought } from "./desk/digest.ts";
+import { digestThought, watchEvent, type WatchEvent } from "./desk/digest.ts";
 
 /** A thought as the page reads it: the record plus its digest (verdict, headline, each token's status). Additive. */
 const withDigest = (t: Thought) => ({ ...t, digest: digestThought(t) });
+
+/** The live watch's file as one terminal line, or null when it is stale or absent. */
+function readWatch(now = Date.now()): WatchEvent | null {
+  const p = dataPath("obs-live.json");
+  if (!existsSync(p)) return null;
+  try {
+    return watchEvent(JSON.parse(readFileSync(p, "utf8")), now);
+  } catch {
+    return null;
+  }
+}
+/** How often the stream repeats the watch line when nothing else moved. */
+const WATCH_EVERY_MS = 60_000;
 import { tradingArmed, railsFromEnv, sentTodayUsd, type Rails } from "./desk/rails.ts";
 import { walletBalances } from "./obscura/reads.ts";
 import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL, dataPath } from "./config.ts";
@@ -307,8 +320,18 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
   let lastTradeAt = trades.length ? Math.max(...trades.map((t) => t.updatedAt ?? t.at)) : 0;
   let thoughtsSize = sizeOf("obs-thoughts.jsonl");
   let tradesSize = sizeOf("obs-trades.jsonl");
-  res.write(sseFrame("hello", { at: Date.now(), thoughts: history.map(withDigest), trades, canExecute: tradingArmed() }));
+  const firstWatch = readWatch();
+  let lastWatchAt = firstWatch ? Date.now() : 0;
+  let lastWatchTrigger = firstWatch?.trigger ?? null;
+  res.write(sseFrame("hello", { at: Date.now(), thoughts: history.map(withDigest), trades, canExecute: tradingArmed(), ...(firstWatch ? { watch: firstWatch } : {}) }));
   const look = () => {
+    // The live watch between cycles: a line a minute, and every trigger the moment it fires.
+    const w = readWatch();
+    if (w && (w.trigger !== lastWatchTrigger || Date.now() - lastWatchAt >= WATCH_EVERY_MS)) {
+      lastWatchAt = Date.now();
+      lastWatchTrigger = w.trigger;
+      res.write(sseFrame("watch", w));
+    }
     const ts = sizeOf("obs-thoughts.jsonl");
     if (ts !== thoughtsSize) {
       thoughtsSize = ts;

@@ -113,6 +113,29 @@ export function digestThought(t: Thought): ThoughtDigest {
   return out;
 }
 
+/** The live watch, as one line for the terminal between cycles. */
+export interface WatchEvent {
+  at: number;
+  block: number | null;
+  lookMs: number | null;
+  /** "watching JOHN breakdown, BOW quiet; looks 0.8 s" */
+  line: string;
+  /** The last trigger the watch fired, verbatim, when there is one. */
+  trigger: string | null;
+  cycleRunning: boolean;
+}
+
+/** PURE: the live watch's file reduced to a line. Null when the file is stale (older than 30 s) or empty. */
+export function watchEvent(live: { at?: number; block?: number | null; lookMs?: number | null; watching?: Array<{ symbol: string; role?: string; entryState?: string; entryOk?: boolean; trend?: string }>; lastTrigger?: string | null; cycleRunning?: boolean } | null, now = Date.now()): WatchEvent | null {
+  if (!live || !live.at || now - live.at > 30_000) return null;
+  const w = live.watching ?? [];
+  const what = w.length
+    ? w.map((s) => `${s.symbol} ${s.entryOk ? `ENTRY (${s.entryState})` : s.role === "held" ? `held, ${s.trend ?? "holding"}` : s.entryState ?? "watching"}`).join(", ")
+    : "nothing in play";
+  const looks = live.lookMs != null ? `; looks ${(live.lookMs / 1000).toFixed(1)} s` : "";
+  return { at: live.at, block: live.block ?? null, lookMs: live.lookMs ?? null, line: `watching ${what}${looks}`, trigger: live.lastTrigger ?? null, cycleRunning: !!live.cycleRunning };
+}
+
 /** PURE: one short status line per token, the way the page shows it. */
 export function tokenStatusLine(x: Omit<TokenDigest, "line" | "tone">): { line: string; tone: "good" | "bad" | "quiet" } {
   const bits: string[] = [];

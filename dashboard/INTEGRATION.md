@@ -282,6 +282,14 @@ Additive fields (since September 3):
   when a trade was wanted. The reference page draws the terminal from this
   block and keeps `observation` folded behind one click. The stream's
   `thought` events carry the same field.
+- The stream's `watch` event (since September 5): the live watch between
+  cycles, so the terminal moves while the agent is looking rather than
+  only when it thinks. `{ at, block, lookMs, line, trigger, cycleRunning }`
+  with `line` such as `watching JOHN breakdown, BOW ENTRY (pullback); looks 0.8 s`,
+  sent about once a minute while the watch is live, and immediately when
+  `trigger` changes (a tape gave an entry, whether or not a cycle followed).
+  The `hello` frame carries the current one as `watch` when the watch is
+  live. Draw it dim; it is context, not a decision.
 
 ### `GET /api/obs/trades?limit=50`
 ```json

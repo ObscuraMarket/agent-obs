@@ -1021,6 +1021,18 @@
   opacity: 0.65;
 }
 
+/* The live watch between cycles: dim, it is context; a trigger is the moment a tape gave an entry. */
+.term ::ng-deep .watch,
+.term ::ng-deep .watch .tag {
+  color: var(--white);
+  opacity: 0.5;
+}
+
+.term ::ng-deep .trigger,
+.term ::ng-deep .trigger .tag {
+  color: var(--amber);
+}
+
 /* Everything it read, folded behind one click. */
 .term ::ng-deep .fold {
   cursor: pointer;

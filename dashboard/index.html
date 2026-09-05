@@ -147,6 +147,8 @@
     .term .tok.t-good .tx { color: var(--green); }
     .term .tok.t-bad .tx { color: var(--red); }
     .term .tok.t-quiet .tx { color: var(--muted); }
+    .term .watch, .term .watch .tag { color: var(--dim); }
+    .term .trigger, .term .trigger .tag { color: var(--amber); }
     .term .fold { cursor: pointer; }
     .term .fold .tx { text-decoration: underline dotted; color: var(--muted); }
     .term .fold:hover .tx { color: var(--fg); }
@@ -448,13 +450,21 @@
       items.push(line("sys", Date.now(), "obs", "listening" + (canExecute ? ". execution is armed." : ". observation mode: a swap decision is a proposal until the operator arms execution."), false));
       push(items);
     }
+    var lastWatchTrigger = null;
+    function onWatch(w) {
+      var items = [];
+      if (w.trigger && w.trigger !== lastWatchTrigger) { lastWatchTrigger = w.trigger; items.push(line("trigger", w.at, "trigger", w.trigger + (w.cycleRunning ? " (thinking)" : ""), true)); }
+      items.push(line("watch", w.at, "watch", w.line, false));
+      push(items);
+    }
     function onThought(t) { if (t.at <= lastThoughtAt) return; lastThoughtAt = t.at; push(cycleLines(t, true, true)); setTimeout(refresh, 3000); }
     function onTrade(x) { var at = x.updatedAt || x.at; if (at <= lastTradeAt) return; lastTradeAt = at; push([tradeLine(x, true)]); setTimeout(refresh, 3000); }
     function connect() {
       if (!window.EventSource) return poll();
       try { es = new EventSource(API + "/api/obs/stream?limit=12"); } catch (e) { return poll(); }
-      es.addEventListener("hello", function (ev) { var h = JSON.parse(ev.data); esFails = 0; termState("on", "live"); seed(h.thoughts || [], h.trades || [], h.canExecute); });
+      es.addEventListener("hello", function (ev) { var h = JSON.parse(ev.data); esFails = 0; termState("on", "live"); seed(h.thoughts || [], h.trades || [], h.canExecute); if (h.watch) setTimeout(function () { onWatch(h.watch); }, 0); });
       es.addEventListener("thought", function (ev) { onThought(JSON.parse(ev.data)); });
+      es.addEventListener("watch", function (ev) { onWatch(JSON.parse(ev.data)); });
       es.addEventListener("trade", function (ev) { onTrade(JSON.parse(ev.data)); });
       es.onerror = function () { esFails++; termState("warn", "reconnecting"); if (esFails >= 3) { es.close(); es = null; poll(); } };
     }

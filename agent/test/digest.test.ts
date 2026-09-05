@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { digestThought, tokenStatusLine } from "../src/desk/digest.ts";
+import { digestThought, tokenStatusLine, watchEvent } from "../src/desk/digest.ts";
 import type { Thought } from "../src/desk/thoughts.ts";
 
 const observation = [
@@ -61,4 +61,15 @@ test("every token in play gets its entry, holders, launch and records, and the b
   assert.equal(tokenStatusLine(unit).tone, "bad");
   assert.equal(tokenStatusLine(d.tokens.find((x) => x.symbol === "XI")!).line, "launch: ok 100");
   assert.equal(tokenStatusLine(d.tokens.find((x) => x.symbol === "MEME")!).line, "held");
+});
+
+test("the live watch reduces to one terminal line, and a stale file to nothing", () => {
+  const now = 1_800_000_000_000;
+  const live = { at: now - 5000, block: 55262326, lookMs: 812, watching: [{ symbol: "JOHN", role: "launch", entryState: "breakdown", entryOk: false, trend: "holding" }, { symbol: "BOW", role: "launch", entryState: "pullback", entryOk: true, trend: "rising" }, { symbol: "MEME", role: "held", entryState: "quiet", entryOk: false, trend: "rolling over" }], lastTrigger: "18:22:50Z JOHN gave an entry", cycleRunning: false };
+  const w = watchEvent(live, now)!;
+  assert.equal(w.line, "watching JOHN breakdown, BOW ENTRY (pullback), MEME held, rolling over; looks 0.8 s");
+  assert.equal(w.trigger, "18:22:50Z JOHN gave an entry");
+  assert.equal(w.block, 55262326);
+  assert.equal(watchEvent({ ...live, at: now - 60_000 }, now), null, "older than half a minute is not live");
+  assert.equal(watchEvent({ ...live, watching: [] }, now)!.line, "watching nothing in play; looks 0.8 s");
 });

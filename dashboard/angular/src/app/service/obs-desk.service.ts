@@ -81,6 +81,16 @@ export interface ObsThought {
   digest?: ObsDigest;
 }
 
+/** The live watch between cycles: one line a minute on the stream's `watch` event, and every trigger as it fires. */
+export interface ObsWatchEvent {
+  at: number;
+  block: number | null;
+  lookMs: number | null;
+  line: string;
+  trigger: string | null;
+  cycleRunning: boolean;
+}
+
 export interface ObsTradeLeg { asset: string; network: string; amount: number | null; usd: number | null; }
 
 export interface ObsTrade {
