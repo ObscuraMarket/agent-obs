@@ -2,7 +2,8 @@
 // operator's machine and its feed is append-only; the operator's API serves
 // the file's bytes from an offset (GET /api/obs/feed-tail?from=N, a shared
 // token in X-OBS-Feed-Token), and this loop appends them to the local copy
-// every OBS_FEED_PULL_SEC seconds. On the first run it starts from the last
+// every OBS_FEED_PULL_SEC seconds (5 by default; the live watch looks every
+// three, so a launch reaches the desk within seconds). On the first run it starts from the last
 // OBS_FEED_PULL_TAIL_MB of the file, so the desk has trails to read within
 // a minute. Bad or missing settings leave quietly; a source that does not
 // answer is retried next time.
@@ -12,7 +13,8 @@ import { dirname } from "node:path";
 const SOURCE = (process.env.OBS_FEED_SOURCE ?? "").replace(/\/+$/, "");
 const TOKEN = process.env.OBS_FEED_TOKEN ?? "";
 const FILE = process.env.OBS_CANDIDATE_FEED ?? "";
-const EVERY = Number(process.env.OBS_FEED_PULL_SEC ?? 30);
+// A pull is one small ranged GET; the source budgets 120 requests a minute per client, so a few seconds is fine.
+const EVERY = Number(process.env.OBS_FEED_PULL_SEC ?? 5);
 const TAIL_MB = Number(process.env.OBS_FEED_PULL_TAIL_MB ?? 24);
 const CHUNK = 8 * 1024 * 1024;
 
