@@ -491,28 +491,54 @@
     }
     function onThought(t) { if (t.at <= lastThoughtAt) return; lastThoughtAt = t.at; push(cycleLines(t, true, true)); setTimeout(refresh, 3000); }
     function onTrade(x) { var at = x.updatedAt || x.at; if (at <= lastTradeAt) return; lastTradeAt = at; push([tradeLine(x, true)]); setTimeout(refresh, 3000); }
+    // The page reconnects its own stream: a redeploy answers 502 for a minute and the browser then stops retrying for
+    // good. While the stream is down the terminal keeps moving on polls (thoughts, the research log, the watch line).
+    var esBackoff = 3000, esReconnectTimer = null, esLastEventAt = 0, seeded = false;
+    function scheduleReconnect() { if (esReconnectTimer) return; var wait = esBackoff; esBackoff = Math.min(30000, esBackoff * 2); esReconnectTimer = setTimeout(function () { esReconnectTimer = null; connect(); }, wait); }
+    function dropStream() { if (es) { es.close(); es = null; } termState("warn", "reconnecting"); poll(); scheduleReconnect(); }
+    setInterval(function () { if (es && Date.now() - esLastEventAt > 150000) dropStream(); }, 30000);
+    function watchFromLive(l) {
+      var what = (l.watching || []).map(function (w) { return w.symbol + " " + (w.entryOk ? "ENTRY" : (w.entryState || "quiet")); }).join(", ") || "nothing in play";
+      return { at: l.at, block: l.block, lookMs: l.lookMs, line: "watching " + what + "; looks " + ((l.lookMs || 0) / 1000).toFixed(1) + " s", trigger: l.lastTrigger || null, cycleRunning: !!l.cycleRunning };
+    }
     function connect() {
       if (!window.EventSource) return poll();
-      try { es = new EventSource(API + "/api/obs/stream?limit=12"); } catch (e) { return poll(); }
-      es.addEventListener("hello", function (ev) { var h = JSON.parse(ev.data); esFails = 0; termState("on", "live"); seed(h.thoughts || [], h.trades || [], h.canExecute, h.research || []); if (h.watch) setTimeout(function () { onWatch(h.watch); }, 0); });
-      es.addEventListener("thought", function (ev) { onThought(JSON.parse(ev.data)); });
-      es.addEventListener("watch", function (ev) { onWatch(JSON.parse(ev.data)); });
-      es.addEventListener("research", function (ev) { onResearch(JSON.parse(ev.data)); });
-      es.addEventListener("trade", function (ev) { onTrade(JSON.parse(ev.data)); });
-      es.onerror = function () { esFails++; termState("warn", "reconnecting"); if (esFails >= 3) { es.close(); es = null; poll(); } };
+      if (esReconnectTimer) { clearTimeout(esReconnectTimer); esReconnectTimer = null; }
+      if (es) es.close();
+      try { es = new EventSource(API + "/api/obs/stream?limit=12"); } catch (e) { poll(); return scheduleReconnect(); }
+      var mine = es;
+      esLastEventAt = Date.now();
+      var alive = function () { esLastEventAt = Date.now(); };
+      mine.addEventListener("hello", function (ev) {
+        alive(); var h = JSON.parse(ev.data); esFails = 0; esBackoff = 3000; termState("on", "live");
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        if (seeded) {
+          (h.research || []).slice().sort(function (a, b) { return a.at - b.at; }).forEach(onResearch);
+          (h.thoughts || []).slice().sort(function (a, b) { return a.at - b.at; }).forEach(onThought);
+          (h.trades || []).forEach(onTrade);
+        } else { seeded = true; seed(h.thoughts || [], h.trades || [], h.canExecute, h.research || []); }
+        if (h.watch) setTimeout(function () { onWatch(h.watch); }, 0);
+      });
+      mine.addEventListener("thought", function (ev) { alive(); onThought(JSON.parse(ev.data)); });
+      mine.addEventListener("watch", function (ev) { alive(); onWatch(JSON.parse(ev.data)); });
+      mine.addEventListener("research", function (ev) { alive(); onResearch(JSON.parse(ev.data)); });
+      mine.addEventListener("trade", function (ev) { alive(); onTrade(JSON.parse(ev.data)); });
+      mine.onerror = function () { esFails++; mine.close(); if (es === mine) es = null; dropStream(); };
     }
     function poll() {
+      if (pollTimer) return;
       termState("warn", "polling");
-      var first = !term.children.length;
       var tick = function () {
         get("/api/obs/thoughts?limit=12").then(function (t) {
           var items = t.items.slice().reverse();
-          if (first) { first = false; seed(items, [], false); return; }
+          if (!seeded) { seeded = true; seed(items, [], false); return; }
           items.forEach(onThought);
         }).catch(function () { termState("", "offline"); });
+        get("/api/obs/research?limit=40").then(function (r) { r.items.slice().sort(function (a, b) { return a.at - b.at; }).forEach(onResearch); }).catch(function () {});
+        get("/api/obs/live").then(function (l) { onWatch(watchFromLive(l)); }).catch(function () {});
       };
       tick();
-      if (!pollTimer) pollTimer = setInterval(tick, 15000);
+      pollTimer = setInterval(tick, 15000);
     }
 
     /* ---- header, stats ---- */

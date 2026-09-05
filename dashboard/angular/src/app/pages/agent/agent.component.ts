@@ -5,7 +5,7 @@ import { Subscription, interval } from 'rxjs';
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import {
   CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition,
-  ObsAgentToken, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
+  ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
 } from '../../service/obs-desk.service';
 
 type MarketAssetId = 'agent' | 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
@@ -142,6 +142,11 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   private lastTradeAt = 0;
   private es?: EventSource;
   private esFails = 0;
+  /** The page reconnects its own stream: the browser gives up for good when a redeploy answers with a bad status. */
+  private esBackoffMs = 3000;
+  private esReconnectTimer?: ReturnType<typeof setTimeout>;
+  private esLastEventAt = 0;
+  private esLivenessTimer?: ReturnType<typeof setInterval>;
   private pollTimer?: ReturnType<typeof setInterval>;
   private typeTimer?: ReturnType<typeof setTimeout>;
   private refreshTimer?: ReturnType<typeof setTimeout>;
@@ -212,6 +217,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.rafId) { cancelAnimationFrame(this.rafId); }
     window.removeEventListener('resize', this.onResize);
     if (this.pollTimer) { clearInterval(this.pollTimer); }
+    if (this.esReconnectTimer) { clearTimeout(this.esReconnectTimer); }
+    if (this.esLivenessTimer) { clearInterval(this.esLivenessTimer); }
     if (this.typeTimer) { clearTimeout(this.typeTimer); }
     if (this.refreshTimer) { clearTimeout(this.refreshTimer); }
     if (this.resizeTimer) { clearTimeout(this.resizeTimer); }
@@ -887,31 +894,69 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   private connect(): void {
     if (typeof EventSource === 'undefined') { this.startPollFallback(); return; }
-    try { this.es = new EventSource(this.obs.streamUrl(12)); } catch { this.startPollFallback(); return; }
-    this.es.addEventListener('hello', (ev) => {
+    if (this.esReconnectTimer) { clearTimeout(this.esReconnectTimer); this.esReconnectTimer = undefined; }
+    this.es?.close();
+    let es: EventSource;
+    try { es = new EventSource(this.obs.streamUrl(12)); } catch { this.startPollFallback(); this.scheduleReconnect(); return; }
+    this.es = es;
+    const alive = () => { this.esLastEventAt = Date.now(); };
+    es.addEventListener('hello', (ev) => {
+      alive();
       const h = JSON.parse((ev as MessageEvent).data) as { thoughts?: ObsThought[]; trades?: ObsTrade[]; canExecute?: boolean; watch?: ObsWatchEvent; research?: ObsResearchEvent[] };
-      if (h.watch) { setTimeout(() => this.onWatch(h.watch as ObsWatchEvent), 0); }
       this.esFails = 0;
+      this.esBackoffMs = 3000;
       this.setStreamState('live');
-      if (this.term()) { this.seed(h.thoughts || [], h.trades || [], !!h.canExecute, h.research || []); }
+      this.stopPollFallback();
+      if (this.termSeeded) {
+        // Back after a drop: what landed while the stream was down joins the terminal in order, and nothing already shown repeats.
+        (h.research || []).slice().sort((a, b) => a.at - b.at).forEach((r) => this.onResearch(r));
+        (h.thoughts || []).slice().sort((a, b) => a.at - b.at).forEach((t) => this.onThought(t));
+        (h.trades || []).forEach((t) => this.onTrade(t));
+      } else if (this.term()) { this.seed(h.thoughts || [], h.trades || [], !!h.canExecute, h.research || []); }
       else { this.pendingSeed = { thoughts: h.thoughts || [], trades: h.trades || [], canExecute: !!h.canExecute, research: h.research || [] }; }
+      if (h.watch) { setTimeout(() => this.onWatch(h.watch as ObsWatchEvent), 0); }
     });
-    this.es.addEventListener('thought', (ev) => this.onThought(JSON.parse((ev as MessageEvent).data) as ObsThought));
-    this.es.addEventListener('watch', (ev) => this.onWatch(JSON.parse((ev as MessageEvent).data) as ObsWatchEvent));
-    this.es.addEventListener('research', (ev) => this.onResearch(JSON.parse((ev as MessageEvent).data) as ObsResearchEvent));
-    this.es.addEventListener('trade', (ev) => this.onTrade(JSON.parse((ev as MessageEvent).data) as ObsTrade));
-    this.es.onerror = () => {
+    es.addEventListener('thought', (ev) => { alive(); this.onThought(JSON.parse((ev as MessageEvent).data) as ObsThought); });
+    es.addEventListener('watch', (ev) => { alive(); this.onWatch(JSON.parse((ev as MessageEvent).data) as ObsWatchEvent); });
+    es.addEventListener('research', (ev) => { alive(); this.onResearch(JSON.parse((ev as MessageEvent).data) as ObsResearchEvent); });
+    es.addEventListener('trade', (ev) => { alive(); this.onTrade(JSON.parse((ev as MessageEvent).data) as ObsTrade); });
+    es.onerror = () => {
+      // A redeploy answers 502 for a minute and the browser then stops retrying for good; the page keeps the terminal
+      // moving on polls and reopens the stream itself, backing off to half a minute.
       this.esFails++;
+      es.close();
+      if (this.es === es) { this.es = undefined; }
       this.setStreamState('reconnecting');
-      if (this.esFails >= 3) {
-        this.es?.close();
-        this.es = undefined;
-        this.startPollFallback();
-      }
+      this.startPollFallback();
+      this.scheduleReconnect();
     };
+    this.startLiveness();
   }
 
+  private scheduleReconnect(): void {
+    if (this.esReconnectTimer) { return; }
+    const wait = this.esBackoffMs;
+    this.esBackoffMs = Math.min(30_000, this.esBackoffMs * 2);
+    this.esReconnectTimer = setTimeout(() => { this.esReconnectTimer = undefined; this.connect(); }, wait);
+  }
+
+  /** The watch line arrives about once a minute; a stream silent for two and a half minutes is dead, whatever the browser says. */
+  private startLiveness(): void {
+    this.esLastEventAt = Date.now();
+    if (this.esLivenessTimer) { return; }
+    this.esLivenessTimer = setInterval(() => {
+      if (!this.es || Date.now() - this.esLastEventAt < 150_000) { return; }
+      this.es.close();
+      this.es = undefined;
+      this.setStreamState('reconnecting');
+      this.startPollFallback();
+      this.scheduleReconnect();
+    }, 30_000);
+  }
+
+  /** While the stream is down the terminal still moves: thoughts, the research log and the watch line, every 15 seconds. */
   private startPollFallback(): void {
+    if (this.pollTimer) { return; }
     this.setStreamState('polling');
     const tick = () => {
       this.obs.thoughts(12).subscribe({
@@ -922,9 +967,27 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
         },
         error: () => this.setStreamState('offline')
       });
+      this.obs.research(40).subscribe({
+        next: (r) => r.items.slice().sort((a, b) => a.at - b.at).forEach((x) => this.onResearch(x)),
+        error: () => { /* the thoughts poll reports the outage */ }
+      });
+      this.obs.live().subscribe({
+        next: (l) => this.onWatch(this.watchFromLive(l)),
+        error: () => { /* same */ }
+      });
     };
     tick();
-    if (!this.pollTimer) { this.pollTimer = setInterval(tick, 15_000); }
+    this.pollTimer = setInterval(tick, 15_000);
+  }
+
+  private stopPollFallback(): void {
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = undefined; }
+  }
+
+  /** The watch line the stream would have sent, built from the heartbeat the page polled instead. */
+  private watchFromLive(l: ObsLive): ObsWatchEvent {
+    const what = (l.watching || []).map((w) => `${w.symbol} ${w.entryOk ? 'ENTRY' : (w.entryState || 'quiet')}`).join(', ') || 'nothing in play';
+    return { at: l.at, block: l.block, lookMs: l.lookMs, line: `watching ${what}; looks ${((l.lookMs || 0) / 1000).toFixed(1)} s`, trigger: l.lastTrigger || null, cycleRunning: !!l.cycleRunning };
   }
 
   private cursorEl(): HTMLElement {

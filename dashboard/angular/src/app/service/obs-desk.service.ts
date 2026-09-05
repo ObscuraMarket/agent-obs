@@ -136,6 +136,26 @@ export interface ObsWatchEvent {
   cycleRunning: boolean;
 }
 
+/** One token the live watch is following, as `/api/obs/live` lists it. */
+export interface ObsLiveWatch {
+  symbol: string;
+  role: 'held' | 'launch' | 'stable';
+  entryState?: string | null;
+  entryOk?: boolean;
+}
+
+/** The live watch's heartbeat: the page polls it when the stream is down, so the watch line keeps moving. */
+export interface ObsLive {
+  live: boolean;
+  at: number;
+  block: number | null;
+  lookMs: number | null;
+  watching: ObsLiveWatch[];
+  lastTrigger: string | null;
+  cycles: number;
+  cycleRunning: boolean;
+}
+
 export interface ObsTradeLeg { asset: string; network: string; amount: number | null; usd: number | null; }
 
 export interface ObsTrade {
@@ -370,6 +390,16 @@ export class ObsDeskService {
 
   market(hours = 168): Observable<ObsMarket> {
     return this.http.get<ObsMarket>(`${this.base}/api/obs/market`, { params: { hours } });
+  }
+
+  /** The research log, newest first: what the desk learned between cycles. Polled when the stream is down. */
+  research(limit = 40): Observable<ObsItems<ObsResearchEvent>> {
+    return this.http.get<ObsItems<ObsResearchEvent>>(`${this.base}/api/obs/research`, { params: { limit } });
+  }
+
+  /** The live watch's heartbeat. Polled when the stream is down. */
+  live(): Observable<ObsLive> {
+    return this.http.get<ObsLive>(`${this.base}/api/obs/live`);
   }
 
   /** URL of the SSE terminal stream (hello/thought/trade events), for EventSource. */
