@@ -91,6 +91,7 @@
       <div class="asset-dd">
         <ng-template #assetIco let-id>
           <span class="dd-ico">
+            <img *ngIf="id === 'agent'" src="/assets/images/agent-obs.png" alt=""/>
             <img *ngIf="id === 'obs'" src="/assets/images/obs-icon.png" alt=""/>
             <img *ngIf="id === 'usdg'" src="/assets/images/usdg.png" alt=""/>
             <svg *ngIf="id === 'eth'" viewBox="0 0 256 417" xmlns="http://www.w3.org/2000/svg">

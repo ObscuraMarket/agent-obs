@@ -26,7 +26,7 @@ cp "$ROOT/dashboard/index.html" "$DOCS/reference.html"
 # The assets the Agent page references, added beside the site's own (never deleted).
 ASSETS="$ROOT/dashboard/angular/src/assets"
 mkdir -p "$SITE_ASSETS/images/tokenized-stocks" "$SITE_ASSETS/video"
-for f in bnb-icon.png btc-icon.png sol-icon.png obs-icon.png usdg.png maskspin-poster.jpg; do cp "$ASSETS/images/$f" "$SITE_ASSETS/images/$f"; done
+for f in bnb-icon.png btc-icon.png sol-icon.png obs-icon.png agent-obs.png usdg.png maskspin-poster.jpg; do cp "$ASSETS/images/$f" "$SITE_ASSETS/images/$f"; done
 rsync -a "$ASSETS/images/tokenized-stocks/" "$SITE_ASSETS/images/tokenized-stocks/"
 cp "$ASSETS/video/maskspin.mp4" "$SITE_ASSETS/video/maskspin.mp4"
 echo "relayed from louz514/agent-obs@$SHA on $(date -u +%FT%TZ)" > "$DOCS/RELAY.txt"

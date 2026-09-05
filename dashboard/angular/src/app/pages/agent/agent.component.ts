@@ -8,7 +8,7 @@ import {
   ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
 } from '../../service/obs-desk.service';
 
-type MarketAssetId = 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
+type MarketAssetId = 'agent' | 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
 
 /** One slot of the marquee: a token mark (ETH, USDG, OBS or a tokenized stock) or a realised PnL figure. */
 interface MarqueeItem { kind: 'eth' | 'usdg' | 'obs' | 'stock' | 'pnl'; value?: string; src?: string; }
@@ -62,6 +62,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   assetMenuOpen = false;
   readonly marketAssets: Array<{ id: MarketAssetId; label: string }> = [
     { id: 'obs', label: 'OBS' },
+    { id: 'agent', label: 'Agent OBS' },
     { id: 'eth', label: 'Ethereum' },
     { id: 'usdg', label: 'USDG' },
     { id: 'btc', label: 'Bitcoin' },
@@ -280,7 +281,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   // ---- view models -----------------------------------------------------
 
   private buildStats(): void {
-    if (this.marketAsset === 'obs') { this.buildStatsObs(); } else { this.buildStatsCg(); }
+    if (this.marketAsset === 'obs') { this.buildStatsObs(); } else if (this.marketAsset === 'agent') { this.buildStatsAgent(); } else { this.buildStatsCg(); }
     const last = this.status?.desk?.lastThoughtAt;
     const name = this.chartSeries === 'obs' ? 'OBS / USD' : this.chartSeries === 'pnl' ? 'OBS Desk PnL / USD' : 'OBS Desk Equity / USD';
     this.chartCap = name + (last ? ' · Last Cycle ' + this.capWords(this.ago(last)) : ' · Live');
@@ -311,6 +312,18 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       { lbl: 'Liquidity', val: this.compact(pool?.tvlUsd), ...this.chgSub(this.trackPct('obs:liq', pool?.tvlUsd)) },
       { lbl: 'Holders', val: holders != null ? holders.toLocaleString('en-US') : 'n/a', ...this.chgSub(this.trackPct('obs:holders', holders)) },
       { lbl: 'Cashback earned', val: this.usd(cash), valCls: cash > 0 ? 'up' : '', ...this.chgSub(this.trackPct('obs:cash', cash)) }
+    ];
+  }
+
+  /** The agent's own token, going live: the logo and the honest word on every box until the ticker is announced. Filled from the API once it trades. */
+  private buildStatsAgent(): void {
+    this.stats = [
+      { lbl: 'Price', val: 'TBD', sub: 'going live' },
+      { lbl: 'Market cap', val: 'TBD', sub: 'going live' },
+      { lbl: 'Vol 24h', val: 'TBD', sub: 'going live' },
+      { lbl: 'Liquidity', val: 'TBD', sub: 'going live' },
+      { lbl: 'Holders', val: 'TBD', sub: 'going live' },
+      { lbl: 'Ticker', val: 'TBD', sub: 'announced at launch' }
     ];
   }
 
