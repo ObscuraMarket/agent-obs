@@ -81,7 +81,7 @@ function runCycle(reason: string, symbol: string, now: number): void {
   lastTrigger = `${new Date(now).toISOString().slice(11, 19)}Z ${reason}`;
   cycles++;
   console.log(`[live] trigger: ${reason}; running the desk`);
-  recordResearch({ kind: "trigger", symbol, ok: null, note: reason.replace(/^\S+ gave an entry: /, "") });
+  recordResearch({ kind: "trigger", symbol, ok: null, note: compactWhy(reason.replace(/^\S+ gave an entry: /, "")) });
   const child = spawn(join(ROOT_DIR, "node_modules", ".bin", "tsx"), ["src/desk/cycle.ts"], {
     cwd: ROOT_DIR,
     env: { ...process.env, OBS_TICK: "fast", OBS_MIN_THOUGHT_GAP_MIN: String(rules.cooldownMin), OBS_LIVE_TRIGGER: reason },
@@ -106,6 +106,16 @@ const looks: number[] = [];
 const seenLaunch = new Map<string, boolean>();
 const watchingNow = new Set<string>();
 let firstLook = true;
+const entryNoted = new Map<string, number>();
+/** PURE: the two figures that decide an entry read, from its sentence: how far off the peak, and the buy pressure. */
+function compactWhy(why: string): string {
+  const off = why.match(/now (\d+)% off it|(\d+)% off its peak/);
+  const bp = why.match(/buy pressure (\d+)%/);
+  const run = why.match(/ran \+(\d+)% to its peak/);
+  const bits = [run ? `ran +${run[1]}%` : null, off ? `${off[1] ?? off[2]}% off the peak` : null, bp ? `buy pressure ${bp[1]}%` : null].filter(Boolean);
+  if (bits.length) return bits.join(", ");
+  return why.replace(/^[^;:]*;\s*/, "").replace(/:\s*[a-z ]+,? ?(entry allowed|no entry|not allowed).*$/i, "").replace(/^no volume pickup \(/, "").replace(/\)$/, "").trim().slice(0, 110);
+}
 
 async function step(now: number): Promise<void> {
   refreshHeld(now);
@@ -165,14 +175,17 @@ async function step(now: number): Promise<void> {
     const er = entryRead(rows, symbol, now, entryRules, role !== "launch");
     states.push({ symbol, role, entryState: er.state, entryOk: er.ok, trend: st.trend, offPeakPct: st.offPeakPct, buyPressurePct: st.buyPressurePct, swaps: st.swaps, lastSwapAgoMin: st.lastSwapAgoMin, why: er.why });
   }
-  // The tape's entry state changing on a watched token is research worth a line.
+  // The tape's entry state changing on a watched token is research worth a line: the state, and the two
+  // figures that decide it, at most once every three minutes per token and state so a flapping read does not flood the log.
   if (!firstLook) {
     for (const st of states) {
       const p = prev[st.symbol];
       if (p && p.entryState === st.entryState && p.entryOk === st.entryOk) continue;
       if (!p && st.entryState === "quiet") continue;
-      const short = st.why.replace(/^[^;:]*;\s*/, "").replace(/:\s*[a-z ]+,? ?(entry allowed|no entry|not allowed).*$/i, "").replace(/^no volume pickup \(/, "").replace(/\)$/, "").trim().slice(0, 110);
-      recordResearch({ kind: "entry", symbol: st.symbol, ok: st.entryOk, note: `${st.entryState}|${short}` });
+      const k = `${st.symbol}|${st.entryState}`;
+      if (now - (entryNoted.get(k) ?? 0) < 3 * 60e3) continue;
+      entryNoted.set(k, now);
+      recordResearch({ kind: "entry", symbol: st.symbol, ok: st.entryOk, note: `${st.entryState}|${compactWhy(st.why)}` });
     }
   }
   firstLook = false;
