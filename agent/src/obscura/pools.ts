@@ -45,6 +45,8 @@ export interface ChainMemory {
   tokens: Record<string, { address?: string; decimals?: number } | Record<string, string>>;
   obsMarket: {
     primary: PoolSpec & { measured: { at: string; priceUsd: number; usdgDepth2pct: number } };
+    /** The OBS/ETH pool on Uniswap v4 behind the pons v2 hook, the deep market from 2026-09-05; priced through ETH. */
+    ethPool?: PoolSpec & { note?: string; measured?: { at: string; priceEth: number; depth2pctEth: number } };
     holders: { at: string; count: number };
     uniswapV4Dust: { note: string; pools: Array<{ id: string; feePct: number; usdgDepth2pct: number }> };
   };
@@ -164,6 +166,8 @@ export interface MarketRead {
   usdgInPool?: number | null;
   obsInPool?: number | null;
   tvlUsd?: number | null;
+  /** The pool's quote asset: USDG for the Ramses pool, ETH for the v4 pool. */
+  quote?: "USDG" | "ETH";
 }
 
 /** balanceOf(holder) calldata. */
@@ -172,12 +176,25 @@ const balanceOfData = (holder: string) => "0x70a08231" + holder.toLowerCase().re
 /** $OBS priced by its own market, the Ramses V3 USDG pool, with what the
  *  pool holds. Null when the chain did not answer this cycle; the reserves
  *  are null on their own if only they did not. */
-export async function obsMarket(): Promise<MarketRead | null> {
+/**
+ * OBS on its own market. Two pools are read: the Ramses USDG pool and, when the chain memory names one and an ETH
+ * price is at hand, the v4 OBS/ETH pool. The deeper one (dollars of buying that move the price 2%) sets the price;
+ * the USDG pool's holdings are still read for its TVL when it wins.
+ */
+export async function obsMarket(ethUsd: number | null = null): Promise<MarketRead | null> {
   const m = chainMemory();
   const spec = m.obsMarket.primary;
-  const r = await poolRead(spec);
+  const [ramses, v4] = await Promise.all([
+    poolRead(spec).catch(() => null),
+    m.obsMarket.ethPool && ethUsd ? poolRead(m.obsMarket.ethPool).catch(() => null) : Promise.resolve(null),
+  ]);
+  const ethRead = v4 && ethUsd && v4.priceUsd > 0 ? { ...v4, priceUsd: v4.priceUsd * ethUsd, depthUsd2pct: v4.depthUsd2pct * ethUsd } : null;
+  if (ethRead && (!ramses || ethRead.depthUsd2pct > ramses.depthUsd2pct)) {
+    return { venue: ethRead.venue, feePct: ethRead.feePct, priceUsd: ethRead.priceUsd, depthUsd2pct: ethRead.depthUsd2pct, liquidity: ethRead.liquidity, at: ethRead.at, usdgInPool: null, obsInPool: null, tvlUsd: null, quote: "ETH" };
+  }
+  const r = ramses;
   if (!r || !(r.priceUsd > 0)) return null;
-  const out: MarketRead = { venue: r.venue, feePct: r.feePct, priceUsd: r.priceUsd, depthUsd2pct: r.depthUsd2pct, liquidity: r.liquidity, at: r.at, usdgInPool: null, obsInPool: null, tvlUsd: null };
+  const out: MarketRead = { venue: r.venue, feePct: r.feePct, priceUsd: r.priceUsd, depthUsd2pct: r.depthUsd2pct, liquidity: r.liquidity, at: r.at, usdgInPool: null, obsInPool: null, tvlUsd: null, quote: "USDG" };
   if (spec.pool) {
     const token = (k: string) => m.tokens[k] as { address: string; decimals: number };
     const held = async (t: { address: string; decimals: number }) => {

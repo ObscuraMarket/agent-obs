@@ -422,9 +422,10 @@ export async function liveReads(): Promise<Reads> {
   // The Robinhood-heavy reads run back to back, not on top of each other.
   const token = await obsToken();
   const wallet = await walletRead();
-  const market = await obsMarket();
-  if (market && !DRY) sampleMarket(market);
   const [p, up, api] = await othersP;
+  // OBS's market needs the ETH price when its deep pool is the ETH one.
+  const market = await obsMarket(p.ethUsd ?? null);
+  if (market && !DRY) sampleMarket(market);
   return { at: Date.now(), token, prices: p, siteUp: up, apiUp: api, wallet, market };
 }
 
@@ -435,7 +436,7 @@ export function usdPrice(v: number): string {
 
 /** PURE: the market line as the prompt, the observation and the dashboard show it. */
 export function marketLine(m: MarketRead): string {
-  const venue = m.venue === "ramses-v3" ? "its USDG pool on Ramses" : "its USDG pool";
+  const venue = m.quote === "ETH" ? "its ETH pool on Uniswap v4" : m.venue === "ramses-v3" ? "its USDG pool on Ramses" : "its USDG pool";
   return `OBS at ${usdPrice(m.priceUsd)} on its own market (${venue}, ${m.feePct}% tier); about ${usdPrice(m.depthUsd2pct)} of buying moves the price 2%.`;
 }
 

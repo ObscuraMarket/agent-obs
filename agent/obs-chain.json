@@ -238,6 +238,27 @@
           "priceUsdInRange": 0.0013359
         }
       ]
+    },
+    "ethPool": {
+      "note": "From 2026-09-05 the deep OBS market is this Uniswap v4 pool, OBS against native ETH behind the pons v2 hook (dexscreener liquidity about $66k, 24h volume about $134k that day, against $214 left in the Ramses USDG pool). The desk reads both and prices OBS from the deeper one.",
+      "venue": "uniswap-v4",
+      "id": "0xfd7c2011444e8105249df4b1f2986d13304dfa2ade3ebed0b6e168f259f6c956",
+      "token0": "ETH",
+      "token1": "OBS",
+      "decimals0": 18,
+      "decimals1": 18,
+      "usdToken": 0,
+      "feePct": 0,
+      "tickSpacing": 200,
+      "hooks": true,
+      "hookAddress": "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044",
+      "feePips": 0,
+      "quote": "ETH",
+      "measured": {
+        "at": "2026-09-05T22:20:00Z",
+        "priceEth": 2.0538603794415132e-07,
+        "depth2pctEth": 0.13202515886924315
+      }
     }
   },
   "referencePools": {

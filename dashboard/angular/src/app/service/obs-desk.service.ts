@@ -228,6 +228,8 @@ export interface ObsPoolRead {
   usdgInPool: number | null;
   obsInPool: number | null;
   tvlUsd: number | null;
+  /** The pool's quote asset: USDG for the Ramses pool, ETH for the v4 pool (since September 5). */
+  quote?: 'USDG' | 'ETH';
 }
 
 export interface ObsReads {
