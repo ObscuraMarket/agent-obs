@@ -235,7 +235,24 @@ export async function obsToken(): Promise<TokenRead> {
     }
   }
   const x = await explorerP;
-  return { address: OBS_CONTRACT, ...meta, holders: x.holders, explorerPriceUsd: x.priceUsd, volume24hUsd: x.volume24hUsd, marketCapUsd: x.marketCapUsd };
+  // The explorer is flaky; its last good figures stand in for up to six hours rather than a blank card.
+  const EXPLORER_CACHE = "obs-explorer.json";
+  let view = x;
+  if (x.holders == null && x.volume24hUsd == null && x.priceUsd == null) {
+    try {
+      const c = JSON.parse(readFileSync(dataPath(EXPLORER_CACHE), "utf8")) as ExplorerView & { at?: number };
+      if (c.at && Date.now() - c.at < 6 * 3600e3) view = { holders: c.holders ?? null, priceUsd: c.priceUsd ?? null, volume24hUsd: c.volume24hUsd ?? null, marketCapUsd: c.marketCapUsd ?? null };
+    } catch {
+      /* nothing cached */
+    }
+  } else if (!DRY) {
+    try {
+      writeFileSync(dataPath(EXPLORER_CACHE), JSON.stringify({ at: Date.now(), ...x }));
+    } catch {
+      /* the cache is a convenience */
+    }
+  }
+  return { address: OBS_CONTRACT, ...meta, holders: view.holders, explorerPriceUsd: view.priceUsd, volume24hUsd: view.volume24hUsd, marketCapUsd: view.marketCapUsd };
 }
 
 interface ExplorerView {
@@ -430,14 +447,21 @@ export interface Reads {
   market: MarketRead | null;
 }
 
+/** The last ETH price the desk sampled (obs-prices.jsonl), for a market read when the price feed is down. */
+function lastSampledEth(): number | null {
+  const rows = readLedger<{ at: number; symbol: string; priceUsd: number }>("obs-prices.jsonl").filter((r) => r && r.symbol === "ETH" && Number(r.priceUsd) > 0 && Date.now() - Number(r.at) < 6 * 3600e3);
+  return rows.length ? Number(rows[rows.length - 1].priceUsd) : null;
+}
+
 export async function liveReads(): Promise<Reads> {
   const othersP = Promise.all([prices(), siteUp(), apiUp()]);
   // The Robinhood-heavy reads run back to back, not on top of each other.
   const token = await obsToken();
   const wallet = await walletRead();
   const [p, up, api] = await othersP;
-  // OBS's market needs the ETH price when its deep pool is the ETH one.
-  const market = await obsMarket(p.ethUsd ?? null);
+  // OBS's market needs the ETH price when its deep pool is the ETH one; when the price feed is down, the last sampled ETH price serves.
+  const ethUsd = p.ethUsd ?? lastSampledEth();
+  const market = await obsMarket(ethUsd);
   if (market && !DRY) sampleMarket(market);
   const now = Date.now();
   token.change24h = tokenChanges({ at: now, volume24hUsd: token.volume24hUsd, holders: token.holders, tvlUsd: market?.tvlUsd ?? null }, now);
