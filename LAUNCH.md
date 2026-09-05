@@ -84,7 +84,12 @@ operator (keys and switches), and the site team (their page and their zone).
    railway variables -s desk --unset OBS_WALLET_JSON    # remove the key too
    ```
    `ROBINHOOD_RPC_URL` is set to the public Robinhood Chain RPC; a provider
-   key removes "not measured" reads on a busy day.
+   key removes "not measured" reads on a busy day. Alchemy serves the chain
+   (`https://robinhood-mainnet.g.alchemy.com/v2/<key>`, an app on Robinhood
+   Chain Mainnet in the Alchemy dashboard). Install it with
+   `scripts/railway-rpc.sh <url>`: it proves the endpoint is chain 4663 with
+   a fresh head and working `eth_getLogs`, then sets the variable on Railway
+   (a redeploy) and in `agent/.env` on the Mac. `--check <url>` tests only.
 5. **What the first trade looks like.** The wallet has never sent a
    transaction. The first live action is a $5 probe from ETH into a launch
    token's pool (one swap), then, when the exit comes, two approvals and
