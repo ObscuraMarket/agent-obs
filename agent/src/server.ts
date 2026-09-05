@@ -217,9 +217,12 @@ async function cachedReads(): Promise<Reads> {
     readsRefreshing = liveReads().then((value) => { readsCache = { at: Date.now(), value }; }).catch(() => undefined).finally(() => { readsRefreshing = null; });
   }
   if (readsCache) return readsCache.value;
-  const value = await liveReads();
-  readsCache = { at: Date.now(), value };
-  return value;
+  // Cold: one read in flight, shared by every caller, never several at once.
+  if (!readsRefreshing) readsRefreshing = liveReads().then((value) => { readsCache = { at: Date.now(), value }; }).finally(() => { readsRefreshing = null; });
+  await readsRefreshing;
+  const warmed = readsCache as { at: number; value: Reads } | null;
+  if (!warmed) throw new Error("reads unavailable");
+  return warmed.value;
 }
 let pricesCache: { at: number; key: string; value: Record<string, number | null> } | null = null;
 let pricesRefreshing: Promise<void> | null = null;
@@ -235,6 +238,11 @@ async function cachedPrices(symbols: string[]): Promise<Record<string, number | 
   const value = await assetPrices(symbols, { OBS: readsCache?.value.market?.priceUsd ?? null });
   pricesCache = { at: Date.now(), key, value };
   return value;
+}
+/** The reads when they are warm, else null at once: for endpoints that must never wait. */
+function warmReads(): Reads | null {
+  void cachedReads().catch(() => undefined);
+  return readsCache?.value ?? null;
 }
 
 // The agent's own token is read in the background on a timer and answered from the last read at once:
@@ -558,8 +566,16 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   if (path === "/api/obs/pnl") {
     const hours = Number(url.searchParams.get("hours") ?? 168);
     const { book } = deskFromDisk();
-    // The chain is the truth once a wallet exists; the ledgers are the fallback.
-    cachedReads()
+    // The chain is the truth once a wallet exists; the ledgers are the fallback. A cold read is never waited for:
+    // the ledger's last snapshot answers at once, marked pending, and the next request gets the chain.
+    const warm = warmReads();
+    if (!warm) {
+      const t0 = latestTrades(book.trades);
+      const last = book.snapshots[book.snapshots.length - 1] ?? snapshot(book.flows, book.trades, {}, now);
+      json(res, 200, { pending: true, snapshot: last, prices: {}, positions: [], realizedUsd: 0, inFlight: [], track: null, series: series(book.snapshots, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 90) : 168) * 3600e3, now), capital: { netUsd: last.netCapitalUsd, deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length }, trades: { settled: t0.filter((x) => x.status === "settled").length, pending: t0.filter((x) => x.status === "pending").length, proposed: t0.filter((x) => x.status === "proposed").length, failed: t0.filter((x) => x.status === "failed").length }, canExecute: tradingArmed(), at: now });
+      return;
+    }
+    Promise.resolve(warm)
       .then(async (r) => {
         const chain = r.wallet ? walletBalances(r.wallet) : null;
         const held = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, book.trades, {}, now).holdings);

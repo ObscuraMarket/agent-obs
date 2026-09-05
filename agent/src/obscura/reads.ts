@@ -152,7 +152,7 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
     mainnetP,
     (async () => {
       try {
-        const res = await fetch(`${API_URL}/rewards/${address}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
+        const res = await fetch(`${API_URL}/rewards/${address}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(6_000) });
         const j = (await res.json()) as { stats?: { swaps?: number; volumeUsd?: number; rewardsUsd?: number; paidUsd?: number } };
         const s = j.stats;
         return s ? { swaps: Number(s.swaps ?? 0), volumeUsd: Number(s.volumeUsd ?? 0), rewardsUsd: Number(s.rewardsUsd ?? 0), paidUsd: Number(s.paidUsd ?? 0) } : null;
@@ -238,7 +238,7 @@ const pos = (v: unknown): number | null => {
 /** The explorer's view of the token: holders, its USD rate, 24h volume, market cap. Null fields when it will not answer. */
 async function explorerToken(): Promise<ExplorerView> {
   try {
-    const res = await fetch(`https://robinhoodchain.blockscout.com/api/v2/tokens/${OBS_CONTRACT}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(`https://robinhoodchain.blockscout.com/api/v2/tokens/${OBS_CONTRACT}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(6_000) });
     const j = (await res.json()) as { holders_count?: string | number; exchange_rate?: string | number | null; volume_24h?: string | number | null; circulating_market_cap?: string | number | null };
     return { holders: pos(j.holders_count), priceUsd: pos(j.exchange_rate), volume24hUsd: pos(j.volume_24h), marketCapUsd: pos(j.circulating_market_cap) };
   } catch {
@@ -322,7 +322,7 @@ export async function assetPrices(symbols: string[], known: Record<string, numbe
   const ids = want.filter((s) => !(s in out)).map((s) => COINGECKO_IDS[s]).filter(Boolean);
   if (ids.length) {
     try {
-      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(",")}&vs_currencies=usd`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
+      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(",")}&vs_currencies=usd`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(6_000) });
       const j = (await res.json()) as Record<string, { usd?: number }>;
       for (const s of want) {
         const id = COINGECKO_IDS[s];
@@ -375,7 +375,7 @@ export interface PriceRead {
 /** Spot prices for the two assets every route touches. Best-effort. */
 export async function prices(): Promise<PriceRead> {
   try {
-    const res = await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&price_change_percentage=24h", { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&price_change_percentage=24h", { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(6_000) });
     const rows = (await res.json()) as Array<{ id?: string; current_price?: number; price_change_percentage_24h?: number | null }>;
     const by = (id: string) => (Array.isArray(rows) ? rows.find((r) => r.id === id) : undefined);
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -388,7 +388,7 @@ export async function prices(): Promise<PriceRead> {
 /** Is Obscura's API answering right now (its own /health). */
 export async function apiUp(): Promise<boolean> {
   try {
-    const res = await fetch(API_URL + "/health", { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(API_URL + "/health", { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(6_000) });
     const j = (await res.json()) as { status?: string };
     return res.ok && j.status === "ok";
   } catch {
@@ -399,7 +399,7 @@ export async function apiUp(): Promise<boolean> {
 /** Is the app answering right now. */
 export async function siteUp(): Promise<boolean> {
   try {
-    const res = await fetch(SITE_URL + "/", { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(SITE_URL + "/", { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(6_000) });
     return res.ok;
   } catch {
     return false;
