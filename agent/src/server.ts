@@ -23,7 +23,7 @@ import { poolRead } from "./obscura/pools.ts";
 import { readThoughts, type Thought } from "./desk/thoughts.ts";
 import { digestThought, watchEvent, type WatchEvent } from "./desk/digest.ts";
 import { readResearch } from "./desk/research.ts";
-import { readAgentToken } from "./desk/agentToken.ts";
+import { readAgentToken, type AgentTokenRead } from "./desk/agentToken.ts";
 import { AGENT_TOKEN } from "./config.ts";
 
 /** A thought as the page reads it: the record plus its digest (verdict, headline, each token's status). Additive. */
@@ -210,19 +210,48 @@ export function buildStatus(posts: PostRow[], replies: PostRow[], decisions: Arr
 }
 
 let readsCache: { at: number; value: Reads } | null = null;
+let readsRefreshing: Promise<void> | null = null;
+/** The live reads: answered from the last value at once; a value older than the TTL is refreshed in the background, never on the caller's clock. */
 async function cachedReads(): Promise<Reads> {
-  if (readsCache && Date.now() - readsCache.at < READS_TTL_MS) return readsCache.value;
+  if (readsCache && Date.now() - readsCache.at >= READS_TTL_MS && !readsRefreshing) {
+    readsRefreshing = liveReads().then((value) => { readsCache = { at: Date.now(), value }; }).catch(() => undefined).finally(() => { readsRefreshing = null; });
+  }
+  if (readsCache) return readsCache.value;
   const value = await liveReads();
   readsCache = { at: Date.now(), value };
   return value;
 }
 let pricesCache: { at: number; key: string; value: Record<string, number | null> } | null = null;
+let pricesRefreshing: Promise<void> | null = null;
+/** Prices: the same rule as the reads; a stale value is served and refreshed behind the request. */
 async function cachedPrices(symbols: string[]): Promise<Record<string, number | null>> {
   const key = [...new Set(symbols.map((s) => s.toUpperCase()))].sort().join(",");
-  if (pricesCache && pricesCache.key === key && Date.now() - pricesCache.at < READS_TTL_MS) return pricesCache.value;
+  if (pricesCache && pricesCache.key === key) {
+    if (Date.now() - pricesCache.at >= READS_TTL_MS && !pricesRefreshing) {
+      pricesRefreshing = assetPrices(symbols, { OBS: readsCache?.value.market?.priceUsd ?? null }).then((value) => { pricesCache = { at: Date.now(), key, value }; }).catch(() => undefined).finally(() => { pricesRefreshing = null; });
+    }
+    return pricesCache.value;
+  }
   const value = await assetPrices(symbols, { OBS: readsCache?.value.market?.priceUsd ?? null });
   pricesCache = { at: Date.now(), key, value };
   return value;
+}
+
+// The agent's own token is read in the background on a timer and answered from the last read at once:
+// its first read walks a day of swaps and the token's transfers, which no visitor should wait for.
+let agentTokenCache: AgentTokenRead | null = null;
+let agentTokenRefreshing = false;
+async function refreshAgentToken(): Promise<void> {
+  if (agentTokenRefreshing) return;
+  agentTokenRefreshing = true;
+  try {
+    const p = await cachedPrices(["ETH"]);
+    agentTokenCache = await readAgentToken(p.ETH ?? null, Date.now());
+  } catch {
+    /* keep the last read */
+  } finally {
+    agentTokenRefreshing = false;
+  }
 }
 
 /** The trade rows as the dashboard shows them. The ledger never holds a deposit or payout address, so nothing is stripped; this is the seam if that ever changes. */
@@ -442,11 +471,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/agent-token") {
-    // The agent's own token, for the Market card: read from its pool and its transfers, never traded by the desk.
-    cachedPrices(["ETH"])
-      .then((p) => readAgentToken(p.ETH ?? null, now))
-      .then((t) => json(res, 200, t))
-      .catch((e) => json(res, 200, { contract: AGENT_TOKEN, error: e instanceof Error ? e.message.slice(0, 120) : "unreadable", at: now }));
+    // The agent's own token, for the Market card: the last background read, at once. Never traded by the desk.
+    if (!agentTokenCache) void refreshAgentToken();
+    json(res, 200, agentTokenCache ?? { contract: AGENT_TOKEN, pending: true, at: now });
     return;
   }
   if (path === "/api/obs/research") {
@@ -606,6 +633,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
 // Compare paths, not URL strings: a space in the checkout path is "%20" in
 // import.meta.url and a literal space in argv, so the string form never matched.
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  void refreshAgentToken();
+  setInterval(() => void refreshAgentToken(), 45_000).unref();
   createServer(handle).listen(PORT, process.env.OBS_DASHBOARD_HOST || "127.0.0.1", () => {
     console.log(`[obs] dashboard API on http://localhost:${PORT} (page at /, JSON under /api/obs/*)`);
   });
