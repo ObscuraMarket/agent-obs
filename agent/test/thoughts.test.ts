@@ -77,6 +77,10 @@ test("public thoughts pass the same boundaries as a tweet", () => {
 test("the prompt tells the truth about whether a swap can execute", () => {
   const p = buildThoughtPrompt(["Book: empty."], [], "", "2026-09-01T12:00:00.000Z", false);
   assert.match(p, /You cannot execute anything yet/);
+  const armed = buildThoughtPrompt(["Book: empty."], [], "", "2026-09-01T12:00:00.000Z", true);
+  assert.match(armed, /no operator approval step/, "an armed desk is told nothing waits for the operator");
+  assert.match(armed, /before the desk was armed and is void/, "and that its older thoughts about proposals no longer count");
+  assert.ok(!/You cannot execute anything yet/.test(armed));
   assert.match(p, /DECISION: swap <amount> <FROM> -> <TO>/);
   assert.match(p, /Assets you may name: ETH@robinhood, USDG@robinhood\./, "the default allowlist is what he may name");
   assert.ok(!/basis/i.test(p), "the basis is not in the prompt unless switched on");
