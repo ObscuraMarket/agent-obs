@@ -33,7 +33,8 @@
     "bridge:url": "node scripts/bridgeUrl.mjs",
     "paper:session": "bash scripts/_paper-session.sh",
     "relay": "bash ../scripts/relay-dashboard.sh",
-    "replay:entries": "tsx scripts/replayEntries.ts"
+    "replay:entries": "tsx scripts/replayEntries.ts",
+    "book:withdraw": "tsx scripts/withdrawProposals.ts"
   },
   "dependencies": {
     "@openhermit/sdk": "^0.7.0",

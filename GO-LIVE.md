@@ -60,6 +60,7 @@ Owners: **Team** (a decision), **Operator** (keys, switches, Railway),
 - [ ] Watch the curve fill and the graduation. Between the sweep and the pool, nothing trades; say so if asked.
 
 **The desk (Operator)**
+- [ ] Withdraw the proposals the unarmed desk stacked up: `scripts/railway-withdraw.sh --dry` to see them, then `scripts/railway-withdraw.sh`. An armed desk decides and executes in the same cycle and never returns to an old proposal, so anything left as "proposed" is a dead row the model keeps reading as "awaiting the operator" and holds against.
 - [ ] Arm: `scripts/railway-arm.sh on`. Rerun the preflight; `armed (canExecute)` must read true.
 - [ ] Know the first trade: a $5 probe from ETH into a launch token's pool, one swap; on its exit, two approvals then the sell. Watch it on the Agent page, on `/api/obs/trades`, and in `railway logs -s desk`.
 - [ ] Know the stop: `scripts/railway-arm.sh off` halts entries within a minute; the daily loss brake halts them alone at $50 or 5% down on the day; exits never halt.

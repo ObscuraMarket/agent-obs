@@ -30,3 +30,4 @@ agent/scripts/launchd/*.plist
 .DS_Store
 .claude/settings.local.json
 *.code-workspace
+data-railway/
