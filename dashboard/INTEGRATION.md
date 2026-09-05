@@ -401,7 +401,10 @@ pool: `priceUsd`, `depthUsd2pct` in dollars that move it 2%, `venue`,
 The agent's own token (AOBS, `0x47366e0f257ac009e82bd46fb74e2fb50826ce98`
 on Robinhood Chain), for the Market card: `{ contract, name, symbol,
 decimals, totalSupply, phase, pair, poolId, priceUsd, depthUsd2pct,
-marketCapUsd, volume24hUsd, swaps24h, holders, launchedAt, explorerUrl, at }`.
+marketCapUsd, volume24hUsd, swaps24h, holders, change24hPct, launchedAt, explorerUrl, at }`.
+`change24hPct` is the price against the oldest sample inside the last day, a
+fraction, null until there are two samples; the reference page draws the
+AOBS card with the same six boxes and sub-lines as the OBS card.
 Price and depth come from its pool, volume from the pool's own swaps over
 the last 24 hours, holders from its Transfer events; each is `null` until
 it can be measured. Cached a minute. The desk never trades this token; the

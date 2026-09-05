@@ -105,6 +105,8 @@ export interface ObsAgentToken {
   volume24hUsd: number | null;
   swaps24h: number | null;
   holders: number | null;
+  /** The price against the oldest sample inside the last day, a fraction; null until there are two samples. */
+  change24hPct?: number | null;
   launchedAt: number | null;
   explorerUrl: string;
   at: number;

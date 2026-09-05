@@ -8,6 +8,7 @@ import { chainMemory, poolRead, type PoolSpec } from "../obscura/pools.ts";
 import { curvePoolIdFor, curveKey } from "./candidates.ts";
 import { updateTape } from "./tape.ts";
 import { updateTransfers, balancesFrom, holderRulesFromEnv, infrastructureAddresses } from "./holders.ts";
+import { appendLedger, readLedger } from "../ledger.ts";
 
 const ERC20 = parseAbi(["function name() view returns (string)", "function symbol() view returns (string)", "function decimals() view returns (uint8)", "function totalSupply() view returns (uint256)"]);
 const FACTORY = parseAbi([
@@ -36,9 +37,21 @@ export interface AgentTokenRead {
   volume24hUsd: number | null;
   swaps24h: number | null;
   holders: number | null;
+  /** The price against the oldest sample inside the last day, as a fraction; null until there are two samples. */
+  change24hPct: number | null;
   launchedAt: number | null;
   explorerUrl: string;
   at: number;
+}
+
+/** The token's price samples, one per read, kept a day: the 24-hour change is measured against the oldest. */
+const SAMPLES = "obs-agent-token.jsonl";
+function sampleAndChange(priceUsd: number, now: number): number | null {
+  appendLedger(SAMPLES, { at: now, priceUsd });
+  const rows = readLedger<{ at: number; priceUsd: number }>(SAMPLES).filter((r) => r && Number.isFinite(r.at) && r.priceUsd > 0 && now - r.at <= 24 * 3600e3);
+  if (rows.length < 2) return null;
+  const a = rows[0].priceUsd;
+  return a > 0 ? (priceUsd - a) / a : null;
 }
 
 let cache: { at: number; read: AgentTokenRead } | null = null;
@@ -49,7 +62,7 @@ export async function readAgentToken(ethUsd: number | null, now = Date.now()): P
   if (cache && now - cache.at < 60_000) return cache.read;
   const token = AGENT_TOKEN as `0x${string}`;
   const pub = createPublicClient({ transport: http(RPC_URL) });
-  const read: AgentTokenRead = { contract: token, name: null, symbol: null, decimals: 18, totalSupply: null, phase: null, pair: null, poolId: null, priceUsd: null, depthUsd2pct: null, marketCapUsd: null, volume24hUsd: null, swaps24h: null, holders: null, launchedAt: null, explorerUrl: `${EXPLORER_URL}/token/${token}`, at: now };
+  const read: AgentTokenRead = { contract: token, name: null, symbol: null, decimals: 18, totalSupply: null, phase: null, pair: null, poolId: null, priceUsd: null, depthUsd2pct: null, marketCapUsd: null, volume24hUsd: null, swaps24h: null, holders: null, change24hPct: null, launchedAt: null, explorerUrl: `${EXPLORER_URL}/token/${token}`, at: now };
   try {
     if (!meta) {
       const [name, symbol, decimals, supply] = await Promise.all([
@@ -88,6 +101,7 @@ export async function readAgentToken(ethUsd: number | null, now = Date.now()): P
             read.priceUsd = p.priceUsd * quoteUsd;
             read.depthUsd2pct = p.depthUsd2pct * quoteUsd;
             if (read.totalSupply != null) read.marketCapUsd = read.priceUsd * read.totalSupply;
+            read.change24hPct = sampleAndChange(read.priceUsd, now);
           }
         } catch { /* the pool did not answer */ }
         try {

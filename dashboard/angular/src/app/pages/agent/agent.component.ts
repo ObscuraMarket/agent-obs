@@ -322,28 +322,32 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   /** The agent's own token, going live: the logo and the honest word on every box until the ticker is announced. Filled from the API once it trades. */
+  /** The agent's own token, shown exactly like OBS: the same six boxes with the same 24-hour sub-lines, plus the contract in the last box. */
   private buildStatsAgent(): void {
     const t = this.agentToken;
     const addr = t?.contract || '';
     const short = addr ? addr.slice(0, 6) + '\u2026' + addr.slice(-4) : 'TBD';
+    const contract: StatCell = { lbl: 'Contract', val: short, sub: this.agentCopied ? 'copied' : (addr ? 'click to copy' : 'announced at launch'), copy: addr || undefined };
     if (!t || t.priceUsd == null) {
       this.stats = [
-        { lbl: 'Price', val: t?.priceUsd == null ? 'TBD' : this.price(t.priceUsd), sub: t ? 'not priced yet' : 'going live' },
-        { lbl: 'Market cap', val: 'TBD', sub: 'not priced yet' },
-        { lbl: 'Vol 24h', val: t?.volume24hUsd != null ? this.compact(t.volume24hUsd) : 'TBD', sub: t?.swaps24h != null ? t.swaps24h.toLocaleString('en-US') + ' swaps' : 'going live' },
-        { lbl: 'Liquidity', val: 'TBD', sub: 'not priced yet' },
-        { lbl: 'Holders', val: t?.holders != null ? t.holders.toLocaleString('en-US') : 'TBD', sub: t?.phase || 'going live' },
-        { lbl: 'Contract', val: short, sub: this.agentCopied ? 'copied' : (addr ? 'click to copy' : 'announced at launch'), copy: addr || undefined }
+        { lbl: 'Price', val: 'TBD', sub: t ? 'not priced yet' : 'going live' },
+        { lbl: 'Market cap', val: 'TBD', sub: t ? 'not priced yet' : 'going live' },
+        { lbl: 'Vol 24h', val: t?.volume24hUsd != null ? this.compact(t.volume24hUsd) : 'TBD' },
+        { lbl: 'Liquidity', val: 'TBD', sub: t ? 'not priced yet' : 'going live' },
+        { lbl: 'Holders', val: t?.holders != null ? t.holders.toLocaleString('en-US') : 'TBD' },
+        contract
       ];
       return;
     }
+    const chg = t.change24hPct ?? null;
     this.stats = [
-      { lbl: 'Price', val: this.price(t.priceUsd), sub: t.symbol ? t.symbol + ' / USD' : '' },
-      { lbl: 'Market cap', val: this.compact(t.marketCapUsd), sub: t.totalSupply != null ? this.compactPlain(t.totalSupply) + ' supply' : '' },
-      { lbl: 'Vol 24h', val: this.compact(t.volume24hUsd), sub: t.swaps24h != null ? t.swaps24h.toLocaleString('en-US') + ' swaps' : '' },
-      { lbl: 'Liquidity', val: this.compact(t.depthUsd2pct), sub: 'moves the price 2%' },
-      { lbl: 'Holders', val: t.holders != null ? t.holders.toLocaleString('en-US') : 'n/a', sub: t.phase || '' },
-      { lbl: 'Contract', val: short, sub: this.agentCopied ? 'copied' : 'click to copy', copy: addr }
+      { lbl: 'Price', val: this.price(t.priceUsd), ...this.chgSub(chg) },
+      // Supply is fixed, so the cap moves exactly with the price.
+      { lbl: 'Market cap', val: this.compact(t.marketCapUsd), ...this.chgSub(chg) },
+      { lbl: 'Vol 24h', val: this.compact(t.volume24hUsd), ...this.chgSub(this.trackPct('agent:vol', t.volume24hUsd)) },
+      { lbl: 'Liquidity', val: this.compact(t.depthUsd2pct), sub: t.depthUsd2pct != null ? 'moves the price 2%' : undefined },
+      { lbl: 'Holders', val: t.holders != null ? t.holders.toLocaleString('en-US') : 'n/a', ...this.chgSub(this.trackPct('agent:holders', t.holders)) },
+      contract
     ];
   }
 
