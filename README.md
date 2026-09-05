@@ -47,6 +47,13 @@ agent/
     desk/thoughts.ts       the observation, the prompt, the parser, the guards on public thoughts
     desk/onchain.ts        the pool lane: a swap in the USDG pools on Robinhood Chain from his own wallet
     desk/candidates.ts     launch candidates from a watcher's feed: gate, probe rule, proven sells, forced exits
+    desk/live.ts           the live watch: every tape every three seconds, a cycle the moment one gives an entry
+    desk/tape.ts           his own tape of a pool's swaps from the chain: buy pressure, the price path, the trend
+    desk/entry.ts          the entry read: volume puts a token on watch, the price action gives the entry
+    desk/stability.ts      the stability read: tokens with active hours behind them, hunted for a swing
+    desk/holders.ts        who holds a token: concentration, bundles, fresh wallets, from Transfer events
+    desk/wallets.ts        the wallets' own records across tokens, priced by the tape
+    desk/launch.ts         the launch itself: dev buy, declared bundle, creator tax and its recipient, deployer record, phase
     desk/paper.ts          paper sessions: the desk at full size with nothing sent, marked against the real book
     obscura/orders.ts      Obscura's swap API: currencies, quotes, order status; order creation gated
     autopilot.ts           the posting cycle: reads + journal + recent posts -> one decision
@@ -64,6 +71,7 @@ agent/
     _obs-engage.sh         launchd wrapper for replies
     _obs-backup.sh         self-commit of his memory to a private repo
     install-launchd.sh     generates the per-machine timers from templates
+    replayEntries.ts       replay the entry read over the desk's tapes: what each allowed entry did afterwards
   test/                    node:test, all pure
 dashboard/
   index.html               the standalone dashboard page (iframe it, or copy it)

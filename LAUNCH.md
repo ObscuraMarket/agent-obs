@@ -29,8 +29,13 @@ operator (keys and switches), and the site team (their page and their zone).
 - The agent reads the tape for every token in play, the entry read (volume
   puts a token on watch, the price action gives the entry), the stability
   read (tokens with active hours behind them), the holders (concentration,
-  bundles, fresh wallets) and the wallets' own records across tokens. All
+  bundles, fresh wallets), the wallets' own records across tokens, and the
+  launch itself (the dev buy, the wallets exempted from the opening tax,
+  the creator tax and its recipient, the deployer's record, the phase). All
   of it reaches the model every cycle, and every gate is public.
+- The replay: `scripts/railway-pull-data.sh` copies the desk's tapes and
+  ledgers from Railway, and `npm run replay:entries` in `agent/` shows what
+  every entry the tape allowed did afterwards. Run it before arming.
 - ETH is the book's base: every buy is paid from ETH and every sell comes
   back to ETH. USDG is a hop, never a place to park; the rails refuse a
   swap that would park there.

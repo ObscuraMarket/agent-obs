@@ -26,6 +26,7 @@ import { updateTape, tapeStats, tapeLine } from "./tape.ts";
 import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry.ts";
 import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, type HolderRead } from "./holders.ts";
 import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
+import { readLaunch, launchLine, launchRulesFromEnv, type LaunchRead } from "./launch.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry } from "./trade-memory.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
@@ -260,6 +261,9 @@ const entryReads = new Map<string, EntryRead>();
 // Who holds each token in play: concentration, the first buyers, fresh wallets. A failed read is a public refusal.
 const holderReads = new Map<string, HolderRead>();
 const holderRules = holderRulesFromEnv();
+// The launch itself: the dev buy, the declared bundle, the creator tax and its recipient, the deployer's record, the phase.
+const launchReads = new Map<string, LaunchRead>();
+const launchRules = launchRulesFromEnv();
 const entryRules = entryRulesFromEnv();
 for (const [sym, a] of inPlay) {
   if (!a?.candidate) continue;
@@ -292,6 +296,16 @@ for (const [sym, a] of inPlay) {
     }
   } catch (e) {
     tapes.push(`Holders ${sym}: not read (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`);
+  }
+  if (a.contract) {
+    try {
+      const launchAt = feed.early.find((x) => x.symbol === sym)?.at ?? feed.candidates.find((x) => x.symbol === sym)?.at ?? null;
+      const lr = await readLaunch(a.contract as `0x${string}`, sym, launchAt, launchRules, now);
+      launchReads.set(sym, lr);
+      tapes.push(launchLine(lr));
+    } catch (e) {
+      tapes.push(`Launch ${sym}: not read (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`);
+    }
   }
 }
 // What he learned: the launch record, and the closest past trades to the setups in play.
@@ -373,7 +387,10 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
     const gateEntry = railGate.ok && to.candidate && !from.candidate && !entry?.ok ? { ok: false as const, reason: entry ? `the tape gives no entry: ${entry.why}` : `no tape was read for ${to.symbol} this cycle, so there is no entry read` } : railGate;
     // The holders: a bundled or single-hand token is not bought, whatever the tape says.
     const holders = to.candidate && !from.candidate ? (holderReads.get(to.symbol) ?? null) : null;
-    const gate = gateEntry.ok && holders && holders.transfers > 0 && !holders.ok ? { ok: false as const, reason: `the holders fail the read: ${holders.why}` } : gateEntry;
+    const gateHolders = gateEntry.ok && holders && holders.transfers > 0 && !holders.ok ? { ok: false as const, reason: `the holders fail the read: ${holders.why}` } : gateEntry;
+    // The launch: a declared bundle, a heavy dev buy, a serial deployer or a swept curve is not bought, whatever the tape says.
+    const launch = to.candidate && !from.candidate ? (launchReads.get(to.symbol) ?? null) : null;
+    const gate = gateHolders.ok && launch && !launch.verdict.ok ? { ok: false as const, reason: `the launch fails the read: ${launch.verdict.why}` } : gateHolders;
     let capUsd: number | undefined;
     let addOn = false;
     if (!gate.ok) {

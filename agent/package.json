@@ -32,7 +32,8 @@
     "paper:trade": "tsx scripts/paperTrade.ts",
     "bridge:url": "node scripts/bridgeUrl.mjs",
     "paper:session": "bash scripts/_paper-session.sh",
-    "relay": "bash ../scripts/relay-dashboard.sh"
+    "relay": "bash ../scripts/relay-dashboard.sh",
+    "replay:entries": "tsx scripts/replayEntries.ts"
   },
   "dependencies": {
     "@openhermit/sdk": "^0.7.0",
