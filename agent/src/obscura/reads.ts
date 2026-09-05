@@ -185,15 +185,16 @@ export interface TokenRead {
 
 const TOKEN_CACHE = "obs-token.json";
 const TOKEN_SAMPLES = "obs-token-samples.jsonl";
-interface TokenSample { at: number; volume24hUsd: number | null; holders: number | null; tvlUsd: number | null }
+interface TokenSample { at: number; volume24hUsd: number | null; holders: number | null; tvlUsd: number | null; /** Which pool the TVL came from; a TVL is only compared with its own pool's. */ pool?: string | null }
 const frac24 = (a: number | null | undefined, b: number | null | undefined) => (a != null && b != null && a > 0 ? (b - a) / a : null);
 /** Append this read's figures and measure each against the oldest sample inside the last day. */
 function tokenChanges(sample: TokenSample, now: number): NonNullable<TokenRead["change24h"]> {
   if (!DRY) appendLedger(TOKEN_SAMPLES, sample as unknown as Record<string, unknown>);
   const rows = readLedger<TokenSample>(TOKEN_SAMPLES).filter((r) => r && Number.isFinite(r.at) && now - r.at <= 24 * 3600e3);
   if (rows.length < 2) return { volume: null, holders: null, liquidity: null };
-  const first = (k: keyof TokenSample) => rows.find((r) => r[k] != null && (r[k] as number) > 0)?.[k] as number | undefined;
-  return { volume: frac24(first("volume24hUsd"), sample.volume24hUsd), holders: frac24(first("holders"), sample.holders), liquidity: frac24(first("tvlUsd"), sample.tvlUsd) };
+  const first = (k: keyof TokenSample, from: TokenSample[] = rows) => from.find((r) => r[k] != null && (r[k] as number) > 0)?.[k] as number | undefined;
+  const samePool = rows.filter((r) => (r.pool ?? null) === (sample.pool ?? null));
+  return { volume: frac24(first("volume24hUsd"), sample.volume24hUsd), holders: frac24(first("holders"), sample.holders), liquidity: frac24(first("tvlUsd", samePool), sample.tvlUsd) };
 }
 const TOKEN_CACHE_TTL_MS = 24 * 3600e3;
 
@@ -464,7 +465,7 @@ export async function liveReads(): Promise<Reads> {
   const market = await obsMarket(ethUsd);
   if (market && !DRY) sampleMarket(market);
   const now = Date.now();
-  token.change24h = tokenChanges({ at: now, volume24hUsd: token.volume24hUsd, holders: token.holders, tvlUsd: market?.tvlUsd ?? null }, now);
+  token.change24h = tokenChanges({ at: now, volume24hUsd: token.volume24hUsd, holders: token.holders, tvlUsd: market?.tvlUsd ?? null, pool: market ? `${market.venue}:${market.quote ?? ""}` : null }, now);
   return { at: Date.now(), token, prices: p, siteUp: up, apiUp: api, wallet, market };
 }
 
