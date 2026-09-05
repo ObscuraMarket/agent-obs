@@ -23,11 +23,12 @@ Chain. OBS is its operator mind and its voice.
 Everything the obscura.market front end needs is in `dashboard/`, and the
 path is five steps at the top of
 [dashboard/INTEGRATION.md](dashboard/INTEGRATION.md): pull the folder,
-point the Agent page at the bridge (today) or `obs-api.obscura.market`
-(launch), wire each component to its endpoint from the table there, create
-the named tunnel, and receive updates by relay. The launch steps by owner
-are in [LAUNCH.md](LAUNCH.md); the current bridge URL and the tunnel steps
-are on [issue #1](https://github.com/louz514/agent-obs/issues/1). Fields in
+point the Agent page at `obs-api.obscura.markets` (live now) or
+`obs-api.obscura.market` (once the ownership record is in your zone), wire
+each component to its endpoint from the table there, and receive updates
+by relay. The launch steps by owner are in [LAUNCH.md](LAUNCH.md); the DNS
+records still needed are on
+[issue #1](https://github.com/louz514/agent-obs/issues/1). Fields in
 `/api/obs/*` are only ever added, never renamed or removed.
 
 ## What is in the box
