@@ -154,6 +154,10 @@
     .term .tok.t-quiet .tx { color: var(--muted); }
     .term .watch, .term .watch .tag { color: var(--dim); }
     .term .trigger, .term .trigger .tag { color: var(--amber); }
+    .term .research, .term .research .tag { color: var(--muted); }
+    .term .research.ok .tag { color: var(--green); }
+    .term .research.bad .tag { color: var(--red); }
+    .term .research.r-decision, .term .research.r-trigger { color: var(--fg); }
     .term .fold { cursor: pointer; }
     .term .fold .tx { text-decoration: underline dotted; color: var(--muted); }
     .term .fold:hover .tx { color: var(--fg); }
@@ -456,11 +460,22 @@
     }
     var lastThoughtAt = 0, lastTradeAt = 0, es = null, esFails = 0, pollTimer = null;
     function termState(cls, text) { pill("p-live", cls, text); el("term-s").textContent = text; el("t-live").className = "live" + (cls === "on" ? "" : " off"); }
-    function seed(thoughts, trades, canExecute) {
+    var lastResearchAt = 0;
+    function researchLine(r, animate) {
+      var tag = r.kind === "launch-read" ? "launch" : r.kind === "entry" ? "tape" : r.kind === "decision" ? "decided" : r.kind;
+      var tone = r.ok === true ? " ok" : r.ok === false ? " bad" : "";
+      return line("research r-" + r.kind + tone, r.at, tag, r.line, animate);
+    }
+    function onResearch(r) { if (r.at <= lastResearchAt) return; lastResearchAt = r.at; push([researchLine(r, true)]); }
+    function seed(thoughts, trades, canExecute, research) {
       term.innerHTML = ""; queue = []; typing = false;
       var items = [];
       if (!thoughts.length) items.push(line("sys", Date.now(), "obs", "no desk cycle yet. this fills the moment OBS thinks.", false));
-      thoughts.forEach(function (t, i) { items = items.concat(cycleLines(t, false, i === thoughts.length - 1)); if (t.at > lastThoughtAt) lastThoughtAt = t.at; });
+      var timeline = thoughts.map(function (t) { return { at: t.at, t: t }; }).concat((research || []).map(function (r) { return { at: r.at, r: r }; })).sort(function (a, b) { return a.at - b.at; });
+      timeline.forEach(function (x, i) {
+        if (x.t) { items = items.concat(cycleLines(x.t, false, i === timeline.length - 1)); if (x.t.at > lastThoughtAt) lastThoughtAt = x.t.at; }
+        else if (x.r) { items.push(researchLine(x.r, false)); if (x.r.at > lastResearchAt) lastResearchAt = x.r.at; }
+      });
       trades.forEach(function (x) { var at = x.updatedAt || x.at; if (at > lastTradeAt) lastTradeAt = at; });
       items.push(line("sys", Date.now(), "obs", "listening" + (canExecute ? ". execution is armed." : ". observation mode: a swap decision is a proposal until the operator arms execution."), false));
       push(items);
@@ -479,9 +494,10 @@
     function connect() {
       if (!window.EventSource) return poll();
       try { es = new EventSource(API + "/api/obs/stream?limit=12"); } catch (e) { return poll(); }
-      es.addEventListener("hello", function (ev) { var h = JSON.parse(ev.data); esFails = 0; termState("on", "live"); seed(h.thoughts || [], h.trades || [], h.canExecute); if (h.watch) setTimeout(function () { onWatch(h.watch); }, 0); });
+      es.addEventListener("hello", function (ev) { var h = JSON.parse(ev.data); esFails = 0; termState("on", "live"); seed(h.thoughts || [], h.trades || [], h.canExecute, h.research || []); if (h.watch) setTimeout(function () { onWatch(h.watch); }, 0); });
       es.addEventListener("thought", function (ev) { onThought(JSON.parse(ev.data)); });
       es.addEventListener("watch", function (ev) { onWatch(JSON.parse(ev.data)); });
+      es.addEventListener("research", function (ev) { onResearch(JSON.parse(ev.data)); });
       es.addEventListener("trade", function (ev) { onTrade(JSON.parse(ev.data)); });
       es.onerror = function () { esFails++; termState("warn", "reconnecting"); if (esFails >= 3) { es.close(); es = null; poll(); } };
     }

@@ -90,6 +90,16 @@ observation prefixes to search: `Tape SYM`, `Entry SYM`, `Holders SYM`,
 `Records SYM`, `Launch SYM`, `Launch candidates from the watcher`, `Early
 launches from the watcher`, `Held launch token SYM`, `Launch record`.
 
+## `/api/obs/research?limit=50`
+
+The research log: what the desk learned about tokens between cycles, one
+line each, newest first: `{ items: [{ at, kind, symbol, ok, note, line }] }`.
+`kind`: `launch`, `ignited`, `watch`, `dropped`, `entry`, `holders`,
+`launch-read`, `trigger`, `decision`. `ok` true (a gate passed), false (it
+refused) or null. `line` is the sentence to show: "COFF's launch: FAIL, dev
+buy 27.3%. Not buying." On the stream each new one is a `research` event and
+`hello` carries the last forty.
+
 ## `/api/obs/trades?limit=50`
 
 The real book only, latest status per id: `{ at, id, status, from: { asset, network, amount, usd },

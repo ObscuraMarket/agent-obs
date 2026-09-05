@@ -22,6 +22,7 @@ import { readTape, tapeStats } from "./desk/tape.ts";
 import { poolRead } from "./obscura/pools.ts";
 import { readThoughts, type Thought } from "./desk/thoughts.ts";
 import { digestThought, watchEvent, type WatchEvent } from "./desk/digest.ts";
+import { readResearch } from "./desk/research.ts";
 
 /** A thought as the page reads it: the record plus its digest (verdict, headline, each token's status). Additive. */
 const withDigest = (t: Thought) => ({ ...t, digest: digestThought(t) });
@@ -323,8 +324,21 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
   const firstWatch = readWatch();
   let lastWatchAt = firstWatch ? Date.now() : 0;
   let lastWatchTrigger = firstWatch?.trigger ?? null;
-  res.write(sseFrame("hello", { at: Date.now(), thoughts: history.map(withDigest), trades, canExecute: tradingArmed(), ...(firstWatch ? { watch: firstWatch } : {}) }));
+  const researchHistory = readResearch(40).reverse();
+  let lastResearchAt = researchHistory.length ? researchHistory[researchHistory.length - 1].at : 0;
+  let researchSize = sizeOf("obs-research.jsonl");
+  res.write(sseFrame("hello", { at: Date.now(), thoughts: history.map(withDigest), trades, canExecute: tradingArmed(), research: researchHistory, ...(firstWatch ? { watch: firstWatch } : {}) }));
   const look = () => {
+    // The research log: every new line as it lands.
+    const rsz = sizeOf("obs-research.jsonl");
+    if (rsz !== researchSize) {
+      researchSize = rsz;
+      for (const e of readResearch(100).reverse()) {
+        if (e.at <= lastResearchAt) continue;
+        lastResearchAt = e.at;
+        res.write(sseFrame("research", e));
+      }
+    }
     // The live watch between cycles: a line a minute, and every trigger the moment it fires.
     const w = readWatch();
     if (w && (w.trigger !== lastWatchTrigger || Date.now() - lastWatchAt >= WATCH_EVERY_MS)) {
@@ -423,6 +437,12 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   if (path === "/api/obs/stream") {
     const limit = Number(url.searchParams.get("limit") ?? 12);
     stream(req, res, Number.isFinite(limit) && limit > 0 ? Math.min(limit, 50) : 12);
+    return;
+  }
+  if (path === "/api/obs/research") {
+    // The research log: what the desk learned about tokens between cycles, newest first.
+    const limit = Number(url.searchParams.get("limit") ?? 50);
+    json(res, 200, { items: readResearch(Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 50), at: now });
     return;
   }
   if (path === "/api/obs/thoughts") {

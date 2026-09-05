@@ -395,6 +395,20 @@ pool: `priceUsd`, `depthUsd2pct` in dollars that move it 2%, `venue`,
 `feePct`; null when the chain did not answer), whether the app and its
 `/health` answer, and `block`, the same text the agent sees. Cached 60 s.
 
+### `GET /api/obs/research?limit=50`
+
+The research log: what the desk learned about tokens between cycles, one
+line each, newest first. `{ items: [{ at, kind, symbol, ok, note, line }], at }`.
+`kind` is `launch` (a new launch and its gate), `ignited`, `watch` (a pool
+taken onto the block-by-block watch), `dropped`, `entry` (the tape's entry
+state changed), `holders`, `launch-read`, `trigger`, `decision`. `ok` is
+`true` when a gate passed, `false` when it refused, `null` when it is not a
+verdict. `line` is the sentence to show, written for a newcomer
+("COFF's launch: FAIL, dev buy 27.3%. Not buying."). The stream sends each
+new one as a `research` event and the `hello` frame carries the last forty
+as `research`; the reference page merges them into the terminal's timeline
+between the cycles.
+
 ## 2b. The skill, for other agents
 
 The same contract packaged for a model to load: `GET /skill` returns

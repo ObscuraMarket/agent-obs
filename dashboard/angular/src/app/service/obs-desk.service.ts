@@ -89,6 +89,16 @@ export interface ObsThought {
   digest?: ObsDigest;
 }
 
+/** One line of the research log: what the desk learned about a token, as it learned it (stream event `research`, endpoint `/api/obs/research`). */
+export interface ObsResearchEvent {
+  at: number;
+  kind: 'launch' | 'ignited' | 'watch' | 'dropped' | 'entry' | 'holders' | 'launch-read' | 'trigger' | 'decision';
+  symbol: string;
+  ok: boolean | null;
+  note: string;
+  line: string;
+}
+
 /** The live watch between cycles: one line a minute on the stream's `watch` event, and every trigger as it fires. */
 export interface ObsWatchEvent {
   at: number;

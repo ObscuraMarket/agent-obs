@@ -5,7 +5,7 @@ import { Subscription, interval } from 'rxjs';
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import {
   CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition,
-  ObsRails, ObsReads, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
+  ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
 } from '../../service/obs-desk.service';
 
 type MarketAssetId = 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
@@ -144,7 +144,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   private refreshTimer?: ReturnType<typeof setTimeout>;
   private resizeTimer?: ReturnType<typeof setTimeout>;
   private ro?: ResizeObserver;
-  private pendingSeed: { thoughts: ObsThought[]; trades: ObsTrade[]; canExecute: boolean } | null = null;
+  private pendingSeed: { thoughts: ObsThought[]; trades: ObsTrade[]; canExecute: boolean; research?: ObsResearchEvent[] } | null = null;
+  private lastResearchAt = 0;
 
   private readonly onResize = () => {
     if (this.resizeTimer) { clearTimeout(this.resizeTimer); }
@@ -177,7 +178,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.pendingSeed) {
       const s = this.pendingSeed;
       this.pendingSeed = null;
-      this.seed(s.thoughts, s.trades, s.canExecute);
+      this.seed(s.thoughts, s.trades, s.canExecute, s.research || []);
     }
     // Deferred: updateChart() writes bound headline values, which must not
     // happen inside the change-detection pass that just checked them (NG0100).
@@ -842,15 +843,16 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (typeof EventSource === 'undefined') { this.startPollFallback(); return; }
     try { this.es = new EventSource(this.obs.streamUrl(12)); } catch { this.startPollFallback(); return; }
     this.es.addEventListener('hello', (ev) => {
-      const h = JSON.parse((ev as MessageEvent).data) as { thoughts?: ObsThought[]; trades?: ObsTrade[]; canExecute?: boolean; watch?: ObsWatchEvent };
+      const h = JSON.parse((ev as MessageEvent).data) as { thoughts?: ObsThought[]; trades?: ObsTrade[]; canExecute?: boolean; watch?: ObsWatchEvent; research?: ObsResearchEvent[] };
       if (h.watch) { setTimeout(() => this.onWatch(h.watch as ObsWatchEvent), 0); }
       this.esFails = 0;
       this.setStreamState('live');
-      if (this.term()) { this.seed(h.thoughts || [], h.trades || [], !!h.canExecute); }
-      else { this.pendingSeed = { thoughts: h.thoughts || [], trades: h.trades || [], canExecute: !!h.canExecute }; }
+      if (this.term()) { this.seed(h.thoughts || [], h.trades || [], !!h.canExecute, h.research || []); }
+      else { this.pendingSeed = { thoughts: h.thoughts || [], trades: h.trades || [], canExecute: !!h.canExecute, research: h.research || [] }; }
     });
     this.es.addEventListener('thought', (ev) => this.onThought(JSON.parse((ev as MessageEvent).data) as ObsThought));
     this.es.addEventListener('watch', (ev) => this.onWatch(JSON.parse((ev as MessageEvent).data) as ObsWatchEvent));
+    this.es.addEventListener('research', (ev) => this.onResearch(JSON.parse((ev as MessageEvent).data) as ObsResearchEvent));
     this.es.addEventListener('trade', (ev) => this.onTrade(JSON.parse((ev as MessageEvent).data) as ObsTrade));
     this.es.onerror = () => {
       this.esFails++;
@@ -1024,7 +1026,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.line('trade ' + cls, x.updatedAt || x.at, 'trade', txt, animate);
   }
 
-  private seed(thoughts: ObsThought[], trades: ObsTrade[], canExecute: boolean): void {
+  private seed(thoughts: ObsThought[], trades: ObsTrade[], canExecute: boolean, research: ObsResearchEvent[] = []): void {
     const term = this.term();
     if (!term) { this.pendingSeed = { thoughts, trades, canExecute }; return; }
     term.innerHTML = '';
@@ -1033,9 +1035,19 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.termSeeded = true;
     let items: TermItem[] = [];
     if (!thoughts.length) { items.push(this.line('sys', Date.now(), 'obs', 'no desk cycle yet. this fills the moment OBS thinks.', false)); }
-    thoughts.forEach((t, i) => {
-      items = items.concat(this.cycleLines(t, false, i === thoughts.length - 1));
-      if (t.at > this.lastThoughtAt) { this.lastThoughtAt = t.at; }
+    // Cycles and research lines in one timeline, oldest first.
+    const timeline: Array<{ at: number; t?: ObsThought; r?: ObsResearchEvent }> = [
+      ...thoughts.map((t) => ({ at: t.at, t })),
+      ...research.map((r) => ({ at: r.at, r }))
+    ].sort((a, b) => a.at - b.at);
+    timeline.forEach((x, i) => {
+      if (x.t) {
+        items = items.concat(this.cycleLines(x.t, false, i === timeline.length - 1));
+        if (x.t.at > this.lastThoughtAt) { this.lastThoughtAt = x.t.at; }
+      } else if (x.r) {
+        items.push(this.researchLine(x.r, false));
+        if (x.r.at > this.lastResearchAt) { this.lastResearchAt = x.r.at; }
+      }
     });
     trades.forEach((x) => {
       const at = x.updatedAt || x.at;
@@ -1052,6 +1064,19 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.push(this.cycleLines(t, true, true));
     if (this.refreshTimer) { clearTimeout(this.refreshTimer); }
     this.refreshTimer = setTimeout(() => this.zone.run(() => this.refresh()), 3000);
+  }
+
+  /** One line of research: what the desk learned about a token, as it learned it. */
+  private researchLine(r: ObsResearchEvent, animate: boolean): TermItem {
+    const tag = r.kind === 'launch-read' ? 'launch' : r.kind === 'entry' ? 'tape' : r.kind === 'decision' ? 'decided' : r.kind;
+    const tone = r.ok === true ? ' ok' : r.ok === false ? ' bad' : '';
+    return this.line('research r-' + r.kind + tone, r.at, tag, r.line, animate);
+  }
+
+  private onResearch(r: ObsResearchEvent): void {
+    if (!this.termSeeded || r.at <= this.lastResearchAt) { return; }
+    this.lastResearchAt = r.at;
+    this.push([this.researchLine(r, true)]);
   }
 
   /** The live watch between cycles: a dim line a minute, and a trigger line the moment a tape gives an entry. */

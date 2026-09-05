@@ -27,6 +27,8 @@ import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry
 import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, type HolderRead } from "./holders.ts";
 import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
 import { readLaunch, launchLine, launchRulesFromEnv, type LaunchRead } from "./launch.ts";
+import { recordResearch } from "./research.ts";
+import { digestThought, shortWhy } from "./digest.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry } from "./trade-memory.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
@@ -288,6 +290,7 @@ for (const [sym, a] of inPlay) {
     const counts = transfers.length && top.length ? await txCounts(top) : null;
     const hr = holderRead(transfers, sym, a.contract ?? "", now, holderRules, infra, counts);
     holderReads.set(sym, hr);
+    if (hr.transfers > 0) recordResearch({ kind: "holders", symbol: sym, ok: hr.ok, note: hr.ok ? `${hr.wallets} wallets, largest ${hr.top1Pct == null ? "?" : `${Math.round(hr.top1Pct)}%`}, top ten ${hr.top10Pct == null ? "?" : `${Math.round(hr.top10Pct)}%`}` : shortWhy(hr.why) });
     tapes.push(holdersLine(hr));
     // The wallets' own records: their trades here priced by the tape, kept across tokens, read against the top wallets.
     if (transfers.length && rows.length) {
@@ -302,6 +305,7 @@ for (const [sym, a] of inPlay) {
       const launchAt = feed.early.find((x) => x.symbol === sym)?.at ?? feed.candidates.find((x) => x.symbol === sym)?.at ?? null;
       const lr = await readLaunch(a.contract as `0x${string}`, sym, launchAt, launchRules, now);
       launchReads.set(sym, lr);
+      recordResearch({ kind: "launch-read", symbol: sym, ok: lr.exists ? lr.verdict.ok : null, note: !lr.exists ? "not a pons v2 launch, nothing to read" : lr.verdict.ok ? `${lr.devSharePct != null ? `dev buy ${lr.devSharePct.toFixed(1)}%, ` : ""}${lr.exemptions ? (lr.exemptions.length ? `${lr.exemptions.length} exempt wallets, ` : "no exempt wallets, ") : ""}${lr.socials && (lr.socials.twitter || lr.socials.website || lr.socials.telegram) ? "links set, " : ""}score ${lr.score?.total ?? "n/a"}` : shortWhy(lr.verdict.why) });
       tapes.push(launchLine(lr));
     } catch (e) {
       tapes.push(`Launch ${sym}: not read (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`);
@@ -457,6 +461,10 @@ if (DRY) {
   process.exit(0);
 }
 recordThought(entry);
+{
+  const g = digestThought(entry);
+  recordResearch({ kind: "decision", symbol: g.wanted ? (g.wanted.split(" to ").pop() ?? "") : "", ok: null, note: g.verdict === "hold" ? `hold. ${g.headline}` : g.headline });
+}
 // A mark built on a failed wallet read would put a false point on the curve; it is logged, not recorded.
 const lastMark = book.snapshots.length ? book.snapshots.reduce((a, b) => (b.at > a.at ? b : a)) : null;
 if (!markIsTrustworthy(mark, lastMark, chain?.unread ?? [])) console.log(`[desk] mark not recorded: unread balances (${(chain?.unread ?? []).join(", ") || "all"})`);

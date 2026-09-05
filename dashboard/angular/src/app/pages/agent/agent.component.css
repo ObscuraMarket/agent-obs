@@ -1060,6 +1060,34 @@
   opacity: 0.65;
 }
 
+/* The research log between cycles: what the desk learned, one line each. Dim by default; a verdict colours its tag. */
+.term ::ng-deep .research,
+.term ::ng-deep .research .tag {
+  color: var(--white);
+  opacity: 0.72;
+}
+
+.term ::ng-deep .research.ok .tag {
+  color: var(--lime);
+  opacity: 1;
+}
+
+.term ::ng-deep .research.bad .tag {
+  color: var(--red);
+  opacity: 1;
+}
+
+.term ::ng-deep .research.r-decision,
+.term ::ng-deep .research.r-trigger,
+.term ::ng-deep .research.r-decision .tag,
+.term ::ng-deep .research.r-trigger .tag {
+  opacity: 1;
+}
+
+.term ::ng-deep .research.r-trigger .tag {
+  color: var(--amber);
+}
+
 /* The live watch between cycles: dim, it is context; a trigger is the moment a tape gave an entry. */
 .term ::ng-deep .watch,
 .term ::ng-deep .watch .tag {

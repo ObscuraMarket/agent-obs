@@ -12,6 +12,7 @@ import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from "nod
 import { join } from "node:path";
 import { DATA_DIR, ROOT_DIR, dataPath } from "../config.ts";
 import { readFeed, resolveAny, dynamicPoolSpec, dynamicAssets, earlyAsCandidate, curveKey } from "./candidates.ts";
+import { recordResearch } from "./research.ts";
 import { updateTapes, tapeStats, type SwapRow } from "./tape.ts";
 import { entryRead, entryRulesFromEnv } from "./entry.ts";
 import { liveReads, walletBalances } from "../obscura/reads.ts";
@@ -80,6 +81,7 @@ function runCycle(reason: string, symbol: string, now: number): void {
   lastTrigger = `${new Date(now).toISOString().slice(11, 19)}Z ${reason}`;
   cycles++;
   console.log(`[live] trigger: ${reason}; running the desk`);
+  recordResearch({ kind: "trigger", symbol, ok: null, note: reason.replace(/^\S+ gave an entry: /, "") });
   const child = spawn(join(ROOT_DIR, "node_modules", ".bin", "tsx"), ["src/desk/cycle.ts"], {
     cwd: ROOT_DIR,
     env: { ...process.env, OBS_TICK: "fast", OBS_MIN_THOUGHT_GAP_MIN: String(rules.cooldownMin), OBS_LIVE_TRIGGER: reason },
@@ -100,10 +102,33 @@ function runCycle(reason: string, symbol: string, now: number): void {
 
 const looks: number[] = [];
 
+// The research log's memory: which launches and ignitions were already noted, which pools are on the watch.
+const seenLaunch = new Map<string, boolean>();
+const watchingNow = new Set<string>();
+let firstLook = true;
+
 async function step(now: number): Promise<void> {
   refreshHeld(now);
   pruneTapes(now);
   const feed = readFeed(now);
+  // New launches and ignitions from the feed, noted once each. The first look after boot only learns what is there.
+  for (const l of feed.early) {
+    const k = l.token.toLowerCase();
+    const ignited = l.ignitedAfterMin != null;
+    const known = seenLaunch.get(k);
+    if (known === undefined) {
+      seenLaunch.set(k, ignited);
+      if (!firstLook) {
+        const bits = [`${l.source || "launch"}`, l.pairSymbol ? `paired with ${l.pairSymbol}` : null, l.creatorTaxBps != null ? `creator tax ${(l.creatorTaxBps / 100).toFixed(1)}%` : null, l.gateOk ? null : "not the launcher's standard"].filter(Boolean).join(", ");
+        recordResearch({ kind: "launch", symbol: l.symbol, ok: l.gateOk, note: bits });
+        if (ignited) recordResearch({ kind: "ignited", symbol: l.symbol, ok: null, note: `${l.ignitedAfterMin} minute${l.ignitedAfterMin === 1 ? "" : "s"} after launch` });
+      }
+    } else if (!known && ignited) {
+      seenLaunch.set(k, true);
+      recordResearch({ kind: "ignited", symbol: l.symbol, ok: null, note: `${l.ignitedAfterMin} minute${l.ignitedAfterMin === 1 ? "" : "s"} after launch` });
+    }
+  }
+  if (seenLaunch.size > 4000) for (const k of [...seenLaunch.keys()].slice(0, 1000)) seenLaunch.delete(k);
   const inPlay: Array<{ symbol: string; role: Role }> = held.map((symbol) => ({ symbol, role: "held" as const }));
   const add = (symbol: string, role: Role) => {
     if (!inPlay.some((x) => x.symbol === symbol)) inPlay.push({ symbol, role });
@@ -120,6 +145,17 @@ async function step(now: number): Promise<void> {
     const spec = a?.candidate ? dynamicPoolSpec(a) : null;
     if (spec) items.push({ symbol, role, spec });
   }
+  // Tokens taken onto the watch and dropped from it.
+  const nowWatching = new Set(items.map((x) => x.symbol));
+  if (!firstLook) {
+    for (const { symbol, role } of items) if (!watchingNow.has(symbol)) {
+      const e = feed.early.find((x) => x.symbol === symbol);
+      recordResearch({ kind: "watch", symbol, ok: null, note: role === "held" ? "a token the desk holds" : role === "stable" ? "a token with active hours behind it" : e ? `a launch that ignited${e.ignitedAfterMin != null ? ` at +${e.ignitedAfterMin} min` : ""}${e.creatorTaxBps != null ? ` with a ${(e.creatorTaxBps / 100).toFixed(1)}% creator tax` : ""}` : "a launch candidate" });
+    }
+    for (const symbol of watchingNow) if (!nowWatching.has(symbol)) recordResearch({ kind: "dropped", symbol, ok: null, note: "it left the window or the board" });
+  }
+  watchingNow.clear();
+  for (const sy of nowWatching) watchingNow.add(sy);
   // One read for every watched pool: the blocks since the last look, kept in memory.
   const { tapes, headBlock: block } = await updateTapes(items, now, 35, tapeCache);
   const states: WatchState[] = [];
@@ -129,6 +165,17 @@ async function step(now: number): Promise<void> {
     const er = entryRead(rows, symbol, now, entryRules, role !== "launch");
     states.push({ symbol, role, entryState: er.state, entryOk: er.ok, trend: st.trend, offPeakPct: st.offPeakPct, buyPressurePct: st.buyPressurePct, swaps: st.swaps, lastSwapAgoMin: st.lastSwapAgoMin, why: er.why });
   }
+  // The tape's entry state changing on a watched token is research worth a line.
+  if (!firstLook) {
+    for (const st of states) {
+      const p = prev[st.symbol];
+      if (p && p.entryState === st.entryState && p.entryOk === st.entryOk) continue;
+      if (!p && st.entryState === "quiet") continue;
+      const short = st.why.replace(/^[^;:]*;\s*/, "").replace(/:\s*[a-z ]+, (entry allowed|no entry)$/i, "").replace(/^no volume pickup \(/, "").replace(/\)$/, "");
+      recordResearch({ kind: "entry", symbol: st.symbol, ok: st.entryOk, note: `${st.entryState}|${short}` });
+    }
+  }
+  firstLook = false;
   const triggers = triggersFor(prev, states, lastThinkAt, now, rules);
   prev = Object.fromEntries(states.map((s) => [s.symbol, s]));
   if (triggers.length && !running) runCycle(triggers[0].reason, triggers[0].symbol, now);
