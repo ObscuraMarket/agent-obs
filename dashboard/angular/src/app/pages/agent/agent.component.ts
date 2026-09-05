@@ -5,7 +5,7 @@ import { Subscription, interval } from 'rxjs';
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import {
   CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition,
-  ObsRails, ObsReads, ObsStatus, ObsThought, ObsTrade, ObsWatchEvent
+  ObsRails, ObsReads, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
 } from '../../service/obs-desk.service';
 
 type MarketAssetId = 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
@@ -28,7 +28,7 @@ interface RailGauge { label: string; used: string; blocks: string[]; }
 interface KvRow { k: string; v: string; icon?: 'eth' | 'usdg' | 'obs'; }
 
 /** Items queued for the terminal's typewriter. */
-interface TermItem { row: HTMLElement; tx: HTMLElement; text: string; animate: boolean; }
+interface TermItem { row: HTMLElement; tx: HTMLElement; text: string; animate: boolean; node?: HTMLElement; }
 
 const STABLE: { [asset: string]: 1 } = { USDG: 1, USDC: 1, USDT: 1, DAI: 1 };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -926,6 +926,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     term.appendChild(it.row);
     while (term.children.length > TERM_LINE_CAP) { term.removeChild(term.firstChild as Node); }
     if (!it.animate) {
+      if (it.node) { it.tx.textContent = ''; it.tx.appendChild(it.node); }
+      else
       it.tx.textContent = it.text;
       if (stick) { term.scrollTop = term.scrollHeight; }
       this.drain();
@@ -964,7 +966,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       return out;
     }
     out.push(this.line('sys cycle v-' + g.verdict, t.at, g.verdict, g.headline, animate));
-    (t.thoughts || []).forEach((l) => out.push(this.line('think', null, 'think', l, animate)));
+    (g.lines || t.thoughts || []).forEach((l) => out.push(this.line('think', null, 'think', l, animate)));
     if (g.board) {
       const b = g.board;
       const bits: string[] = [];
@@ -972,7 +974,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       if (b.graded || b.belowBar) { bits.push(`${b.graded} graded candidate${b.graded === 1 ? '' : 's'}, ${b.belowBar} below the bar`); }
       if (bits.length) { out.push(this.line('board', null, 'board', bits.join('; '), false)); }
     }
-    g.tokens.forEach((x) => out.push(this.line('tok t-' + x.tone, null, x.symbol, x.line, false)));
+    g.tokens.forEach((x) => { const it = this.line('tok t-' + x.tone, null, x.symbol, x.line, false); it.node = this.chips(x); out.push(it); });
     if (g.argument) {
       const a = g.argument;
       out.push(this.line('think', null, 'thesis', a.thesis, animate));
@@ -994,6 +996,25 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       out.push(fold);
     }
     return out;
+  }
+
+  /** One chip per gate for a token in play; the failing reason in a few words, the whole of it on hover. */
+  private chips(x: ObsTokenDigest): HTMLElement {
+    const wrap = document.createElement('span');
+    wrap.className = 'chips';
+    const chip = (cls: string, text: string, title?: string) => {
+      const c = document.createElement('span');
+      c.className = 'chip ' + cls;
+      c.textContent = text;
+      if (title) { c.title = title; }
+      wrap.appendChild(c);
+    };
+    if (x.role === 'held') { chip('held', 'held'); }
+    if (x.entry) { chip(x.entry.ok ? 'ok' : 'na', 'entry ' + x.entry.state + (x.entry.ok ? ' \u2713' : ''), x.entry.why); }
+    if (x.holders) { chip(x.holders.ok ? 'ok' : 'bad', x.holders.ok ? 'holders \u2713' : 'holders \u2717 ' + (x.holders.short || ''), x.holders.why); }
+    if (x.launch) { chip(x.launch.ok ? 'ok' : 'bad', x.launch.ok ? 'launch \u2713' + (x.launch.score != null ? ' ' + x.launch.score : '') : 'launch \u2717 ' + (x.launch.short || ''), x.launch.why); }
+    if (!x.entry && !x.holders && !x.launch) { chip('na', x.line); }
+    return wrap;
   }
 
   private tradeLine(x: ObsTrade, animate: boolean): TermItem {
@@ -1041,6 +1062,14 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (w.trigger && w.trigger !== this.lastWatchTrigger) {
       this.lastWatchTrigger = w.trigger;
       items.push(this.line('trigger', w.at, 'trigger', w.trigger + (w.cycleRunning ? ' (thinking)' : ''), true));
+    }
+    const term = this.term();
+    const last = term?.lastElementChild as HTMLElement | null;
+    if (!items.length && last && last.classList.contains('watch')) {
+      const tx = last.querySelector('.tx'); const ts = last.querySelector('.ts');
+      if (tx) { tx.textContent = w.line; }
+      if (ts) { ts.textContent = this.clock(w.at); }
+      return;
     }
     items.push(this.line('watch', w.at, 'watch', w.line, false));
     this.push(items);

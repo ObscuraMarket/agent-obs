@@ -1000,6 +1000,45 @@
   opacity: 0.7;
 }
 
+/* One row per token in play: its symbol as the tag, one chip per gate. Only a failing gate is red. */
+.term ::ng-deep .chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding-top: 1px;
+}
+
+.term ::ng-deep .chip {
+  display: inline-block;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--white);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.term ::ng-deep .chip.ok {
+  color: var(--lime);
+  border-color: rgba(204, 255, 0, 0.35);
+  opacity: 1;
+}
+
+.term ::ng-deep .chip.bad {
+  color: var(--red);
+  border-color: rgba(255, 80, 80, 0.4);
+  opacity: 1;
+}
+
+.term ::ng-deep .chip.held {
+  color: var(--amber);
+  border-color: rgba(255, 190, 60, 0.4);
+  opacity: 1;
+}
+
 /* One line per token in play: its symbol as the tag, its gates as the text. */
 .term ::ng-deep .tok .tag {
   text-transform: none;

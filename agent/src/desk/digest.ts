@@ -16,8 +16,9 @@ export interface TokenDigest {
   line: string;
   tone: "good" | "bad" | "quiet";
   entry?: { state: string; ok: boolean; why: string };
-  holders?: { ok: boolean; why: string };
-  launch?: { ok: boolean; score: number | null; why: string };
+  /** `short` is the failing reason in a few words, for a chip; `why` is the whole of it. */
+  holders?: { ok: boolean; why: string; short: string };
+  launch?: { ok: boolean; score: number | null; why: string; short: string };
   records?: string;
   tape?: string;
 }
@@ -26,6 +27,8 @@ export interface ThoughtDigest {
   verdict: Verdict;
   /** One sentence a newcomer follows. */
   headline: string;
+  /** The agent's own lines, without repeats and without the one that restates the headline. */
+  lines: string[];
   /** The swap that was refused or proposed, as "0.002 ETH to COFF". */
   wanted?: string;
   tokens: TokenDigest[];
@@ -37,6 +40,34 @@ export interface ThoughtDigest {
 const QUOTE = new Set(["ETH", "USDG", "USDC", "USDT", "DAI", "NVDA", "OBS"]);
 const sym = (s: string | undefined) => (s ?? "").split("@")[0].toUpperCase();
 const clip = (s: string, n = 150) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/** PURE: a failing reason in a few words, for a chip. The first clause, in the desk's own shorthand. */
+export function shortWhy(why: string): string {
+  const first = why.split(";")[0].split(/,\s+(?=the |\d|it |a )/)[0].trim();
+  const rules: Array<[RegExp, string]> = [
+    [/^the dev buy is ([\d.]+%)/, "dev buy $1"],
+    [/^(\d+) wallets? were exempted/, "$1 exempt wallets"],
+    [/^the largest wallet holds ([\d.]+%)/, "largest $1"],
+    [/^the top ten hold ([\d.]+%)/, "top ten $1"],
+    [/^(\d+) wallets \(\d+ needed\)/, "$1 wallets"],
+    [/^([\d.]+%) of the first buyers look bundled/, "$1 bundled"],
+    [/^(\d+) of the top ten wallets are fresh/, "$1 fresh wallets"],
+    [/^it has no X link/, "no links"],
+    [/^score (\d+) under/, "score $1"],
+    [/^a serial deployer/, "serial deployer"],
+    [/^the creator tax is ([\d.]+%)/, "tax $1"],
+    [/^the launch is swept/, "swept"],
+    [/^the launch was rescued/, "rescued"],
+  ];
+  for (const [re, out] of rules) if (re.test(first)) return first.replace(new RegExp(`${re.source}.*$`), out);
+  return clip(first.replace(/^the /, "").replace(/\s*\(.*$/, ""), 26);
+}
+
+/** PURE: the decision's reason without the agent's preamble ("I am holding the book in ether as ..."). */
+export function plainReason(reason: string): string {
+  return cap(reason.replace(/^I am (holding|keeping) (the book|everything) in (ether|ETH)(,? (as|because|while|since|until|and))?\s*/i, "").replace(/^I am (probing|proposing (a )?(small )?probe (in|into)|buying|selling) \S+ (as|because|since|while)\s+/i, "").trim());
+}
 
 /** PURE: the digest of one recorded thought. */
 export function digestThought(t: Thought): ThoughtDigest {
@@ -59,16 +90,16 @@ export function digestThought(t: Thought): ThoughtDigest {
     } else if ((m = line.match(/^Holders (\S+) \([^)]*\): (.*?)\.? (HOLDERS OK|HOLDERS FAIL: (.*))\.$/))) {
       const ok = m[3].startsWith("HOLDERS OK");
       const summary = m[2].split(";").slice(0, 3).join(";");
-      tok(m[1]).holders = { ok, why: clip(ok ? summary : m[4]) };
+      tok(m[1]).holders = { ok, why: clip(ok ? summary : m[4]), short: ok ? "" : shortWhy(m[4]) };
     } else if ((m = line.match(/^Holders (\S+): not read( yet)?/))) {
-      tok(m[1]).holders = { ok: true, why: "not read yet" };
+      tok(m[1]).holders = { ok: true, why: "not read yet", short: "" };
     } else if ((m = line.match(/^Launch (\S+): (.*?)(?: Score (\d+) \((.*)\)\.)? (LAUNCH OK|LAUNCH FAIL: (.*))\.$/))) {
       const ok = m[5].startsWith("LAUNCH OK");
       const bits = m[2].replace(/\.$/, "").split(";").map((s) => s.trim());
       const summary = bits.filter((b) => !b.startsWith("pons v2")).slice(0, 3).join("; ");
-      tok(m[1]).launch = { ok, score: m[3] ? Number(m[3]) : null, why: clip(ok ? summary : m[6]) };
+      tok(m[1]).launch = { ok, score: m[3] ? Number(m[3]) : null, why: clip(ok ? summary : m[6]), short: ok ? "" : shortWhy(m[6]) };
     } else if ((m = line.match(/^Launch (\S+): not a pons v2 launch/))) {
-      tok(m[1]).launch = { ok: true, score: null, why: "not a pons v2 launch" };
+      tok(m[1]).launch = { ok: true, score: null, why: "not a pons v2 launch", short: "" };
     } else if ((m = line.match(/^Records (\S+): (.*)\.$/))) {
       tok(m[1]).records = clip(m[2], 120);
     } else if ((m = line.match(/^Tape (\S+) \(last (\d+) min\): (\d+) swaps; buys \$[\d,.]+ vs sells \$[\d,.]+ \((\d+)% buy pressure\); price ([+-][\d.]+%) over the window; (\d+)% off its peak;.*?, ([a-z ]+)\.$/))) {
@@ -88,13 +119,14 @@ export function digestThought(t: Thought): ThoughtDigest {
   }
   // The verdict and its headline.
   let verdict: Verdict = "hold";
-  let headline = d.reason || "Holding.";
+  let headline = d.reason ? plainReason(d.reason) : "Holding.";
   let wanted: string | undefined;
   if (d.kind === "propose-swap") {
     const from = sym(d.from), to = sym(d.to);
     verdict = !QUOTE.has(to) ? "probe" : !QUOTE.has(from) ? "sell" : "swap";
     wanted = `${d.amount} ${from} to ${to}`;
-    const reason = (d.reason || "").replace(/\s*\(sized to .*$/s, "").trim();
+    const plain = plainReason((d.reason || "").replace(/\s*\(sized to .*$/s, "").trim());
+    const reason = plain ? plain[0].toLowerCase() + plain.slice(1) : "";
     headline = verdict === "probe" ? `Probes ${to} with ${d.amount} ${from}${reason ? `: ${reason}` : "."}` : verdict === "sell" ? `Sells ${from} for ${to}${reason ? `: ${reason}` : "."}` : `Swaps ${wanted}${reason ? `: ${reason}` : "."}`;
   } else {
     const m = (d.reason || "").match(/^wanted ([\d.]+) (\S+) to (\S+), refused: (.*)$/s);
@@ -104,9 +136,19 @@ export function digestThought(t: Thought): ThoughtDigest {
       headline = `Wanted ${wanted}; the rails refused it: ${m[4]}`;
     }
   }
+  // The agent's lines without repeats, and without the one that is the headline again.
+  const seen = new Set<string>();
+  const norm = (s: string) => s.trim().toLowerCase().replace(/[.\s]+$/, "");
+  const lines: string[] = [];
+  for (const l of t.thoughts ?? []) {
+    const k = norm(l);
+    if (!k || seen.has(k) || k === norm(d.reason || "") || k === norm(headline)) continue;
+    seen.add(k);
+    lines.push(l);
+  }
   const a = t.analysis;
   const argument = a && a.thesis && !/^none\b/i.test(a.thesis.trim()) ? { thesis: a.thesis, evidence: a.evidence ?? [], invalidation: a.invalidation ?? "", conviction: a.conviction ?? null } : undefined;
-  const out: ThoughtDigest = { verdict, headline: clip(headline, 300), tokens: [...tokens.values()].map((x) => ({ ...x, ...tokenStatusLine(x) })) };
+  const out: ThoughtDigest = { verdict, headline: clip(headline, 300), lines, tokens: [...tokens.values()].map((x) => ({ ...x, ...tokenStatusLine(x) })) };
   if (wanted) out.wanted = wanted;
   if (board) out.board = board;
   if (argument) out.argument = argument;

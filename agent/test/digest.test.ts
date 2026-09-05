@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { digestThought, tokenStatusLine, watchEvent } from "../src/desk/digest.ts";
+import { digestThought, tokenStatusLine, watchEvent, shortWhy, plainReason } from "../src/desk/digest.ts";
 import type { Thought } from "../src/desk/thoughts.ts";
 
 const observation = [
@@ -30,7 +30,7 @@ test("a refused probe reads as REFUSED with what was wanted and why", () => {
 test("a proposed launch buy reads as PROBE, a hold stays a hold, and the argument only travels with a thesis", () => {
   const p = digestThought(base({ kind: "propose-swap", amount: 0.002, from: "ETH@robinhood", to: "COFF@robinhood", reason: "I am probing COFF as it has ignited. (sized to $5: COFF has no proven sell yet, so a probe)" }, { thesis: "swap 0.002 ETH@robinhood -> COFF@robinhood", evidence: ["Tape shows 1936 swaps with 51 percent buy pressure."], invalidation: "A breakdown below the trough.", conviction: 5 }));
   assert.equal(p.verdict, "probe");
-  assert.equal(p.headline, "Probes COFF with 0.002 ETH: I am probing COFF as it has ignited.");
+  assert.equal(p.headline, "Probes COFF with 0.002 ETH: it has ignited.");
   assert.equal(p.argument?.conviction, 5);
   const h = digestThought(base({ kind: "hold", reason: "I am holding the book in ether as every candidate is gated." }, { thesis: "none", evidence: [], invalidation: "", conviction: 5 }));
   assert.equal(h.verdict, "hold");
@@ -72,4 +72,21 @@ test("the live watch reduces to one terminal line, and a stale file to nothing",
   assert.equal(w.block, 55262326);
   assert.equal(watchEvent({ ...live, at: now - 60_000 }, now), null, "older than half a minute is not live");
   assert.equal(watchEvent({ ...live, watching: [] }, now)!.line, "watching nothing in play; looks 0.8 s");
+});
+
+test("short reasons for chips, plain headlines, and the agent's lines without repeats", () => {
+  assert.equal(shortWhy("the dev buy is 19.1% of supply (8% allowed); 10 wallets were exempted from the opening tax (2 allowed); score 38 under the 60 bar"), "dev buy 19.1%");
+  assert.equal(shortWhy("29 wallets (30 needed), the largest wallet holds 46% (25% allowed), the top ten hold 100% (60% allowed)"), "29 wallets");
+  assert.equal(shortWhy("the largest wallet holds 55% (25% allowed), the top ten hold 89% (60% allowed)"), "largest 55%");
+  assert.equal(shortWhy("69% of the first buyers look bundled (50% allowed)"), "69% bundled");
+  assert.equal(shortWhy("it has no X link, website or telegram; score 49 under the 60 bar"), "no links");
+  assert.equal(shortWhy("12 wallets were exempted from the opening tax (2 allowed)"), "12 exempt wallets");
+  assert.equal(plainReason("I am holding the book in ether as candidates either fail launch safety checks or are currently gated by the entry rails."), "Candidates either fail launch safety checks or are currently gated by the entry rails.");
+  assert.equal(plainReason("I am probing JOHN as it has ignited with no creator tax."), "It has ignited with no creator tax.");
+  const t: Thought = { at: 1, observation: [], thoughts: ["I am holding the book in ether as every candidate is gated.", "HOOTS is in a breakdown, down 94%.", "HOOTS is in a breakdown, down 94%.", "ZZZ is disqualified by its launch score."], decision: { kind: "hold", reason: "I am holding the book in ether as every candidate is gated." } };
+  const d = digestThought(t);
+  assert.equal(d.headline, "Every candidate is gated.");
+  assert.deepEqual(d.lines, ["HOOTS is in a breakdown, down 94%.", "ZZZ is disqualified by its launch score."]);
+  const u = digestThought({ ...t, observation: ["Holders UNIT (2557 transfers): 58 wallets; largest 50%; top ten 90% of circulating; first 1 buyers: 0 sharing a block, 0 identical sizes (0% bundled); 4 of the top ten wallets are fresh. HOLDERS FAIL: the largest wallet holds 50% (25% allowed), the top ten hold 90% (60% allowed)."] });
+  assert.equal(u.tokens[0].holders?.short, "largest 50%");
 });

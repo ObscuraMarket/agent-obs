@@ -144,6 +144,11 @@
     .term .cycle.v-refused .tag { color: var(--red); }
     .term .board { color: var(--muted); }
     .term .tok .tag { text-transform: none; letter-spacing: .02em; font-size: 11.5px; color: var(--fg); }
+    .term .chips { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; padding-top: 1px; }
+    .term .chip { display: inline-block; padding: 0 7px; border: 1px solid var(--line); font-size: 11px; line-height: 18px; white-space: nowrap; color: var(--muted); cursor: default; }
+    .term .chip.ok { color: var(--green); border-color: var(--green); }
+    .term .chip.bad { color: var(--red); border-color: var(--red); }
+    .term .chip.held { color: var(--amber); border-color: var(--amber); }
     .term .tok.t-good .tx { color: var(--green); }
     .term .tok.t-bad .tx { color: var(--red); }
     .term .tok.t-quiet .tx { color: var(--muted); }
@@ -383,7 +388,7 @@
       var stick = nearBottom();
       term.appendChild(it.row);
       while (term.children.length > LINE_CAP) term.removeChild(term.firstChild);
-      if (!it.animate) { it.tx.textContent = it.text; if (stick) term.scrollTop = term.scrollHeight; drain(); return; }
+      if (!it.animate) { if (it.node) { it.tx.textContent = ""; it.tx.appendChild(it.node); } else it.tx.textContent = it.text; if (stick) term.scrollTop = term.scrollHeight; drain(); return; }
       var i = 0, n = it.text.length, step = n > 180 ? 3 : n > 90 ? 2 : 1;
       (function tick() {
         i = Math.min(n, i + step);
@@ -392,6 +397,16 @@
         if (stick) term.scrollTop = term.scrollHeight;
         if (i < n) setTimeout(tick, 9); else setTimeout(drain, 120);
       })();
+    }
+    function chips(x) {
+      var wrap = document.createElement("span"); wrap.className = "chips";
+      function chip(cls, text, title) { var c = document.createElement("span"); c.className = "chip " + cls; c.textContent = text; if (title) c.title = title; wrap.appendChild(c); }
+      if (x.role === "held") chip("held", "held");
+      if (x.entry) chip(x.entry.ok ? "ok" : "na", "entry " + x.entry.state + (x.entry.ok ? " \u2713" : ""), x.entry.why);
+      if (x.holders) chip(x.holders.ok ? "ok" : "bad", x.holders.ok ? "holders \u2713" : "holders \u2717 " + (x.holders.short || ""), x.holders.why);
+      if (x.launch) chip(x.launch.ok ? "ok" : "bad", x.launch.ok ? "launch \u2713" + (x.launch.score != null ? " " + x.launch.score : "") : "launch \u2717 " + (x.launch.short || ""), x.launch.why);
+      if (!x.entry && !x.holders && !x.launch) chip("na", x.line);
+      return wrap;
     }
     function cycleLines(t, animate, withInputs) {
       var out = [], d = t.decision || { kind: "hold" }, swap = d.kind === "propose-swap", g = t.digest;
@@ -405,14 +420,14 @@
       }
       // The digested cycle: the verdict and one sentence, the agent's lines, the board, one line per token, the argument, the raw lines folded.
       out.push(line("sys cycle v-" + g.verdict, t.at, (t.paper ? "paper " : "") + g.verdict, g.headline, animate));
-      (t.thoughts || []).forEach(function (l) { out.push(line("think", null, "think", l, animate)); });
+      (g.lines || t.thoughts || []).forEach(function (l) { out.push(line("think", null, "think", l, animate)); });
       if (g.board) {
         var b = g.board, bits = [];
         if (b.early) bits.push(b.early + " early launch" + (b.early === 1 ? "" : "es") + ", " + b.probeAllowed + " probe-allowed, " + b.gateFailed + " failed the gate");
         if (b.graded || b.belowBar) bits.push(b.graded + " graded candidate" + (b.graded === 1 ? "" : "s") + ", " + b.belowBar + " below the bar");
         if (bits.length) out.push(line("board", null, "board", bits.join("; "), false));
       }
-      (g.tokens || []).forEach(function (x) { out.push(line("tok t-" + x.tone, null, x.symbol, x.line, false)); });
+      (g.tokens || []).forEach(function (x) { var it = line("tok t-" + x.tone, null, x.symbol, x.line, false); it.node = chips(x); out.push(it); });
       if (g.argument) {
         var a = g.argument;
         out.push(line("think", null, "thesis", a.thesis, animate));
@@ -454,6 +469,8 @@
     function onWatch(w) {
       var items = [];
       if (w.trigger && w.trigger !== lastWatchTrigger) { lastWatchTrigger = w.trigger; items.push(line("trigger", w.at, "trigger", w.trigger + (w.cycleRunning ? " (thinking)" : ""), true)); }
+      var last = term.lastElementChild;
+      if (!items.length && last && last.classList.contains("watch")) { var tx = last.querySelector(".tx"), ts = last.querySelector(".ts"); if (tx) tx.textContent = w.line; if (ts) ts.textContent = clock(w.at); return; }
       items.push(line("watch", w.at, "watch", w.line, false));
       push(items);
     }

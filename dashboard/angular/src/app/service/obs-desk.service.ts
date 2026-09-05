@@ -61,12 +61,20 @@ export interface ObsTokenDigest {
   role: 'held' | 'launch';
   line: string;
   tone: 'good' | 'bad' | 'quiet';
+  /** The gates, structured: the page draws one chip per gate; `short` is the failing reason in a few words, `why` the whole of it. */
+  entry?: { state: string; ok: boolean; why: string };
+  holders?: { ok: boolean; why: string; short: string };
+  launch?: { ok: boolean; score: number | null; why: string; short: string };
+  records?: string;
+  tape?: string;
 }
 
 /** The cycle digested for a reader: the verdict, one sentence, each token's status, the argument when there was one. Additive. */
 export interface ObsDigest {
   verdict: 'hold' | 'probe' | 'sell' | 'swap' | 'refused';
   headline: string;
+  /** The agent's own lines without repeats and without the one that restates the headline. */
+  lines?: string[];
   wanted?: string;
   tokens: ObsTokenDigest[];
   board?: { early: number; probeAllowed: number; gateFailed: number; graded: number; belowBar: number };
