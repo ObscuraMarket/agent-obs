@@ -114,12 +114,14 @@ operator (keys and switches), and the site team (their page and their zone).
   Until it is in, the page on `obscura.market` reaches the desk through
   its fallback (a four-second health probe on first load, then the desk's
   Railway address). Nothing on the agent's side changes when it lands.
-- **Updates.** A dashboard change on this repo's `main` is relayed by hand
-  (`npm run relay` in `agent/`) as a pull request on the fork; merging it
-  puts it on `obscura.markets` within ten minutes, and the site team pulls
-  the same change into `obscura.market`. `dashboard/INTEGRATION.md` is the
-  contract: fields in `/api/obs/*` are only ever added, never renamed or
-  removed.
+- **Updates, staged then shipped.** `scripts/stage-site.sh` relays this
+  repo's Agent page to the site repo as a pull request and deploys that
+  branch to `obscura.markets`, our domain, to look at first. Nothing reaches
+  `obscura.market` until `scripts/ship-site.sh` merges the pull request;
+  their site follows the site repo's `main`, and `obscura.markets` is put
+  back on `main` by the launchd job within ten minutes (`--now` does it at
+  once). `dashboard/INTEGRATION.md` is the contract: fields in `/api/obs/*`
+  are only ever added, never renamed or removed.
 
 ## The last look before going live
 
