@@ -133,6 +133,14 @@ const variants: Array<[string, number, number, number, number, number, number, n
   ["floor 25, rest as Railway, only under 15 min", 25, 20, 20, 40, 0.5, 120, 15],
   ["floor 25, half at +80, trail 20 after +30, under 15 min", 25, 30, 20, 80, 0.5, 120, 15],
   ["floor 25, no take-profit, trail 20 after +30, under 15 min", 25, 30, 20, 0, 0, 120, 15],
+  // The tight rule asked for on 2026-09-05: a hard stop close under the entry and the whole position out at a small gain.
+  ["tight: floor 10, all out at +15, no trail, 2h", 10, 1e9, 0, 15, 1, 120, 1e9],
+  ["tight: floor 10, all out at +15, under 15 min", 10, 1e9, 0, 15, 1, 120, 15],
+  ["tight: floor 10, all out at +20, no trail, 2h", 10, 1e9, 0, 20, 1, 120, 1e9],
+  ["tight: floor 10, all out at +20, under 15 min", 10, 1e9, 0, 20, 1, 120, 15],
+  ["tight: floor 15, all out at +20, no trail, 2h", 15, 1e9, 0, 20, 1, 120, 1e9],
+  ["tight: floor 15, all out at +20, under 15 min", 15, 1e9, 0, 20, 1, 120, 15],
+  ["tight: floor 20, all out at +20, no trail, 2h", 20, 1e9, 0, 20, 1, 120, 1e9],
 ];
 for (const [name, floor, arm, trail, tpAt, tpShare, timeMin, maxAge] of variants) {
   const use = hits.filter((h) => h.ageMin >= 0 && h.ageMin <= maxAge && tapesBySymbol.has(h.symbol));
