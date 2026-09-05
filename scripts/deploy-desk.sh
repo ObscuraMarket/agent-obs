@@ -14,7 +14,9 @@ HEAD="$(git rev-parse origin/main)"
 LAST="$(cat "$STAMP" 2>/dev/null)"
 [ "$1" = "--force" ] || { [ "$LAST" = "$HEAD" ] && exit 0; }
 [ "$(git rev-parse HEAD)" = "$HEAD" ] || git pull -q --ff-only origin main || { echo "local main is not on origin/main; not deploying"; exit 1; }
-changed() { [ -z "$LAST" ] || [ -n "$(git diff --name-only "$LAST" "$HEAD" -- "$1" 2>/dev/null)" ]; }
+# The diff runs against the repo root whatever the working directory is: from ops/railway a bare "agent" pathspec
+# matched nothing, so until 2026-09-05 every run reported "unchanged" and nothing this script ran ever deployed.
+changed() { [ -z "$LAST" ] || [ -n "$(git -C "$ROOT" diff --name-only "$LAST" "$HEAD" -- "$1" 2>/dev/null)" ]; }
 cd "$ROOT/ops/railway" || exit 1
 echo "=== main ${HEAD:0:7}, $(date) ==="
 ok=1
