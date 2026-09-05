@@ -315,7 +315,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       // The USDG pool reports what it holds; the v4 ETH pool reports the dollars of buying that move the price 2%.
       pool?.tvlUsd != null
         ? { lbl: 'Liquidity', val: this.compact(pool.tvlUsd), ...this.chgSub(this.trackPct('obs:liq', pool.tvlUsd)) }
-        : { lbl: 'Liquidity', val: this.compact(pool?.depthUsd2pct), sub: pool?.depthUsd2pct != null ? 'moves the price 2%' : undefined },
+        : { lbl: 'Liquidity', val: this.compact(pool?.depthUsd2pct), ...this.chgSub(this.trackPct('obs:depth', pool?.depthUsd2pct)) },
       { lbl: 'Holders', val: holders != null ? holders.toLocaleString('en-US') : 'n/a', ...this.chgSub(this.trackPct('obs:holders', holders)) },
       { lbl: 'Cashback earned', val: this.usd(cash), valCls: cash > 0 ? 'up' : '', ...this.chgSub(this.trackPct('obs:cash', cash)) }
     ];
@@ -345,7 +345,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       // Supply is fixed, so the cap moves exactly with the price.
       { lbl: 'Market cap', val: this.compact(t.marketCapUsd), ...this.chgSub(chg) },
       { lbl: 'Vol 24h', val: this.compact(t.volume24hUsd), ...this.chgSub(this.trackPct('agent:vol', t.volume24hUsd)) },
-      { lbl: 'Liquidity', val: this.compact(t.depthUsd2pct), sub: t.depthUsd2pct != null ? 'moves the price 2%' : undefined },
+      { lbl: 'Liquidity', val: this.compact(t.depthUsd2pct), ...this.chgSub(this.trackPct('agent:depth', t.depthUsd2pct)) },
       { lbl: 'Holders', val: t.holders != null ? t.holders.toLocaleString('en-US') : 'n/a', ...this.chgSub(this.trackPct('agent:holders', t.holders)) },
       contract
     ];
