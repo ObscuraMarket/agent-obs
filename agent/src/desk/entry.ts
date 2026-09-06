@@ -33,6 +33,18 @@ export interface EntryRules {
   allowPullback: boolean;
   /** How far under where the window started the price may sit before that alone is a breakdown (OBS_ENTRY_BREAKDOWN_PCT). Zero: any tick under it. A token with a day of trading drifts a few percent either way and is not breaking down. */
   breakdownPct: number;
+  /**
+   * The re-ignition (OBS_ENTRY_REIGNITION): a launch that spiked, was shaken out by at least reignitionShakeoutPct
+   * from a peak at least reignitionPeakAgeMin old, and in the last few minutes came back reignitionReclaimPct off
+   * the trough on a volume burst of reignitionVolumeRatio times the earlier tape, with buyers still there. The
+   * second leg of a coordinated launch, read from the tape rather than guessed. Off, the read calls it a breakdown.
+   */
+  reignition: boolean;
+  reignitionPeakAgeMin: number;
+  reignitionShakeoutPct: number;
+  reignitionReclaimPct: number;
+  reignitionVolumeRatio: number;
+  reignitionMin: number;
 }
 
 export function entryRulesFromEnv(env: NodeJS.ProcessEnv = process.env): EntryRules {
@@ -51,10 +63,16 @@ export function entryRulesFromEnv(env: NodeJS.ProcessEnv = process.env): EntryRu
     minBuyPressurePct: n("OBS_ENTRY_MIN_BUY_PRESSURE_PCT", 50),
     allowPullback: (env.OBS_ENTRY_PULLBACK ?? "on") !== "off",
     breakdownPct: n("OBS_ENTRY_BREAKDOWN_PCT", 0),
+    reignition: (env.OBS_ENTRY_REIGNITION ?? "off") === "on",
+    reignitionPeakAgeMin: n("OBS_ENTRY_REIGNITION_PEAK_AGE_MIN", 3),
+    reignitionShakeoutPct: n("OBS_ENTRY_REIGNITION_SHAKEOUT_PCT", 50),
+    reignitionReclaimPct: n("OBS_ENTRY_REIGNITION_RECLAIM_PCT", 50),
+    reignitionVolumeRatio: n("OBS_ENTRY_REIGNITION_VOLUME_RATIO", 3),
+    reignitionMin: n("OBS_ENTRY_REIGNITION_MIN", 3),
   };
 }
 
-export type EntryState = "quiet" | "spike" | "pullback" | "base" | "breakdown" | "waiting";
+export type EntryState = "quiet" | "spike" | "pullback" | "base" | "breakdown" | "waiting" | "reignition";
 
 export interface EntryRead {
   symbol: string;
@@ -127,6 +145,22 @@ export function entryRead(rows: SwapRow[], symbol: string, now: number, r: Entry
   const read: EntryRead = { ...base, runPct, offPeakPct, higherLow, bouncePct, recentBuyPressurePct: pressure, rangePct };
   const pressureOk = pressure != null && pressure >= r.minBuyPressurePct;
   const pressureNote = pressure == null ? "no swaps in the last 10 min" : `buy pressure ${pressure.toFixed(0)}% over the last 10 min`;
+  // The re-ignition: a shakeout from an old peak, then a reclaim off the trough on a burst of volume, with buyers there.
+  if (r.reignition && peakAgeMin >= r.reignitionPeakAgeMin) {
+    const post = w.slice(peakIdx);
+    let troughIdx = 0;
+    for (let i = 1; i < post.length; i++) if (post[i].price < post[troughIdx].price) troughIdx = i;
+    const troughAt = post[troughIdx].at;
+    const shakeoutPct = ((peak - trough) / peak) * 100;
+    const recent = w.filter((x) => x.at >= now - r.reignitionMin * 60e3);
+    const earlier = w.filter((x) => x.at < now - r.reignitionMin * 60e3 && x.at >= now - 4 * r.reignitionMin * 60e3);
+    const recentVol = recent.reduce((s, x) => s + x.quoteAmount, 0);
+    const earlierPerSlice = earlier.reduce((s, x) => s + x.quoteAmount, 0) / 3;
+    const burst = earlierPerSlice > 0 ? recentVol / earlierPerSlice : null;
+    if (shakeoutPct >= r.reignitionShakeoutPct && bouncePct >= r.reignitionReclaimPct && now - troughAt <= 2 * r.reignitionMin * 60e3 && burst != null && burst >= r.reignitionVolumeRatio && pressureOk) {
+      return { ...read, state: "reignition", ok: true, why: `re-ignition: shaken out ${shakeoutPct.toFixed(0)}% from a peak ${peakAgeMin.toFixed(0)} min old, then back ${pct(bouncePct)} off the trough in the last ${r.reignitionMin} min on ${burst.toFixed(1)}x the earlier volume, ${pressureNote}: second leg, entry allowed` };
+    }
+  }
   if (offPeakPct > r.pullbackMaxPct || last < floor) {
     return { ...read, state: "breakdown", why: `${offPeakPct.toFixed(0)}% off its peak${last < floor ? ` and ${r.breakdownPct > 0 ? `more than ${r.breakdownPct}% ` : ""}below where the window started` : ""}: breakdown, no entry` };
   }

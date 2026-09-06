@@ -58,6 +58,26 @@ test("a survivor drifting a few percent under where the window started is not a 
   assert.equal(R.breakdownPct, 0, "off by default");
 });
 
+test("the re-ignition: a spike, a shakeout of half, then a reclaim on a burst of volume with buyers there is the second leg", () => {
+  // DOOHNIBOR, 2026-09-06: peaked at minute 2, shaken out 87% by minute 9, then +293% in minute 10 on five times the volume.
+  const rows: SwapRow[] = [];
+  const push = (min: number, side: "buy" | "sell", quote: number, price: number) => rows.push(row(min, side, quote, price));
+  for (let m = 28; m > 20; m--) push(m, m % 2 ? "buy" : "sell", 200, 1.0 + (28 - m) * 0.3);    // the run to a peak of 3.1 at minute 21
+  for (let m = 20; m > 4; m--) push(m, "sell", 120, 3.1 - (20 - m) * 0.17);                 // the shakeout to 0.38 by minute 5
+  for (let m = 4; m >= 0; m--) push(m, "buy", 900, 0.4 + (4 - m) * 0.25);                   // the reclaim to 1.4 on a burst of volume
+  const off = entryRead(rows, "TOK", now, { ...R, breakdownPct: 5 }, true);
+  assert.equal(off.state, "breakdown", "with the read off, the old peak above the price makes it a breakdown");
+  const on = entryRead(rows, "TOK", now, { ...R, breakdownPct: 5, reignition: true }, true);
+  assert.equal(on.state, "reignition");
+  assert.equal(on.ok, true);
+  assert.match(on.why, /re-ignition: shaken out 8\d% from a peak 2\d min old, then back \+\d+% off the trough in the last 3 min on \d+\.\dx the earlier volume/);
+  // Without the volume burst it is only a bounce inside a breakdown.
+  const quiet = rows.map((r) => (r.at >= now - 3 * 60e3 ? { ...r, quoteAmount: 100 } : r));
+  assert.equal(entryRead(quiet, "TOK", now, { ...R, breakdownPct: 5, reignition: true }, true).state, "breakdown");
+  assert.equal(entryRulesFromEnv({ OBS_ENTRY_REIGNITION: "on" } as unknown as NodeJS.ProcessEnv).reignition, true);
+  assert.equal(R.reignition, false, "off by default");
+});
+
 test("with pullbacks switched off the same tape is read as a pullback and refused: the desk buys bases only", () => {
   const rows = [quietStart, row(9, "buy", 100, 1.2), row(7, "buy", 300, 1.5), row(6, "buy", 400, 1.6), row(3, "sell", 200, 1.35), row(1, "buy", 250, 1.42)];
   const e = entryRead(rows, "TOK", now, { ...R, allowPullback: false });
