@@ -12,7 +12,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readLedger } from "./ledger.ts";
 import { liveReads, readsBlock, assetPrices, readMarketSamples, marketSeries, change24h, type Reads } from "./obscura/reads.ts";
-import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, latestSaneMark, type Trade, type BookSnapshot } from "./desk/book.ts";
+import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, latestSaneMark, bookMovedSince, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { trackRecord, basisSignal, ratioStats, readPrices, usSession } from "./desk/analysis.ts";
 import { stockReference } from "./obscura/stockRef.ts";
 import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, readTokens, resolveAny } from "./desk/candidates.ts";
@@ -210,20 +210,36 @@ export function buildStatus(posts: PostRow[], replies: PostRow[], decisions: Arr
   };
 }
 
-let readsCache: { at: number; value: Reads } | null = null;
+/** The last live read, with the moment it began: the wallet's balances are as of then, not as of when it finished. */
+let readsCache: { at: number; startedAt: number; value: Reads } | null = null;
 let readsRefreshing: Promise<void> | null = null;
+function refreshReads(): Promise<void> {
+  const startedAt = Date.now();
+  return liveReads().then((value) => { readsCache = { at: Date.now(), startedAt, value }; });
+}
 /** The live reads: answered from the last value at once; a value older than the TTL is refreshed in the background, never on the caller's clock. */
 async function cachedReads(): Promise<Reads> {
   if (readsCache && Date.now() - readsCache.at >= READS_TTL_MS && !readsRefreshing) {
-    readsRefreshing = liveReads().then((value) => { readsCache = { at: Date.now(), value }; }).catch(() => undefined).finally(() => { readsRefreshing = null; });
+    readsRefreshing = refreshReads().catch(() => undefined).finally(() => { readsRefreshing = null; });
   }
   if (readsCache) return readsCache.value;
   // Cold: one read in flight, shared by every caller, never several at once.
-  if (!readsRefreshing) readsRefreshing = liveReads().then((value) => { readsCache = { at: Date.now(), value }; }).finally(() => { readsRefreshing = null; });
+  if (!readsRefreshing) readsRefreshing = refreshReads().finally(() => { readsRefreshing = null; });
   await readsRefreshing;
-  const warmed = readsCache as { at: number; value: Reads } | null;
+  const warmed = readsCache as { at: number; startedAt: number; value: Reads } | null;
   if (!warmed) throw new Error("reads unavailable");
   return warmed.value;
+}
+/**
+ * Whether the warm read is behind the book: a swap settled after the read began. The read walks the wallet one balance
+ * at a time, ETH first and the desk's launch tokens last, so one that straddles a sell can carry the ETH from before the
+ * proceeds landed and no longer list the token sold, which priced the desk a whole position short until the next read.
+ * When it is behind, the next read starts now rather than on the TTL.
+ */
+function readsBehindBook(trades: Trade[]): boolean {
+  if (!readsCache || !bookMovedSince(trades, readsCache.startedAt)) return false;
+  if (!readsRefreshing) readsRefreshing = refreshReads().catch(() => undefined).finally(() => { readsRefreshing = null; });
+  return true;
 }
 let pricesCache: { at: number; key: string; value: Record<string, number | null> } | null = null;
 let pricesRefreshing: Promise<void> | null = null;
@@ -576,15 +592,19 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       json(res, 200, { pending: true, snapshot: last, prices: {}, positions: [], realizedUsd: 0, inFlight: [], track: null, series: series(book.snapshots, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 90) : 168) * 3600e3, now), capital: { netUsd: last.netCapitalUsd, deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length }, trades: { settled: t0.filter((x) => x.status === "settled").length, pending: t0.filter((x) => x.status === "pending").length, proposed: t0.filter((x) => x.status === "proposed").length, failed: t0.filter((x) => x.status === "failed").length }, canExecute: tradingArmed(), at: now });
       return;
     }
+    // A read that began before the last swap settled is not the truth for the minute until the next one: the ledger
+    // stands in, marked pending, so the page never anchors its curve to a wallet priced a position short.
+    const behind = readsBehindBook(book.trades);
     Promise.resolve(warm)
       .then(async (r) => {
-        const chain = r.wallet ? walletBalances(r.wallet) : null;
+        const chain = !behind && r.wallet ? walletBalances(r.wallet) : null;
         const held = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, book.trades, {}, now).holdings);
         const prices = await cachedPrices(held);
         const live = chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now);
         const t = latestTrades(book.trades);
         const pos = positions(book.flows, book.trades, live.holdings, prices);
         json(res, 200, {
+          ...(behind ? { pending: true } : {}),
           snapshot: live,
           prices,
           positions: pos.positions,

@@ -122,6 +122,10 @@ never appear here.
 ## `/api/obs/pnl?hours=168`
 
 `{ "series": [{ "at", "equityUsd", "netCapitalUsd", "pnlUsd" }], "at" }`, oldest first.
+`pnlUsd` is null on a mark with no capital behind it (one taken before the
+deposit was recorded). `snapshot` is the live mark from the wallet; when
+`pending` is true it is the ledger's instead, because the last wallet read
+began before the latest swap settled and the next read is on its way.
 
 ## `/api/obs/stream?limit=12`
 

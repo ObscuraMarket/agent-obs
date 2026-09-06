@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding } from "../src/desk/book.ts";
+import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince } from "../src/desk/book.ts";
 
 test("a mark a thousand times the capital is a price read gone wrong, never the book: not shown, not recorded", () => {
   // SHARD dust after the full sell, priced off the drained pool: equity 1.08e41 on $948.82 of capital.
@@ -82,6 +82,23 @@ test("the series is windowed and oldest first", () => {
     { at: 5, holdings: {}, equityUsd: 9, inFlightUsd: 0, netCapitalUsd: 10, pnlUsd: -1, pnlPct: -0.1, unpriced: [] },
   ];
   assert.deepEqual(series(snaps, 60, 100).map((p) => p.at), [50, 90]);
+  assert.deepEqual(series(snaps, 60, 100).map((p) => p.netCapitalUsd), [10, 10], "the capital rides along, as the page's contract says");
+});
+
+test("a mark taken before the deposit was recorded keeps its equity and has no PnL", () => {
+  const snaps = [
+    { at: 1, holdings: { ETH: 0.4 }, equityUsd: 972.63, inFlightUsd: 0, netCapitalUsd: 0, pnlUsd: 972.63, pnlPct: null, unpriced: [] },
+    { at: 2, holdings: { ETH: 0.4 }, equityUsd: 973.07, inFlightUsd: 0, netCapitalUsd: 948.82, pnlUsd: 24.25, pnlPct: 0.0256, unpriced: [] },
+  ];
+  assert.deepEqual(series(snaps, 100, 10).map((p) => [p.equityUsd, p.pnlUsd]), [[972.63, null], [973.07, 24.25]]);
+});
+
+test("the book moved when a swap settled after a wallet read began", () => {
+  const sell: Trade = { at: 100, updatedAt: 170, id: "s", status: "settled", from: { asset: "TRIBUTE", amount: 1, usd: 142 }, to: { asset: "ETH", amount: 0.05, usd: null }, partner: "pool" };
+  assert.equal(bookMovedSince([sell], 150), true, "the read began before the sell settled");
+  assert.equal(bookMovedSince([sell], 180), false, "the read began after it");
+  assert.equal(bookMovedSince([{ ...sell, status: "pending", updatedAt: 190 }], 150), false, "a swap still in flight has not moved the wallet");
+  assert.equal(bookMovedSince([{ ...sell, updatedAt: undefined, at: 160 }], 150), true, "without an update time the trade's own time counts");
 });
 
 test("positions carry average cost, unrealized and realized PnL, and share of equity", () => {

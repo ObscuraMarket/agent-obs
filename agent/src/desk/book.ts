@@ -199,11 +199,18 @@ export function latestSaneMark(snapshots: BookSnapshot[]): BookSnapshot | null {
   return snapshots.filter(saneMark).reduce<BookSnapshot | null>((a, b) => (a == null || b.at > a.at ? b : a), null);
 }
 
-export function series(snapshots: BookSnapshot[], sinceMs: number, now: number): Array<{ at: number; equityUsd: number | null; pnlUsd: number | null }> {
+export function series(snapshots: BookSnapshot[], sinceMs: number, now: number): Array<{ at: number; equityUsd: number | null; netCapitalUsd: number; pnlUsd: number | null }> {
   const sorted = [...snapshots].filter(saneMark).sort((a, b) => a.at - b.at);
   return sorted
     .filter((s, i) => s.at >= now - sinceMs && !isFailedReadMark(sorted[i - 1], s, sorted[i + 1]))
-    .map((s) => ({ at: s.at, equityUsd: s.equityUsd, pnlUsd: s.pnlUsd }));
+    // A mark taken before the deposit was recorded has equity but no capital behind it: its PnL would be the whole
+    // equity, a spike at the start of the curve. Equity stands; PnL is null until there is capital to measure against.
+    .map((s) => ({ at: s.at, equityUsd: s.equityUsd, netCapitalUsd: s.netCapitalUsd ?? 0, pnlUsd: (s.netCapitalUsd ?? 0) > 0 ? s.pnlUsd : null }));
+}
+
+/** PURE: whether a swap settled (or was recorded) after `sinceMs`: a wallet read that began before it is behind the book. */
+export function bookMovedSince(trades: Trade[], sinceMs: number): boolean {
+  return latestTrades(trades).some((t) => t.status === "settled" && (t.updatedAt ?? t.at) > sinceMs);
 }
 
 /**
