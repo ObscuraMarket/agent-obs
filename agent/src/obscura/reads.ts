@@ -448,8 +448,8 @@ export interface Reads {
   market: MarketRead | null;
 }
 
-/** The last ETH price the desk sampled (obs-prices.jsonl), for a market read when the price feed is down. */
-function lastSampledEth(): number | null {
+/** The last ETH price the desk sampled (obs-prices.jsonl), for a market read when the price feed is down, and for pricing a launch's first swaps. */
+export function lastSampledEth(): number | null {
   const rows = readLedger<{ at: number; symbol: string; priceUsd: number }>("obs-prices.jsonl").filter((r) => r && r.symbol === "ETH" && Number(r.priceUsd) > 0 && Date.now() - Number(r.at) < 6 * 3600e3);
   return rows.length ? Number(rows[rows.length - 1].priceUsd) : null;
 }

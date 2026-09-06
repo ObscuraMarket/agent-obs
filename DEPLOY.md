@@ -142,11 +142,14 @@ Project `obs` in the operator's Railway workspace (linked from
   `OBS_TRADING=off`. Deploy: `railway up -s desk --path-as-root ../../agent --ci`.
   Logs: `railway logs -s desk`.
 
-The launch watcher stays on the Mac. Its API serves the feed's bytes at
-`/api/obs/feed-tail` behind `OBS_FEED_TOKEN`, reachable at
-`https://feed.obscura.markets` (the Vercel proxy in `ops/vercel-obs-api`,
-kept pointed at the Mac's bridge by `com.obscura.obsvercel`); the desk on
-Railway pulls it every 30 seconds. `obs-api.obscura.markets` points at the
+The desk needs no machine but the box. It reads launches from the
+launchpad's contract and judges their ignition from their curve pool's
+first minutes itself (`launchpull.ts`, `OBS_IGNITION_*`), so the launch
+lane runs with no watcher anywhere. The Mac's launch watcher is optional:
+when `OBS_FEED_SOURCE` and `OBS_FEED_TOKEN` are set, the desk also pulls
+its feed (the hourly trails and side pools) from
+`https://feed.obscura.markets` every few seconds, and when the Mac is
+asleep the desk simply goes without them. `obs-api.obscura.markets` points at the
 desk on Railway (a CNAME in Vercel DNS to the Railway domain). Arming on
 Railway: `scripts/railway-preflight.sh` (read-only readiness checks), then
 `scripts/railway-arm.sh on` (puts the key from `~/.obs/wallet/obs-wallet.json`

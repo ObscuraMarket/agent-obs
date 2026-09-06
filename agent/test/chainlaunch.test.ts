@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chainLaunchRow, pairSymbolOf } from "../src/desk/chainlaunch.ts";
+import { chainLaunchRow, pairSymbolOf, ignitionAt, ignitionRow, ignitionRulesFromEnv } from "../src/desk/chainlaunch.ts";
 import { parseFeed, curvePoolIdFor } from "../src/desk/candidates.ts";
 
 const now = 1_788_650_000_000;
@@ -41,4 +41,33 @@ test("a launch read from the chain becomes a feed row the parser takes as an ear
   const merged = parseFeed(JSON.stringify(row) + "\n" + JSON.stringify(watcher) + "\n", now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 30 * 60e3 });
   assert.equal(merged.early.length, 1);
   assert.equal(merged.early[0].ignitedAfterMin, 1);
+});
+
+test("ignition: enough swaps from enough wallets with enough dollars, inside the window, and the dollar bar is waived when nothing could be priced", () => {
+  const R = ignitionRulesFromEnv({} as NodeJS.ProcessEnv);
+  assert.deepEqual(R, { windowSec: 600, minSwaps: 60, minSenders: 20, minUsd: 10_000 });
+  const launchAt = now;
+  const crowd = (n: number, wallets: number, usdEach: number, fromSec = 10) => Array.from({ length: n }, (_, i) => ({ at: launchAt + (fromSec + i) * 1000, sender: `0x${String(i % wallets).padStart(40, "0")}`, usd: usdEach }));
+  assert.equal(ignitionAt(launchAt, crowd(60, 20, 200), R), launchAt + 69 * 1000, "the sixtieth swap, when the wallets and the dollars were already there");
+  assert.equal(ignitionAt(launchAt, crowd(80, 10, 200), R), null, "eighty swaps from ten wallets is not a crowd");
+  assert.equal(ignitionAt(launchAt, crowd(80, 30, 50), R), null, "eighty swaps from thirty wallets but $4,000: not enough money");
+  assert.equal(ignitionAt(launchAt, crowd(80, 30, 0), R), launchAt + 69 * 1000, "an unpriced pair ignites on swaps and wallets alone");
+  assert.equal(ignitionAt(launchAt, crowd(80, 30, 200, 700), R), null, "a crowd that arrives after the window is not an ignition");
+  assert.equal(ignitionAt(launchAt, [...crowd(30, 30, 200), ...crowd(30, 30, 200, 601)], R), null, "only the swaps inside the window count");
+  assert.equal(ignitionAt(launchAt, crowd(59, 30, 200), R), null, "one short");
+});
+
+test("the ignition row and the re-emitted launch row both tell the parser the launch ignited", () => {
+  const f = { token: TOKEN, symbol: "ZZZ", name: "Sleepy", pairToken: "0x0000000000000000000000000000000000000000" as const, creatorTaxBps: 100, at: now - 8 * 60e3, block: 55_500_000, tx: "0xabc", firstSwapAt: now - 7 * 60e3 };
+  const ignitedAt = now - 3 * 60e3;
+  const ign = ignitionRow(f, ignitedAt, now);
+  assert.equal(ign.kind, "ignition");
+  assert.equal(ign.minutesAfterLaunch, 5);
+  assert.equal(ign.ignitionTs, ignitedAt / 1000, "seconds, like the watcher");
+  const opts = { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 30 * 60e3 };
+  const viaIgnitionRow = parseFeed(JSON.stringify(chainLaunchRow(f, now)) + "\n" + JSON.stringify(ign) + "\n", now, opts);
+  assert.equal(viaIgnitionRow.early[0].ignitedAfterMin, 5, "the ignition row alone marks it");
+  const viaLaunchRow = parseFeed(JSON.stringify(chainLaunchRow({ ...f, ignitedAt }, now)) + "\n", now, opts);
+  assert.equal(viaLaunchRow.early[0].ignitedAfterMin, 5, "so does the re-emitted launch row");
+  assert.equal(parseFeed(JSON.stringify(chainLaunchRow(f, now)) + "\n", now, opts).early[0].ignitedAfterMin, null, "and without either it is not ignited");
 });
