@@ -322,7 +322,7 @@ for (const [sym, a] of inPlay) {
         const reason = e instanceof Error ? e.message.replace(/^explorer /, "") : "no answer";
         console.log(`[desk] holders: the explorer did not answer for ${sym} (${reason}); reading recent transfers`);
         transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);
-        hr = withoutWalletCount(holderRead(transfers, sym, a.contract, now, holderRules, infraBase, null), `the explorer ${reason}; read from recent transfers`);
+        hr = withoutWalletCount(holderRead(transfers, sym, a.contract, now, holderRules, infraBase, null), `the explorer ${reason}; read from recent transfers`, holderRules.minWallets);
       }
     } else {
       transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);

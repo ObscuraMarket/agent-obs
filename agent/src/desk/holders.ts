@@ -293,11 +293,16 @@ export async function explorerHolders(token: string, ttlMs = 10 * 60e3, decimals
   const c = explorerCache.get(k);
   if (c && Date.now() - c.at < ttlMs) return c;
   const headers = { "User-Agent": UA, accept: "application/json" };
-  const get = async (url: string): Promise<unknown> => {
+  const get = async (url: string, retried = false): Promise<unknown> => {
     const wait = EXPLORER_PAUSE_MS - (Date.now() - explorerLastCallAt);
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     explorerLastCallAt = Date.now();
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+    if (res.status >= 500 && !retried) {
+      // A 5xx from the explorer is usually a moment, not an outage: one more try after a breath.
+      await new Promise((r) => setTimeout(r, 1500));
+      return get(url, true);
+    }
     if (!res.ok) throw new Error(`explorer answered ${res.status}`);
     return res.json();
   };
@@ -342,9 +347,13 @@ export async function explorerHolders(token: string, ttlMs = 10 * 60e3, decimals
  * back hours and counts the wallets it saw move, which is no measure of how many hold a token that old; when the
  * explorer's count could not be read, that failure alone is not a verdict, and the read says what was not read.
  */
-export function withoutWalletCount(h: HolderRead, note: string): HolderRead {
-  const countFail = new RegExp(`^${h.wallets} wallets \\(\\d+ needed\\)(; )?`);
-  if (h.ok || !countFail.test(h.why)) return { ...h, why: `${h.why} (${note})` };
+export function withoutWalletCount(h: HolderRead, note: string, minWallets = 30): HolderRead {
+  if (h.ok) return { ...h, why: `${h.why} (${note})` };
+  // A scan that saw fewer wallets than the bar cannot judge concentration either: among a handful of wallets the top
+  // ten hold everything by construction. That read is not read, and it says so instead of failing on an artifact.
+  if (h.wallets < minWallets) return { ...h, ok: false, why: `holders not read: ${note}, and the scan saw only ${h.wallets} wallet${h.wallets === 1 ? "" : "s"} move, too few to judge` };
+  const countFail = new RegExp(`^${h.wallets} wallets \\(\\d+ needed\\)(, |; )?`);
+  if (!countFail.test(h.why)) return { ...h, why: `${h.why} (${note})` };
   const rest = h.why.replace(countFail, "");
   if (rest.trim()) return { ...h, why: `${rest} (${note})` };
   return { ...h, ok: true, why: `wallet count not read (${note}); largest ${h.top1Pct?.toFixed(0) ?? "?"}%, top ten ${h.top10Pct?.toFixed(0) ?? "?"}% among the wallets that moved recently` };

@@ -46,12 +46,16 @@ test("the explorer's holder count is read whichever name its API gives it, and a
 test("when the explorer refuses, a transfer scan's wallet count is not a verdict on a token with days of trading", () => {
   // RWAPACT, 2026-09-06 11:35Z: the explorer answered 403; the scan of recent transfers saw 17 wallets move and the gate failed a token with 280 holders.
   const base: HolderRead = { symbol: "RWAPACT", token: "0x4b", at: 1, transfers: 40, wallets: 17, top1Pct: 10, top10Pct: 60, earlyBuyers: 0, earlySameBlock: 0, earlySameSize: 0, bundlePct: null, freshTop10: null, infra: [], ok: false, why: "17 wallets (30 needed)" };
-  const r = withoutWalletCount(base, "the explorer answered 403; read from recent transfers");
+  const r = withoutWalletCount(base, "the explorer answered 403; read from recent transfers", 15);
   assert.equal(r.ok, true, r.why);
   assert.match(r.why, /wallet count not read \(the explorer answered 403; read from recent transfers\); largest 10%, top ten 60%/);
-  const concentrated = withoutWalletCount({ ...base, top1Pct: 70, why: "17 wallets (30 needed); the largest wallet holds 70% (50% allowed)" }, "the explorer answered 403; read from recent transfers");
+  const concentrated = withoutWalletCount({ ...base, top1Pct: 70, why: "17 wallets (30 needed), the largest wallet holds 70% (50% allowed)" }, "the explorer answered 403; read from recent transfers", 15);
   assert.equal(concentrated.ok, false, "a real concentration failure still stands");
-  assert.match(concentrated.why, /^the largest wallet holds 70% \(50% allowed\) \(the explorer answered 403/);
+  assert.match(concentrated.why, /^the largest wallet holds 70% \(50% allowed\) \(the explorer answered 403/, "the scan's own separator is stripped with the count");
+  // NSDX, 12:43Z: the scan saw a handful of wallets, so "the top ten hold 100%" was an artifact and the page showed FAIL with no reason.
+  const thin = withoutWalletCount({ ...base, wallets: 4, top10Pct: 100, why: "4 wallets (30 needed), the top ten hold 100% (97% allowed)" }, "the explorer answered 500; read from recent transfers", 30);
+  assert.equal(thin.ok, false);
+  assert.match(thin.why, /^holders not read: the explorer answered 500; read from recent transfers, and the scan saw only 4 wallets move, too few to judge$/);
   const fine = withoutWalletCount({ ...base, ok: true, wallets: 45, why: "45 wallets, largest 10%" }, "note");
   assert.equal(fine.ok, true);
   assert.match(fine.why, /45 wallets, largest 10% \(note\)/);
