@@ -87,6 +87,12 @@ test("candidate rails: probe first, proven sizes up, blacklisted never, one at a
   const eth = resolveAsset("ETH@robinhood")!;
   const buy: Intent = { from: eth, to: tok, amount: 0.01, usd: 24 };
   assert.deepEqual(checkCandidate(buy, null, [], rails), { ok: true, maxUsd: 5 }, "unknown token: a $5 probe");
+  // The lane: a launch still in its window takes the launch ticket; a token with a record takes the full size. FRANKLIN, 2026-09-06.
+  const lanes = railsFromEnv({ OBS_TRADING: "on", OBS_PROBE_USD: "100", OBS_PROBE_LAUNCH_USD: "25", OBS_MAX_CANDIDATES: "2" } as NodeJS.ProcessEnv);
+  assert.deepEqual(checkCandidate(buy, null, [], lanes, null, 0, "launch"), { ok: true, maxUsd: 25 });
+  assert.deepEqual(checkCandidate(buy, null, [], lanes, null, 0, "record"), { ok: true, maxUsd: 100 });
+  assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, [], lanes, { grade: "C", capUsd: 100, why: "" }, 0, "launch"), { ok: true, maxUsd: 25, addOn: false }, "proven or not, a launch never sizes past its ticket");
+  assert.equal(railsFromEnv({ OBS_PROBE_USD: "100" } as NodeJS.ProcessEnv).launchProbeUsd, 100, "with no launch ticket set, both lanes take the probe size");
   assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, [], rails), { ok: true, maxUsd: 5, addOn: false }, "proven but ungraded: the probe size is the ceiling");
   assert.match((checkCandidate(buy, { proven: false, blacklisted: true }, [], rails) as { reason: string }).reason, /blacklisted/);
   assert.match((checkCandidate(buy, { proven: true, blacklisted: false }, ["HOTDOG"], rails) as { reason: string }).reason, /one launch position at a time/);

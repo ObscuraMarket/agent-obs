@@ -29,6 +29,8 @@ export interface Rails {
   neverTrade: ReadonlySet<string>;
   /** The first buy of any launch token is capped here until a sell is proven to work. */
   probeUsd: number;
+  /** The first buy of a token still inside its launch window (OBS_PROBE_LAUNCH_USD): a fresh launch moves 50% between blocks, so it gets the small ticket while a token with a record gets the full one. Defaults to probeUsd. */
+  launchProbeUsd: number;
   /** Launch positions held at once. */
   maxCandidates: number;
   candidateMaxHoldH: number;
@@ -81,6 +83,7 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     candidatesOn: (env.OBS_CANDIDATES ?? "on") !== "off",
     neverTrade: NEVER_TRADE,
     probeUsd: Number(env.OBS_PROBE_USD ?? 5),
+    launchProbeUsd: Number(env.OBS_PROBE_LAUNCH_USD ?? env.OBS_PROBE_USD ?? 5),
     maxCandidates: Number(env.OBS_MAX_CANDIDATES ?? 1),
     candidateMaxHoldH: Number(env.OBS_CANDIDATE_MAX_HOLD_H ?? 8),
     candidateFloorPct: Number(env.OBS_CANDIDATE_FLOOR_PCT ?? 40),
@@ -231,7 +234,7 @@ export interface CandidateKnowledge {
  * position is already held, or when candidates are off; until a sell has been
  * proven the buy is capped at the probe size. Sells (exits) always pass.
  */
-export function checkCandidate(i: Intent, known: CandidateKnowledge | null, heldCandidates: string[], r: Rails, graded?: { grade: "A" | "B" | "C" | null; capUsd: number; why: string } | null, heldUsd = 0): { ok: true; maxUsd?: number; addOn?: boolean } | { ok: false; reason: string } {
+export function checkCandidate(i: Intent, known: CandidateKnowledge | null, heldCandidates: string[], r: Rails, graded?: { grade: "A" | "B" | "C" | null; capUsd: number; why: string } | null, heldUsd = 0, lane: "launch" | "record" = "record"): { ok: true; maxUsd?: number; addOn?: boolean } | { ok: false; reason: string } {
   if (!i.to.candidate) return { ok: true };
   if (!r.candidatesOn) return { ok: false, reason: "launch candidates are switched off" };
   if (i.to.contract && r.neverTrade.has(i.to.contract.toLowerCase())) return { ok: false, reason: `${i.to.symbol} is the desk's own token; it is never traded` };
@@ -239,8 +242,9 @@ export function checkCandidate(i: Intent, known: CandidateKnowledge | null, held
   if (graded && !graded.grade) return { ok: false, reason: `${i.to.symbol} is ${graded.why}` };
   const others = heldCandidates.filter((s) => s !== i.to.symbol);
   if (others.length >= r.maxCandidates) return { ok: false, reason: `already holding ${others.join(", ")}; ${r.maxCandidates === 1 ? "one" : r.maxCandidates} launch position${r.maxCandidates === 1 ? "" : "s"} at a time` };
-  if (known?.proven !== true) return { ok: true, maxUsd: r.probeUsd };
-  const cap = graded ? graded.capUsd : r.probeUsd;
+  const probe = lane === "launch" ? r.launchProbeUsd : r.probeUsd;
+  if (known?.proven !== true) return { ok: true, maxUsd: probe };
+  const cap = graded ? Math.min(graded.capUsd, lane === "launch" ? r.launchProbeUsd : Infinity) : probe;
   const room = Math.max(0, cap - heldUsd);
   if (room <= 0) return { ok: false, reason: `${i.to.symbol} is at its grade ${graded?.grade ?? "C"} ceiling of $${cap}` };
   return { ok: true, maxUsd: room, addOn: heldUsd > 0 };

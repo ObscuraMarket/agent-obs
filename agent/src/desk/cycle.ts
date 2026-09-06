@@ -354,9 +354,14 @@ const memory = { record: launchRecordLine(launchRecord(closes)), recalls: recall
 const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, early: feed.path ? early : undefined, heldCandidates, paper: PAPER, market, session, basis, reference: ref ? { perpTradesDay: ref.perpTradesDay, printStatus: ref.printStatus, printAt: ref.printAt } : undefined, tapes, memory: feed.path ? memory : undefined });
 // The size a new entry takes, said in ETH, so a buy names the amount the rails will send rather than a guess.
 {
-  const entryUsd = railsFromEnv().probeUsd;
+  const r = railsFromEnv();
   const ethUsd = prices.ETH ?? reads.prices.ethUsd ?? null;
-  if (ethUsd != null && ethUsd > 0) observation.splice(1, 0, `Size of a new entry: $${entryUsd} of ETH, which is ${(entryUsd / ethUsd).toFixed(4)} ETH at $${ethUsd.toFixed(2)}; a buy names that amount of ETH.`);
+  if (ethUsd != null && ethUsd > 0) {
+    const eth = (usd: number) => `$${usd} of ETH, which is ${(usd / ethUsd).toFixed(4)} ETH`;
+    observation.splice(1, 0, r.launchProbeUsd !== r.probeUsd
+      ? `Size of a new entry at $${ethUsd.toFixed(2)} per ETH: a token with a record takes ${eth(r.probeUsd)}; a launch still inside its first ${Math.round(Number(process.env.OBS_EARLY_MAX_AGE_MIN ?? 90))} minutes takes ${eth(r.launchProbeUsd)}. A buy names that amount of ETH.`
+      : `Size of a new entry: ${eth(r.probeUsd)} at $${ethUsd.toFixed(2)}; a buy names that amount of ETH.`);
+  }
 }
 console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  - " + l).join("\n")}`);
 
@@ -398,7 +403,7 @@ if ((process.env.OBS_AUTO_ENTRY ?? "off") === "on" && decision.kind === "hold") 
   const ethUsd = prices.ETH ?? reads.prices.ethUsd ?? null;
   if (pick && ethUsd != null && ethUsd > 0) {
     const rails = railsFromEnv();
-    const auto = autoEntryFor(pick, observation, rails.probeUsd, ethUsd, rails.candidateFloorPct);
+    const auto = autoEntryFor(pick, observation, early.some((e) => e.symbol === pick.symbol) ? rails.launchProbeUsd : rails.probeUsd, ethUsd, rails.candidateFloorPct);
     decision = { kind: "propose-swap", amount: auto.amountEth, from: "ETH@robinhood", to: `${pick.symbol}@robinhood`, reason: auto.reason };
     parsed.analysis = auto.analysis;
     thoughts.push(auto.line);
@@ -435,7 +440,9 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
     // A swap must be argued for. An exit of a held position is exempt: leaving is never blocked on paperwork.
     const argued = from.candidate ? { ok: true as const, cited: 0 } : evidenceCheck(parsed.analysis, observation, { minEvidence: rails.minEvidence, minConviction: rails.minConviction });
     const heldPos = to.candidate ? pos.find((x) => x.asset === to.symbol) : undefined;
-    const railGate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails, to.candidate ? (graded.get(to.symbol) ?? null) : null, heldPos?.valueUsd ?? 0);
+    // The lane: a token still inside its launch window gets the launch ticket; one with a record gets the full size.
+    const lane: "launch" | "record" = early.some((e) => e.symbol === to.symbol) ? "launch" : "record";
+    const railGate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails, to.candidate ? (graded.get(to.symbol) ?? null) : null, heldPos?.valueUsd ?? 0, lane);
     // The entry: a launch-token buy also needs the price action to allow it. Volume puts a token on watch; the tape gives the entry.
     const entry = to.candidate && !from.candidate ? (entryReads.get(to.symbol) ?? null) : null;
     const gateEntry = railGate.ok && to.candidate && !from.candidate && !entry?.ok ? { ok: false as const, reason: entry ? `the tape gives no entry: ${entry.why}` : `no tape was read for ${to.symbol} this cycle, so there is no entry read` } : railGate;
