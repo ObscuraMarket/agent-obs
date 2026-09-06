@@ -436,6 +436,7 @@ export function screenerCandidates(tokens: ScreenerToken[], now: number, opts: F
     if (!hooked && quote !== "USDG") continue;
     const quoteIs0 = t.key.currency1.toLowerCase() === t.token.toLowerCase();
     const taxPct = (t.creatorTaxBps ?? 0) / 100;
+    if ((hooked ? curveFeePct + taxPct : t.key.fee / 10_000) > opts.maxTierPct) continue;
     const record = { line: recordLine(t, now), ageH: ageMs / 3600e3, vol24: t.pool.vol24, vol1: t.pool.vol1, liqUsd: t.pool.liqUsd };
     out.push({
       at: t.readAt,

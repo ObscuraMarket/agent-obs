@@ -5,7 +5,7 @@
 // for the desk to read as its board of survivors. Nothing here trades.
 import { existsSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { fetchTokenPairs, pickPool, readScreener, writeScreener, screenerRulesFromEnv, recordFails, type ScreenerToken } from "./screener.ts";
-import { curveKey } from "./candidates.ts";
+import { curveKey, curvePoolIdFor } from "./candidates.ts";
 import { NEVER_TRADE } from "../config.ts";
 
 const FEED = process.env.OBS_CANDIDATE_FEED ?? "";
@@ -33,8 +33,13 @@ function discover(): Known[] {
   } finally {
     closeSync(fd);
   }
+  // Hourly rows are keyed by pool; launch rows name the token and, when the feed had it, its curve pool; candidate rows
+  // tie a token to every pool the watcher graded it in. A token's hour is the furthest any of its pools was followed.
   const byPool = new Map<string, number>();
-  const launches = new Map<string, Known & { poolId: string }>();
+  const poolsOf = new Map<string, Set<string>>();
+  const launches = new Map<string, Known>();
+  const symbolOf = new Map<string, string>();
+  const clean = (s: unknown) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
   for (const line of text.split("\n")) {
     if (!line) continue;
     let r: Record<string, unknown>;
@@ -44,17 +49,30 @@ function discover(): Known[] {
       const id = String(r.id ?? "").toLowerCase();
       const h = Number(r.hour ?? 0);
       if (id && h > (byPool.get(id) ?? -1)) byPool.set(id, h);
+      if (kind === "candidate" && typeof r.token === "string" && id) {
+        const token = r.token.toLowerCase();
+        (poolsOf.get(token) ?? poolsOf.set(token, new Set()).get(token)!).add(id);
+        if (r.symbol) symbolOf.set(token, clean(r.symbol));
+      }
     } else if (kind === "launch" && typeof r.token === "string") {
       const token = r.token.toLowerCase() as `0x${string}`;
       const ts = Number(r.ts ?? 0);
-      launches.set(token, { token, symbol: String(r.symbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12), source: String(r.source ?? "launch"), launchAt: ts > 0 ? (ts < 1e12 ? ts * 1000 : ts) : null, creatorTaxBps: r.creatorTaxBps == null ? null : Number(r.creatorTaxBps), maxHour: 0, poolId: String(r.curvePoolId ?? "").toLowerCase() });
+      const pairSymbol = typeof r.pairSymbol === "string" ? r.pairSymbol : null;
+      const pair = typeof r.pair === "string" ? (r.pair.toLowerCase() as `0x${string}`) : null;
+      const curve = String(r.curvePoolId ?? "").toLowerCase() || (pairSymbol ? curvePoolIdFor(token, pairSymbol, pair) : null);
+      if (curve) (poolsOf.get(token) ?? poolsOf.set(token, new Set()).get(token)!).add(curve.toLowerCase());
+      launches.set(token, { token, symbol: clean(r.symbol), source: String(r.source ?? "launch"), launchAt: ts > 0 ? (ts < 1e12 ? ts * 1000 : ts) : null, creatorTaxBps: r.creatorTaxBps == null ? null : Number(r.creatorTaxBps), maxHour: 0 });
     }
   }
   const out: Known[] = [];
-  for (const l of launches.values()) {
-    if (NEVER_TRADE.has(l.token)) continue;
-    const h = l.poolId ? (byPool.get(l.poolId) ?? 0) : 0;
-    if (h >= MIN_FEED_HOUR && l.symbol) out.push({ ...l, maxHour: h });
+  for (const [token, pools] of poolsOf) {
+    if (NEVER_TRADE.has(token)) continue;
+    const h = Math.max(-1, ...[...pools].map((p) => byPool.get(p) ?? -1));
+    if (h < MIN_FEED_HOUR) continue;
+    const l = launches.get(token);
+    const symbol = l?.symbol || symbolOf.get(token) || "";
+    if (!symbol) continue;
+    out.push({ token: token as `0x${string}`, symbol, source: l?.source ?? "launch", launchAt: l?.launchAt ?? null, creatorTaxBps: l?.creatorTaxBps ?? null, maxHour: h });
   }
   return out;
 }
