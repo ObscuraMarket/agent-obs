@@ -62,6 +62,18 @@ test("evidence must quote observed figures; a swap without an argument is not ar
   assert.match((evidenceCheck(oneFigure, observation, rule) as { reason: string }).reason, /1 distinct/);
 });
 
+test("a single-digit figure with a unit is a figure: 5% off the trough counts, a bare 1h does not", () => {
+  // ASTRA, 2026-09-06 16:33Z: the case quoted +5% off the trough, 75% buy pressure and 842 wallets, and the checker scored two.
+  assert.ok(figures("turned up +5% off the trough").has("5"));
+  assert.ok(figures("quiet in a 4.0% range for 10 min").has("4"));
+  assert.ok(figures("costs $8 to fill").has("8"));
+  assert.ok(!figures("read in 1h; 3 lines").has("1"));
+  assert.ok(!figures("read in 1h; 3 lines").has("3"));
+  const observation = ["Entry ASTRA (last 30 min, 31 swaps): ran +22% to its peak, 12% off it, turned up +5% off the trough, buy pressure 75% over the last 10 min: pullback holding, entry allowed.", "Holders ASTRA: 842 wallets; largest 15%; top ten 55% of circulating. HOLDERS OK."];
+  const a = { thesis: "buy the pullback", evidence: ["ASTRA turned up 5% off its trough", "buy pressure 75% over the last ten minutes", "842 wallets hold it"], invalidation: "a close under the trough", conviction: 4 };
+  assert.deepEqual(evidenceCheck(a, observation, { minEvidence: 3, minConviction: 4 }), { ok: true, cited: 3 });
+});
+
 test("the reply parser reads the analysis lines and treats a bare none as absent", () => {
   const p = parseThoughtReply(["THOUGHT: the book is flat", "THESIS: none", "EVIDENCE: ETH at 2401.10 is mid range", "EVIDENCE: depth 71911", "INVALIDATION: none", "CONVICTION: 2", "DECISION: hold", "REASON: nothing to do", "NOTE: watching"].join("\n"));
   assert.deepEqual(p.thoughts, ["the book is flat"]);

@@ -132,9 +132,12 @@ export interface Analysis {
 /** PURE: the numeric tokens in a text, normalized: "1,027.10" -> "1027.10", "3.74%" -> "3.74". */
 export function figures(text: string): Set<string> {
   const out = new Set<string>();
-  for (const m of text.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
-    const v = m[0].replace(/,/g, "");
-    if (v.length >= 2 || v.includes(".")) out.add(v.replace(/\.0+$/, ""));
+  for (const m of text.matchAll(/(\$)?(\d[\d,]*(?:\.\d+)?)(%|x\b)?/g)) {
+    const v = m[2].replace(/,/g, "").replace(/\.0+$/, "");
+    // A bare single digit is noise ("1h", "3 lines"); one with a unit ("5%", "$8", "3x") is a figure like any other.
+    // Until 2026-09-06 "5% off its trough" and "a 4.0% range" never counted, and a case quoting three real figures scored two.
+    const unit = Boolean(m[1] || m[3]);
+    if (v.length >= 2 || m[2].includes(".") || unit) out.add(v);
   }
   return out;
 }
