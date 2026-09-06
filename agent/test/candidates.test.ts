@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseFeed, deriveTickSpacing, poolIdFor, curvePoolIdFor, exitSignal, exitVerdict, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs } from "../src/desk/candidates.ts";
+import { parseFeed, deriveTickSpacing, poolIdFor, curvePoolIdFor, exitSignal, exitVerdict, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs, isHolding } from "../src/desk/candidates.ts";
+
+test("dust after a full sell is not a holding: it takes no slot, triggers no exit and is not on the watch", () => {
+  // SHARD on 2026-09-06: 3.18e-10 left after the take-profit sold everything, and it blocked the next entry as a second position.
+  assert.equal(isHolding(3.18394308e-10), false);
+  assert.equal(isHolding(0), false);
+  assert.equal(isHolding(null), false);
+  assert.equal(isHolding(3214.47), true);
+  assert.equal(isHolding(0.5, { OBS_DUST_QTY: "1" } as unknown as NodeJS.ProcessEnv), false, "the floor is a variable");
+});
 import { checkCandidate, railsFromEnv, checkRails, type Intent } from "../src/desk/rails.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 import { routeFor, costFloorPct, encodeSwap } from "../src/desk/onchain.ts";

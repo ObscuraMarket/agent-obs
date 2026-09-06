@@ -11,7 +11,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR, ROOT_DIR, dataPath } from "../config.ts";
-import { readFeed, resolveAny, dynamicPoolSpec, dynamicAssets, earlyAsCandidate, curveKey } from "./candidates.ts";
+import { readFeed, resolveAny, dynamicPoolSpec, dynamicAssets, earlyAsCandidate, curveKey, isHolding } from "./candidates.ts";
 import { recordResearch } from "./research.ts";
 import { updateTapes, tapeStats, type SwapRow } from "./tape.ts";
 import { entryRead, entryRulesFromEnv } from "./entry.ts";
@@ -51,7 +51,7 @@ function refreshHeld(now: number): void {
       const chain = reads.wallet ? walletBalances(reads.wallet) : null;
       if (!chain) return;
       const by = PAPER ? paperBalances(chain.bySymbol, readPaper()) : chain.bySymbol;
-      held = Object.values(dynamicAssets()).filter((a) => (by[a.symbol] ?? 0) > 0).map((a) => a.symbol);
+      held = Object.values(dynamicAssets()).filter((a) => isHolding(by[a.symbol])).map((a) => a.symbol);
     })
     .catch((e) => console.log(`[live] balances not read: ${e instanceof Error ? e.message : String(e)}`))
     .finally(() => {

@@ -17,7 +17,7 @@ import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity,
 import { assetKey, type Asset } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates, rememberClose } from "./onchain.ts";
-import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate, curveKey } from "./candidates.ts";
+import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate, curveKey, isHolding } from "./candidates.ts";
 import { checkCandidate, clampToBalance } from "./rails.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute, PAPER_BOOK } from "./paper.ts";
 import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCheck, basisSignal } from "./analysis.ts";
@@ -101,7 +101,7 @@ if (ARMED && readTokens().length) {
   const chainForExit = readsForExit.wallet ? walletBalances(readsForExit.wallet) : null;
   if (chainForExit) {
     const bookForExit = readBook();
-    const heldNames = Object.values(dynamicAssets()).filter((a) => (chainForExit.bySymbol[a.symbol] ?? 0) > 0).map((a) => a.symbol);
+    const heldNames = Object.values(dynamicAssets()).filter((a) => isHolding(chainForExit.bySymbol[a.symbol])).map((a) => a.symbol);
     if (heldNames.length) {
       const exitPrices = await assetPrices(heldNames, {});
       const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookForExit.trades, now) }, undefined, now);
@@ -221,7 +221,7 @@ for (const l of feed.early.slice(0, 6)) {
 // Curve keys first (read from chain once, then cached), so an ignited launch with no side pool resolves in this same cycle.
 for (const l of feed.early.slice(0, 8)) if (l.gateOk && l.ignitedAfterMin != null && !l.sidePools.length && l.curvePoolId && (l.creatorTaxBps == null || l.creatorTaxBps <= 100)) await curveKey(l.curvePoolId as `0x${string}`);
 const dyn = dynamicAssets(feed);
-const heldDyn = Object.values(dyn).filter((a) => (chain?.bySymbol[a.symbol] ?? 0) > 0);
+const heldDyn = Object.values(dyn).filter((a) => isHolding(chain?.bySymbol[a.symbol]));
 const pos = positions(book.flows, bookTrades, chain?.bySymbol ?? mark.holdings, prices).positions;
 const heldCandidates = heldDyn.map((a) => {
   const p = pos.find((x) => x.asset === a.symbol);

@@ -19,7 +19,7 @@ import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { recordTrade, readBook, latestTrades, type Trade } from "./book.ts";
 import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx } from "./signer.ts";
 import { WALLET_ADDRESS } from "../config.ts";
-import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, type FeedSnapshot } from "./candidates.ts";
+import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
 import { readTape, tapeStats } from "./tape.ts";
 import { readEntries, recordClose } from "./trade-memory.ts";
@@ -404,7 +404,7 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
   const pos = positions(book.flows, allTrades, balances, prices).positions;
   for (const a of Object.values(dyn)) {
     const held = balances[a.symbol] ?? 0;
-    if (!(held > 0) || !a.candidate) continue;
+    if (!isHolding(held) || !a.candidate) continue;
     const p = pos.find((x) => x.asset === a.symbol);
     const hourly = feed.hourly[a.candidate.poolId.toLowerCase()] ?? [];
     const buys = allTrades.filter((t) => t.to.asset === a.symbol && (t.status === "settled" || t.status === "pending"));

@@ -133,6 +133,11 @@ export function curvePoolIdFor(token: `0x${string}`, pairSymbol: string | null, 
 }
 
 /** PURE: the feed's tail parsed into current candidates and per-pool hourly stats. Bad lines are skipped. */
+/** PURE: whether a balance is a position or the dust a full sell leaves behind (OBS_DUST_QTY, whole units). A billionth of a token is not a holding, not an exit and not a slot taken. */
+export function isHolding(qty: number | null | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  return (qty ?? 0) > Number(env.OBS_DUST_QTY ?? 1e-6);
+}
+
 /** PURE: how old a token is now, from a row's hour-since-launch and the row's own age. */
 export function tokenAgeMs(hour: number, rowAt: number, now: number): number {
   return Math.max(0, hour) * 3600e3 + Math.max(0, now - rowAt);
