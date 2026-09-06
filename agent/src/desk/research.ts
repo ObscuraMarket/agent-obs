@@ -10,7 +10,7 @@ import { DRY } from "../config.ts";
 
 export const RESEARCH_LEDGER = "obs-research.jsonl";
 
-export type ResearchKind = "launch" | "ignited" | "watch" | "dropped" | "entry" | "holders" | "launch-read" | "trigger" | "decision";
+export type ResearchKind = "launch" | "ignited" | "watch" | "dropped" | "entry" | "holders" | "launch-read" | "trigger" | "decision" | "scout";
 
 export interface ResearchEvent {
   at: number;
@@ -62,6 +62,8 @@ export function researchLine(e: ResearchInput): string {
       return `${s} gave an entry: ${e.note}. Thinking now.`;
     case "decision":
       return `Decided: ${e.note}`;
+    case "scout":
+      return `Scout: ${e.note}`;
   }
 }
 

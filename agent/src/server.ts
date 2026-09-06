@@ -23,6 +23,7 @@ import { poolRead } from "./obscura/pools.ts";
 import { readThoughts, type Thought } from "./desk/thoughts.ts";
 import { digestThought, watchEvent, type WatchEvent } from "./desk/digest.ts";
 import { readResearch } from "./desk/research.ts";
+import { readScout } from "./desk/scout.ts";
 import { readAgentToken, type AgentTokenRead } from "./desk/agentToken.ts";
 import { AGENT_TOKEN } from "./config.ts";
 
@@ -643,7 +644,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   if (path === "/api/obs/signals") {
     // What the desk is watching and how close each is to acting: the last computed strip, with a fresh heartbeat.
     if (!signalsCache) void refreshSignals();
-    json(res, 200, { ...(signalsCache?.value ?? { pending: true, candidates: [], early: [], tapes: [], launch: null, basis: null, reference: null, ratio: null, session: null, market: null }), live: liveBlock(now), at: now });
+    json(res, 200, { ...(signalsCache?.value ?? { pending: true, candidates: [], early: [], tapes: [], launch: null, basis: null, reference: null, ratio: null, session: null, market: null }), live: liveBlock(now), scout: readScout(), at: now });
     return;
   }
   if (path === "/api/obs/market") {

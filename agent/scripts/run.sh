@@ -54,7 +54,9 @@ tsx src/desk/screenerpull.ts &
 SCREENER=$!
 tsx src/desk/launchpull.ts &
 LAUNCH=$!
-trap 'log "stopping"; kill $API $LIVE $FEED $SCREENER $LAUNCH 2>/dev/null; exit 0' TERM INT
+tsx src/desk/scoutpull.ts &
+SCOUT=$!
+trap 'log "stopping"; kill $API $LIVE $FEED $SCREENER $LAUNCH $SCOUT 2>/dev/null; exit 0' TERM INT
 
 # 4. The loops, on a one-minute tick so each cadence keeps its own clock.
 next_desk=0; next_post=0; next_engage=0
@@ -75,6 +77,7 @@ while true; do
   if ! kill -0 $FEED 2>/dev/null; then log "feed puller exited; restarting it"; tsx src/desk/feedpull.ts & FEED=$!; fi
   if ! kill -0 $SCREENER 2>/dev/null; then log "screener poller exited; restarting it"; tsx src/desk/screenerpull.ts & SCREENER=$!; fi
   if ! kill -0 $LAUNCH 2>/dev/null; then log "launch poller exited; restarting it"; tsx src/desk/launchpull.ts & LAUNCH=$!; fi
+  if ! kill -0 $SCOUT 2>/dev/null; then log "scout exited; restarting it"; tsx src/desk/scoutpull.ts & SCOUT=$!; fi
   sleep 60 &
   wait $!
 done

@@ -18,6 +18,7 @@ import { entryRead, entryRulesFromEnv } from "./entry.ts";
 import { liveReads, walletBalances } from "../obscura/reads.ts";
 import { readPaper, paperBalances } from "./paper.ts";
 import { readBook, boughtSymbols } from "./book.ts";
+import { readScout } from "./scout.ts";
 import { triggersFor, watchRulesFromEnv, heartbeatLine, type WatchState, type Role } from "./watch.ts";
 
 const POLL_MS = Number(process.env.OBS_LIVE_POLL_MS ?? 3000);
@@ -150,7 +151,11 @@ async function step(now: number): Promise<void> {
     const key = !l.sidePools.length && l.curvePoolId ? await curveKey(l.curvePoolId as `0x${string}`) : null;
     if (earlyAsCandidate(l, now, wantIgnition, key)) add(l.symbol, "launch");
   }
-  for (const c of feed.candidates.filter((x) => x.stable?.stable || (x.record && x.record.vol1 > 0)).slice(0, 6)) add(c.symbol, "stable");
+  // The scout's ranking fills the survivor slots when it is fresh (under fifteen minutes); the board's own order otherwise.
+  const scout = readScout();
+  const scoutFresh = scout.ranked.length > 0 && now - scout.at < 15 * 60e3;
+  const survivors = scoutFresh ? scout.ranked.map((r) => r.symbol) : feed.candidates.filter((x) => x.stable?.stable || (x.record && x.record.vol1 > 0)).map((c) => c.symbol);
+  for (const symbol of survivors.slice(0, 6)) add(symbol, "stable");
   const items: Array<{ symbol: string; role: Role; spec: NonNullable<ReturnType<typeof dynamicPoolSpec>> }> = [];
   for (const { symbol, role } of inPlay.slice(0, MAX_WATCH)) {
     const a = resolveAny(`${symbol}@robinhood`, feed);

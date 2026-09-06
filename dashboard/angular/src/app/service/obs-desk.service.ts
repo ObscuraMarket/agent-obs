@@ -119,7 +119,7 @@ export interface ObsAgentToken {
 /** One line of the research log: what the desk learned about a token, as it learned it (stream event `research`, endpoint `/api/obs/research`). */
 export interface ObsResearchEvent {
   at: number;
-  kind: 'launch' | 'ignited' | 'watch' | 'dropped' | 'entry' | 'holders' | 'launch-read' | 'trigger' | 'decision';
+  kind: 'launch' | 'ignited' | 'watch' | 'dropped' | 'entry' | 'holders' | 'launch-read' | 'trigger' | 'decision' | 'scout';
   symbol: string;
   ok: boolean | null;
   note: string;
