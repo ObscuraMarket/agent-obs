@@ -162,6 +162,16 @@ if (process.env.OBS_TICK === "fast" && !DRY) {
     console.log(`[desk] fast tick: nothing in play${skipped.length ? ` (${skipped.join(", ")}: no entry on the tape)` : ""}, no model call`);
     process.exit(0);
   }
+  // A plain held review (the timer, not a break in the tape) has done its job above: the rails' exits ran. The model
+  // writes a review of a position every OBS_HELD_THINK_MIN minutes, not every look; a tape that breaks still thinks at once.
+  const trigger = process.env.OBS_LIVE_TRIGGER ?? "";
+  const plainReview = trigger === "" || /^held /.test(trigger);
+  const heldThinkMin = Number(process.env.OBS_HELD_THINK_MIN ?? 10);
+  const lastWrite = readThoughts(1)[0];
+  if (!probeable && holding && plainReview && lastWrite && (now - lastWrite.at) / 60000 < heldThinkMin) {
+    console.log(`[desk] fast tick: held review, the exits were checked; the last write-up was ${((now - lastWrite.at) / 60000).toFixed(0)}m ago and the next comes at ${heldThinkMin}m, no model call`);
+    process.exit(0);
+  }
   console.log(`[desk] fast tick: ${probeable ? `${probeable} has an entry (${entryWhy})` : "a launch token is held"}, thinking`);
 }
 
