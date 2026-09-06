@@ -1,8 +1,32 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { balancesFrom, holderRead, holdersLine, holderRulesFromEnv, type TransferRow } from "../src/desk/holders.ts";
+import { balancesFrom, holderRead, holdersLine, holderRulesFromEnv, holderReadFromList, type TransferRow, type ExplorerHolder } from "../src/desk/holders.ts";
 
 const R = holderRulesFromEnv({} as NodeJS.ProcessEnv);
+
+test("a token with days of trading is read from the explorer's holder list: contracts set aside, people counted, no first buyers asked", () => {
+  // 69 on 2026-09-06: the transfer scan reached back hours and saw 0 wallets; the explorer knows 412 holders.
+  const list: ExplorerHolder[] = [
+    { address: "0xp00l000000000000000000000000000000000001", isContract: true, balance: 400_000_000 },
+    { address: "0x1ock000000000000000000000000000000000002", isContract: true, balance: 150_000_000 },
+    { address: "0xaaaa000000000000000000000000000000000003", isContract: false, balance: 60_000_000 },
+    { address: "0xbbbb000000000000000000000000000000000004", isContract: false, balance: 40_000_000 },
+    { address: "0xcccc000000000000000000000000000000000005", isContract: false, balance: 30_000_000 },
+    ...Array.from({ length: 12 }, (_, i) => ({ address: `0xdddd0000000000000000000000000000000000${(10 + i).toString(16)}`, isContract: false, balance: 10_000_000 })),
+  ];
+  const rules = holderRulesFromEnv({ OBS_HOLDERS_MAX_TOP1_PCT: "50", OBS_HOLDERS_MAX_TOP10_PCT: "97" } as NodeJS.ProcessEnv);
+  const h = holderReadFromList(list, 412, "SIXTYNINE", "0x69", 1_788_650_000_000, rules);
+  assert.equal(h.ok, true, h.why);
+  assert.equal(h.wallets, 412);
+  assert.ok(Math.abs((h.top1Pct as number) - 24) < 0.5, `the largest wallet among people: ${h.top1Pct}`);
+  assert.ok((h.top10Pct as number) < 97);
+  assert.equal(h.bundlePct, null, "the first buyers are a launch-day question");
+  assert.match(h.why, /412 wallets by the explorer/);
+  assert.match(h.why, /2 contracts among the largest holders set aside/);
+  const few = holderReadFromList(list.slice(0, 4), 12, "SIXTYNINE", "0x69", 1_788_650_000_000, rules);
+  assert.equal(few.ok, false);
+  assert.match(few.why, /12 wallets \(30 needed\); the largest wallet holds 60%/);
+});
 const now = 1_800_000_000_000;
 const POOL = "0xpool";
 const TOKEN = "0xtoken";

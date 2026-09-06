@@ -24,7 +24,7 @@ import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCh
 import { stockReference } from "../obscura/stockRef.ts";
 import { updateTape, tapeStats, tapeLine } from "./tape.ts";
 import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry.ts";
-import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, contractsAmong, type HolderRead } from "./holders.ts";
+import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, contractsAmong, explorerHolders, holderReadFromList, type HolderRead } from "./holders.ts";
 import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
 import { readLaunch, launchLine, launchRulesFromEnv, launchRulesForRecord, type LaunchRead } from "./launch.ts";
 import { autoEntryPick, autoEntryFor } from "./autoentry.ts";
@@ -304,19 +304,38 @@ for (const [sym, a] of inPlay) {
   tapes.push(entryLine(er));
   try {
     const launchAt = feed.early.find((x) => x.symbol === sym)?.at ?? feed.candidates.find((x) => x.symbol === sym)?.at ?? null;
-    const transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);
-    // Contracts among the largest holders (a pool, a locker, a vesting or treasury contract) are set aside with the
-    // infrastructure: the concentration the read fears is people who can sell, and the line says what was set aside.
+    const candForAge = feed.candidates.find((x) => x.symbol === sym);
+    const ageH = candForAge ? (Math.max(0, candForAge.hour) * 3600e3 + Math.max(0, now - candForAge.at)) / 3600e3 : 0;
     const infraBase = infrastructureAddresses([a.candidate.curve?.hookAddress]);
-    const baseSet = new Set(infraBase.map((x) => x.toLowerCase()));
-    const largest = [...balancesFrom(transfers).entries()].filter(([addr, v]) => v > 0 && !baseSet.has(addr)).sort((x, y) => y[1] - x[1]).slice(0, 12).map(([addr]) => addr);
-    const contracts = transfers.length && largest.length ? await contractsAmong(largest) : [];
-    const infra = [...infraBase, ...contracts];
-    const infraSet = new Set(infra.map((x) => x.toLowerCase()));
-    const top = largest.filter((addr) => !infraSet.has(addr)).slice(0, 10);
-    const counts = transfers.length && top.length ? await txCounts(top) : null;
-    const hr = holderRead(transfers, sym, a.contract ?? "", now, holderRules, infra, counts);
-    if (contracts.length) hr.why += ` (${contracts.length} contract${contracts.length > 1 ? "s" : ""} among the largest holders set aside as infrastructure)`;
+    let hr: HolderRead;
+    let transfers: Awaited<ReturnType<typeof updateTransfers>> = [];
+    let top: string[] = [];
+    if (ageH >= recordAgeH && a.contract) {
+      // A token with days of trading: the explorer's holder list, not a transfer scan that reaches back hours and
+      // would count a handful of wallets. Falls back to the scan if the explorer does not answer.
+      try {
+        const x = await explorerHolders(a.contract);
+        hr = holderReadFromList(x.list, x.holders, sym, a.contract, now, holderRules, infraBase);
+        top = x.list.filter((h) => !h.isContract).sort((p, q) => q.balance - p.balance).slice(0, 10).map((h) => h.address);
+      } catch {
+        transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);
+        hr = holderRead(transfers, sym, a.contract, now, holderRules, infraBase, null);
+        hr.why += " (the explorer did not answer; read from recent transfers)";
+      }
+    } else {
+      transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);
+      // Contracts among the largest holders (a pool, a locker, a vesting or treasury contract) are set aside with the
+      // infrastructure: the concentration the read fears is people who can sell, and the line says what was set aside.
+      const baseSet = new Set(infraBase.map((x) => x.toLowerCase()));
+      const largest = [...balancesFrom(transfers).entries()].filter(([addr, v]) => v > 0 && !baseSet.has(addr)).sort((x, y) => y[1] - x[1]).slice(0, 12).map(([addr]) => addr);
+      const contracts = transfers.length && largest.length ? await contractsAmong(largest) : [];
+      const infra = [...infraBase, ...contracts];
+      const infraSet = new Set(infra.map((x) => x.toLowerCase()));
+      top = largest.filter((addr) => !infraSet.has(addr)).slice(0, 10);
+      const counts = transfers.length && top.length ? await txCounts(top) : null;
+      hr = holderRead(transfers, sym, a.contract ?? "", now, holderRules, infra, counts);
+      if (contracts.length) hr.why += ` (${contracts.length} contract${contracts.length > 1 ? "s" : ""} among the largest holders set aside as infrastructure)`;
+    }
     holderReads.set(sym, hr);
     if (hr.transfers > 0) recordResearch({ kind: "holders", symbol: sym, ok: hr.ok, note: hr.ok ? `${hr.wallets} wallets, largest ${hr.top1Pct == null ? "?" : `${Math.round(hr.top1Pct)}%`}, top ten ${hr.top10Pct == null ? "?" : `${Math.round(hr.top10Pct)}%`}` : shortWhy(hr.why) });
     tapes.push(holdersLine(hr));

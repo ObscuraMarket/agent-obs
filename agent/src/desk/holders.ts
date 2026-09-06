@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { createPublicClient, http, parseAbi, decodeEventLog } from "viem";
-import { DATA_DIR, RPC_URL } from "../config.ts";
+import { DATA_DIR, RPC_URL, EXPLORER_URL } from "../config.ts";
 import { chainMemory } from "../obscura/pools.ts";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
@@ -241,6 +241,48 @@ export async function contractsAmong(addresses: string[]): Promise<string[]> {
       if (codeKnown.get(k)) out.push(k);
     }),
   );
+  return out;
+}
+
+/** One holder as the explorer lists it. */
+export interface ExplorerHolder { address: string; isContract: boolean; balance: number }
+
+/**
+ * PURE: the holder read for a token with days of trading, from the explorer's holder list rather than a transfer
+ * scan that reaches back hours. Wallets is the explorer's count; the largest wallet and the top ten are shares of
+ * what people hold, with contracts (pools, lockers, vesting) and the infrastructure set aside. The first buyers are
+ * a launch-day question and are not asked.
+ */
+export function holderReadFromList(list: ExplorerHolder[], holdersCount: number, symbol: string, token: string, now: number, r: HolderRules, infrastructure: string[] = []): HolderRead {
+  const infra = new Set([ZERO, DEAD, token.toLowerCase(), ...infrastructure.map((a) => a.toLowerCase())]);
+  const people = list.filter((h) => !h.isContract && !infra.has(h.address.toLowerCase()) && h.balance > 0).sort((a, b) => b.balance - a.balance);
+  const contracts = list.filter((h) => h.isContract && !infra.has(h.address.toLowerCase()));
+  const circulating = people.reduce((s, h) => s + h.balance, 0);
+  const top1Pct = circulating > 0 && people.length ? (people[0].balance / circulating) * 100 : null;
+  const top10Pct = circulating > 0 ? (people.slice(0, 10).reduce((s, h) => s + h.balance, 0) / circulating) * 100 : null;
+  const base: HolderRead = { symbol, token, at: now, transfers: list.length, wallets: holdersCount, top1Pct, top10Pct, earlyBuyers: 0, earlySameBlock: 0, earlySameSize: 0, bundlePct: null, freshTop10: null, infra: [...infra, ...contracts.map((c) => c.address.toLowerCase())], ok: true, why: "" };
+  const fails: string[] = [];
+  if (holdersCount < r.minWallets) fails.push(`${holdersCount} wallets (${r.minWallets} needed)`);
+  if (top1Pct != null && top1Pct > r.maxTop1Pct) fails.push(`the largest wallet holds ${top1Pct.toFixed(0)}% (${r.maxTop1Pct}% allowed)`);
+  if (top10Pct != null && top10Pct > r.maxTop10Pct) fails.push(`the top ten hold ${top10Pct.toFixed(0)}% (${r.maxTop10Pct}% allowed)`);
+  const aside = contracts.length ? ` (${contracts.length} contract${contracts.length > 1 ? "s" : ""} among the largest holders set aside as infrastructure)` : "";
+  if (fails.length) return { ...base, ok: false, why: fails.join("; ") + aside };
+  return { ...base, ok: true, why: `${holdersCount} wallets by the explorer, largest ${top1Pct?.toFixed(0) ?? "?"}%, top ten ${top10Pct?.toFixed(0) ?? "?"}% of what people hold; a token with days of trading, so the first buyers are not asked${aside}` };
+}
+
+const explorerCache = new Map<string, { at: number; list: ExplorerHolder[]; holders: number }>();
+/** The explorer's holder count and its top holders for a token, cached ten minutes. Throws when the explorer does not answer. */
+export async function explorerHolders(token: string, ttlMs = 10 * 60e3): Promise<{ list: ExplorerHolder[]; holders: number }> {
+  const k = token.toLowerCase();
+  const c = explorerCache.get(k);
+  if (c && Date.now() - c.at < ttlMs) return c;
+  const headers = { "User-Agent": UA, accept: "application/json" };
+  const info = (await (await fetch(`${EXPLORER_URL}/api/v2/tokens/${token}`, { headers, signal: AbortSignal.timeout(8000) })).json()) as { holders?: string | number; decimals?: string | number };
+  const decimals = Number(info.decimals ?? 18);
+  const page = (await (await fetch(`${EXPLORER_URL}/api/v2/tokens/${token}/holders`, { headers, signal: AbortSignal.timeout(8000) })).json()) as { items?: Array<{ address?: { hash?: string; is_contract?: boolean }; value?: string | number }> };
+  const list: ExplorerHolder[] = (page.items ?? []).map((h) => ({ address: String(h.address?.hash ?? "").toLowerCase(), isContract: !!h.address?.is_contract, balance: Number(h.value ?? 0) / 10 ** decimals })).filter((h) => h.address);
+  const out = { at: Date.now(), list, holders: Number(info.holders ?? 0) };
+  explorerCache.set(k, out);
   return out;
 }
 
