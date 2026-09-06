@@ -1120,7 +1120,12 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     }
     if (before) { term.insertBefore(it.row, before); } else { term.appendChild(it.row); }
     while (term.children.length > TERM_LINE_CAP) { term.removeChild(term.firstChild as Node); }
-    if (!it.animate) {
+    // The typewriter must never fall behind the desk. When lines are waiting behind this one, or this one is already
+    // more than a few seconds old, it is drawn at once; only a fresh line with nothing queued behind it is typed.
+    // Until 2026-09-06 every line was typed at 9 ms a character and the queue grew all day, so the terminal sat
+    // minutes to an hour behind a desk that the stream had delivered within a second.
+    const backlog = this.termQueue.length > 2 || (Number.isFinite(at) && Date.now() - at > 8000);
+    if (!it.animate || backlog) {
       if (it.node) { it.tx.textContent = ''; it.tx.appendChild(it.node); }
       else
       it.tx.textContent = it.text;
@@ -1130,7 +1135,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     }
     let i = 0;
     const n = it.text.length;
-    const step = n > 180 ? 3 : n > 90 ? 2 : 1;
+    // Any line finishes typing inside about a third of a second, whatever its length.
+    const step = Math.max(1, Math.ceil(n / 40));
     const tick = () => {
       i = Math.min(n, i + step);
       it.tx.textContent = it.text.slice(0, i);
