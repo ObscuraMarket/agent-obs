@@ -18,7 +18,7 @@ import { ASSETS, assetKey, chainOf, type Asset } from "./assets.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { recordTrade, readBook, latestTrades, boughtSymbols, type Trade } from "./book.ts";
 import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx } from "./signer.ts";
-import { WALLET_ADDRESS } from "../config.ts";
+import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
 import { readTape, tapeStats } from "./tape.ts";
@@ -281,6 +281,9 @@ const balanceOf = (a: Asset): Promise<bigint> => (a.kind === "native" ? readNati
 
 /** The lane: rails, route, quote, floor, encode, simulate, approvals, send, receipt, the row. */
 export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()): Promise<OnChainResult> {
+  // The last check before anything is signed, independent of the rails object handed in: a never-trade contract on
+  // either leg is refused here even if a caller built its own rails.
+  for (const leg of [i.from, i.to]) if (leg.contract && NEVER_TRADE.has(leg.contract.toLowerCase())) return { ok: false, reason: `${leg.symbol} is on the never-trade list; not quoted, not approved, not sent` };
   const gate = checkRails(i, c);
   if (!gate.ok) return { ok: false, reason: gate.reason };
   const q = await quoteOnChain(i.from, i.to, i.amount);
@@ -406,6 +409,7 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
   const bought = boughtSymbols(allTrades);
   for (const a of Object.values(dyn)) {
     const held = balances[a.symbol] ?? 0;
+    if (a.contract && NEVER_TRADE.has(a.contract.toLowerCase())) continue;
     if (!bought.has(a.symbol) || !isHolding(held) || !a.candidate) continue;
     const p = pos.find((x) => x.asset === a.symbol);
     const hourly = feed.hourly[a.candidate.poolId.toLowerCase()] ?? [];

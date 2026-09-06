@@ -45,8 +45,13 @@ export const RPC_URL = process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.cha
 export const OBS_CONTRACT = (process.env.OBS_CONTRACT || "0xfe242d1da8fd04f6a1f80b6d3d807b02e062ad4e").toLowerCase();
 /** The agent's own token (AOBS on Robinhood Chain). Shown on the page; never traded by the desk. */
 export const AGENT_TOKEN = (process.env.OBS_AGENT_TOKEN || "0x47366e0f257ac009e82bd46fb74e2fb50826ce98").toLowerCase();
-/** Contracts the desk never trades, whatever the feed says: its own token, plus OBS_NEVER_TRADE (comma-separated). */
-export const NEVER_TRADE: ReadonlySet<string> = new Set([AGENT_TOKEN, ...(process.env.OBS_NEVER_TRADE ?? "").split(",").map((s) => s.trim().toLowerCase()).filter((s) => /^0x[0-9a-f]{40}$/.test(s))]);
+/**
+ * Contracts the desk never trades, whatever the feed says: its own token (AOBS, which the wallet holds and must
+ * never sell, buy, or approve) and Obscura's $OBS (the desk's flywheel is never pointed at it), plus
+ * OBS_NEVER_TRADE (comma-separated). Enforced where a token enters the board, in the rails on either leg of a
+ * swap, in the exit scan, and once more in the on-chain executor before anything is signed.
+ */
+export const NEVER_TRADE: ReadonlySet<string> = new Set([AGENT_TOKEN, OBS_CONTRACT, ...(process.env.OBS_NEVER_TRADE ?? "").split(",").map((s) => s.trim().toLowerCase()).filter((s) => /^0x[0-9a-f]{40}$/.test(s))]);
 export const SITE_URL = (process.env.OBSCURA_SITE_URL || "https://obscura.market").replace(/\/+$/, "");
 export const API_URL = (process.env.OBSCURA_API_URL || "https://api.obscura.market").replace(/\/+$/, "");
 /** OBS's own wallet, public address only. Empty until scripts/wallet.mjs create has run and the operator set it. */

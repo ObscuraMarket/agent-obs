@@ -163,6 +163,8 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   if (!r.tradingOn) return { ok: false, reason: "trading is off (OBS_TRADING)" };
   if (!(i.amount > 0)) return { ok: false, reason: "amount must be positive" };
   if (assetKey(i.from) === assetKey(i.to)) return { ok: false, reason: "from and to are the same asset" };
+  // Neither leg, entry or exit: the desk's own token sits in its wallet and is never sold, bought, or approved.
+  for (const leg of [i.from, i.to]) if (leg.contract && r.neverTrade.has(leg.contract.toLowerCase())) return { ok: false, reason: `${leg.symbol} is on the never-trade list (the desk's own token, or ${"$"}OBS); neither leg of a swap may be it` };
   if (r.ethBase && !r.basisOn && !i.exit && i.to.symbol === "USDG") return { ok: false, reason: "the book's base is ETH; USDG is a hop on the way to a pool, not a place to park (OBS_BASE)" };
   for (const leg of [i.from, i.to]) if (!r.allowedChains.has(leg.chain)) return { ok: false, reason: `${assetKey(leg)} is on ${leg.chain}; this desk trades on Robinhood Chain only` };
   if (!i.exit) {
