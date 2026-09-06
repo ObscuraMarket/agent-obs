@@ -444,5 +444,6 @@ export function closedTrades(trades: Trade[], events: Array<{ at: number; asset:
 
 /** PURE: ETH handed to the desk net of ETH taken out, the count the wallet is measured against. */
 export function capitalEth(flows: CapitalFlow[]): number {
-  return flows.filter((f) => f.asset.toUpperCase() === "ETH").reduce((s, f) => s + (f.kind === "deposit" ? f.amount : -f.amount), 0);
+  const eth = flows.filter((f) => f.asset.toUpperCase() === "ETH").reduce((s, f) => s + (f.kind === "deposit" ? f.amount : -f.amount), 0);
+  return Math.round(eth * 1e12) / 1e12;
 }
