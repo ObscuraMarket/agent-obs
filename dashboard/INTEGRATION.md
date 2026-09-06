@@ -293,6 +293,9 @@ Additive fields (since September 3):
   `triggerKind` (since September 6) is `entry`, or `held` / `exit` when the
   trigger is a token the desk holds: a review on its cadence, or a break in
   its tape. Tag those as the holding they are, not as an entry.
+- Every clock the page shows is UTC (since September 6), the desk's own
+  clock: its log lines, its trigger text, the API's timestamps and the
+  explorer all speak it. A viewer's local zone beside it reads as an offset.
 - The stream's `ping` event (since September 6): `{ at }` every 25 seconds, so a
   listener can tell a quiet desk from a dead connection; treat 75 seconds of
   silence as dead and reconnect. The `hello` on reconnect carries what was

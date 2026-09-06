@@ -1307,17 +1307,23 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     return v == null ? 'n/a' : Number(v).toLocaleString('en-US', { maximumFractionDigits: digits });
   }
 
+  /**
+   * Every clock on the page is UTC: the desk's own clock, the clock in its log lines and trigger text, the API's
+   * timestamps and the explorer's. One clock for a global audience; a viewer's local zone next to the desk's read
+   * as "off by" whatever the offset was.
+   */
   when(ts: number): string {
     const d = new Date(ts), now = new Date();
     const pad = (n: number) => (n < 10 ? '0' : '') + n;
-    const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    return d.toDateString() === now.toDateString() ? t : `${MONTHS[d.getMonth()]} ${d.getDate()}, ${t}`;
+    const t = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+    const sameDay = d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth() && d.getUTCDate() === now.getUTCDate();
+    return sameDay ? t : `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${t}`;
   }
 
   clock(ts: number): string {
     const d = new Date(ts);
     const pad = (n: number) => (n < 10 ? '0' : '') + n;
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
   }
 
   /** Uppercase the first letter of every word, leaving the rest untouched ("2h ago" -> "2h Ago"). */

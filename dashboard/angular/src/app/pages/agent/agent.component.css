@@ -1768,3 +1768,16 @@ table.tbl {
 .box.copy:hover .val {
   color: var(--lime);
 }
+
+/* The terminal's clock, named: every time on the page is UTC. */
+.term-head { display: flex; align-items: center; gap: 10px; }
+.term-head .tz {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .12em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  padding: 2px 7px;
+  border-radius: 3px;
+}
