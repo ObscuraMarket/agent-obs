@@ -1,7 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decodeAbiParameters, decodeFunctionData, parseAbi } from "viem";
-import { routeFor, exactInWithinTick, encodeSwap, NATIVE, currencyOf } from "../src/desk/onchain.ts";
+import { routeFor, exactInWithinTick, encodeSwap, NATIVE, currencyOf, clampToBalanceRaw } from "../src/desk/onchain.ts";
+
+test("a sell never asks for more than the wallet holds: the book's float of the balance is clamped to the raw balance", () => {
+  // ZZZ on 2026-09-06: the book said 3214.471565954562, the wallet held 409,069 wei less, and the sell reverted with TRANSFER_FROM_FAILED.
+  const balance = 3214471565954561590931n;
+  const asked = 3214471565954562000000n;
+  assert.equal(clampToBalanceRaw(asked, balance), balance);
+  assert.equal(clampToBalanceRaw(1000n, balance), 1000n, "a partial sell is untouched");
+  assert.equal(clampToBalanceRaw(asked, 0n), 0n, "nothing held, nothing sent");
+});
 import { resolveAsset } from "../src/desk/assets.ts";
 
 const ETH = resolveAsset("ETH@robinhood")!;

@@ -153,6 +153,11 @@ export interface PoolQuote {
 
 const toRaw = (v: number, decimals: number): bigint => BigInt(Math.round(v * 10 ** Math.min(decimals, 9))) * 10n ** BigInt(Math.max(decimals - 9, 0));
 const fromRaw = (v: bigint, decimals: number): number => Number(v) / 10 ** decimals;
+/** PURE: never send more than the wallet holds. A float of the balance can round a few hundred wei above it, and a transfer of one wei too many reverts the sell. */
+export function clampToBalanceRaw(amountRaw: bigint, balanceRaw: bigint): bigint {
+  if (balanceRaw <= 0n) return 0n;
+  return amountRaw > balanceRaw ? balanceRaw : amountRaw;
+}
 
 /** The route quoted from live pool state. Null when a pool did not answer. */
 export async function quoteOnChain(from: Asset, to: Asset, amountIn: number, slippagePct = SLIPPAGE_PCT): Promise<PoolQuote | null> {
@@ -283,10 +288,20 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   const floor = costFloorPct(i, c.rails.minFillRatio);
   if (!i.exit && q.costPct != null && q.costPct > floor) return { ok: false, reason: `the pool route costs ${q.costPct.toFixed(2)}% against the mark; the floor is ${floor.toFixed(1)}%` };
   const deadline = BigInt(Math.floor(now / 1000) + 20 * 60);
-  const tx = encodeSwap(q.route, q.amountInRaw, q.minOutRaw, WALLET_ADDRESS as `0x${string}`, deadline);
+  // An ERC-20 from-leg is clamped to the wallet's exact raw balance: the book's amount is a float of the balance and
+  // can sit a few hundred wei above it, and a transfer of one wei more than the wallet holds reverts the whole sell.
+  let amountInRaw = q.amountInRaw;
+  if (i.from.kind === "erc20" && i.from.contract) {
+    try {
+      amountInRaw = clampToBalanceRaw(q.amountInRaw, await readTokenBalance(i.from, i.from.contract as `0x${string}`));
+    } catch { /* the quote's amount stands; the simulation says if it is too much */ }
+    if (amountInRaw <= 0n) return { ok: false, reason: `the wallet holds no ${i.from.symbol} to send` };
+  }
+  const amountIn = amountInRaw === q.amountInRaw ? i.amount : fromRaw(amountInRaw, i.from.decimals);
+  const tx = encodeSwap(q.route, amountInRaw, q.minOutRaw, WALLET_ADDRESS as `0x${string}`, deadline);
   let approvals: string[] = [];
   try {
-    approvals = await ensureAllowances(i.from, q.amountInRaw, now);
+    approvals = await ensureAllowances(i.from, amountInRaw, now);
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
@@ -299,7 +314,7 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     status: "pending",
     venue: "pool",
     ...(i.exit ? { exit: true } : {}),
-    from: { asset: i.from.symbol, network: i.from.network, amount: i.amount, usd: i.usd },
+    from: { asset: i.from.symbol, network: i.from.network, amount: amountIn, usd: i.usd },
     to: { asset: i.to.symbol, network: i.to.network, amount: q.amountOut, usd: q.priceOutUsd != null ? q.amountOut * q.priceOutUsd : null },
     partner: "pool",
     note: `${q.route.hops.map((h) => h.key).join(" then ")} on chain; expected ${q.amountOut} ${i.to.symbol}, floor ${q.minOut}${q.costPct != null ? `, route cost ${q.costPct.toFixed(2)}% (fees ${q.feePct.toFixed(2)}%)` : ""}${approvals.length ? `; approvals ${approvals.join(", ")}` : ""}`,
