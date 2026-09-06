@@ -222,6 +222,28 @@ export function holdersLine(h: HolderRead): string {
   return `Holders ${h.symbol} (${h.transfers} transfers): ${bits.join("; ")}. ${h.ok ? "HOLDERS OK" : `HOLDERS FAIL: ${h.why}`}.`;
 }
 
+/** Which of a few addresses are contracts (a pool, a locker, a vesting or treasury contract), one call each, remembered for the process. An address the chain did not answer for counts as a wallet. */
+const codeKnown = new Map<string, boolean>();
+export async function contractsAmong(addresses: string[]): Promise<string[]> {
+  const pub = createPublicClient({ transport: http(RPC_URL, { fetchOptions: { headers: { "User-Agent": UA } } }) });
+  const out: string[] = [];
+  await Promise.all(
+    addresses.map(async (a) => {
+      const k = a.toLowerCase();
+      if (!codeKnown.has(k)) {
+        try {
+          const code = await pub.getCode({ address: k as `0x${string}` });
+          codeKnown.set(k, !!code && code !== "0x");
+        } catch {
+          /* unread: treated as a wallet */
+        }
+      }
+      if (codeKnown.get(k)) out.push(k);
+    }),
+  );
+  return out;
+}
+
 /** Transaction counts for a few wallets, one call each; a wallet the chain did not answer for is left out. */
 export async function txCounts(addresses: string[]): Promise<Map<string, number>> {
   const pub = createPublicClient({ transport: http(RPC_URL, { fetchOptions: { headers: { "User-Agent": UA } } }) });
