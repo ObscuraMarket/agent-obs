@@ -159,3 +159,13 @@ test("a failed wallet read never becomes a point on the curve, and is not record
   assert.equal(markIsTrustworthy(snap(4000, { ETH: 0.41 }, 1030), good1, ["USDC@erc20"]), true, "an unread asset the book never held does not matter");
   assert.equal(markIsTrustworthy(bad, null, ["ETH@robinhood"]), true, "no previous mark, nothing to contradict");
 });
+
+test("a token that arrived on its own is wallet value, not a position", () => {
+  // 2026-09-06 13:07Z: 0.000062 NVDA landed in the wallet from an outside address; the page listed it as a position and the operator read it as an entry.
+  const flows = [{ at: 1, kind: "deposit" as const, asset: "ETH", amount: 0.4, usd: 948.82 }];
+  const trades = [{ at: 2, id: "n", status: "settled" as const, from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "NSDX", amount: 1_720_174, usd: 100 }, partner: "pool" }];
+  const holdings = { ETH: 0.3657, NSDX: 1_720_174, NVDA: 0.0001 };
+  const p = positions(flows, trades, holdings, { ETH: 2500, NSDX: 0.0000675, NVDA: 231 });
+  assert.deepEqual(p.positions.map((x) => x.asset).sort(), ["ETH", "NSDX"], "NVDA was never bought or deposited");
+  assert.ok(p.positions.every((x) => x.share != null), "shares are of the whole wallet, the NVDA included");
+});

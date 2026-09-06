@@ -335,7 +335,12 @@ export interface Positions {
   events: CostBasis["events"];
 }
 
-/** PURE: every holding as a position with its cost, its mark and its PnL, largest first. */
+/**
+ * PURE: every holding the desk put money into, as a position with its cost, its mark and its PnL, largest first.
+ * A token that arrived on its own (an airdrop, a cashback payout, dust sent by a stranger) is wallet value and
+ * counts in equity, but it is not a position: the desk never bought it and never sells it, and the page must not
+ * present it as an entry.
+ */
 export function positions(flows: CapitalFlow[], trades: Trade[], holdings: Record<string, number>, prices: Prices): Positions {
   const { lots, realized, inFlight, events } = costBasis(flows, trades);
   const total = valueHoldings(holdings, prices).usd;
@@ -343,6 +348,7 @@ export function positions(flows: CapitalFlow[], trades: Trade[], holdings: Recor
   for (const [asset, qty] of Object.entries(holdings)) {
     // Dust after a full sell is not a position: with a pool drained to nothing its price read can be absurd, and a billionth of a token at that price is a nonsense figure on the page.
     if (!(qty > EPS) || (!STABLES.has(asset) && asset !== "ETH" && !isHolding(qty))) continue;
+    if (!STABLES.has(asset) && asset !== "ETH" && !lots[asset.toUpperCase()]) continue;
     const priceUsd = prices[asset] ?? (STABLES.has(asset) ? 1 : null);
     const valueUsd = priceUsd == null ? null : qty * priceUsd;
     const l = lots[asset];
