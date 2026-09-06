@@ -78,7 +78,6 @@ test("wallet balances fold every registered token in, keep unread ones absent, a
   assert.ok(b.unread.includes("USDT@erc20") && b.unread.includes("LINK@erc20") && b.unread.includes("OBS@robinhood"));
   assert.equal(Object.keys(b.byKey).filter((k) => k === "USDC@erc20").length, 1);
   const own = walletBalances({ ...w, own: { symbol: "AOBS", contract: "0x47", qty: 9_900_000 } });
-  assert.equal(own.bySymbol.AOBS, 9_900_000, "the desk's own token is wallet value on the book");
-  assert.equal(own.byKey["AOBS@robinhood"], 9_900_000);
-  assert.ok(walletBalances({ ...w, own: { symbol: "AOBS", contract: "0x47", qty: null } }).unread.includes("AOBS@robinhood"), "unanswered is unread, not zero");
+  assert.equal(own.bySymbol.AOBS, undefined, "the desk's own token is read but never on the book");
+  assert.equal(own.byKey["AOBS@robinhood"], undefined);
 });

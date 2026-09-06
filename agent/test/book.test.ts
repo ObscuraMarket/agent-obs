@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, snapshotFromChain, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince } from "../src/desk/book.ts";
+import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, snapshotFromChain, series, type BookSnapshot, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince } from "../src/desk/book.ts";
 
 test("a mark a thousand times the capital is a price read gone wrong, never the book: not shown, not recorded", () => {
   // SHARD dust after the full sell, priced off the drained pool: equity 1.08e41 on $948.82 of capital.
@@ -170,15 +170,14 @@ test("a token that arrived on its own is wallet value, not a position", () => {
   assert.ok(p.positions.every((x) => x.share != null), "shares are of the whole wallet, the NVDA included");
 });
 
-test("the desk's own token is in equity but not a position", () => {
-  // 2026-09-06: the operator keeps the wallet's AOBS in the equity figure and off the positions list.
-  const flows = [{ at: 1, kind: "deposit" as const, asset: "ETH", amount: 0.4, usd: 948.82 }, { at: 2, kind: "deposit" as const, asset: "AOBS", amount: 9_900_000, usd: 9663 }];
-  const trades = [{ at: 3, id: "n", status: "settled" as const, from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "NSDX", amount: 1_720_174, usd: 100 }, partner: "pool" }];
-  const holdings = { ETH: 0.3657, NSDX: 1_720_174, AOBS: 9_900_000 };
-  const prices = { ETH: 2500, NSDX: 0.0000675, AOBS: 0.00091 };
-  const p = positions(flows, trades, holdings, prices);
-  assert.deepEqual(p.positions.map((x) => x.asset).sort(), ["ETH", "NSDX"], "AOBS is not listed");
-  assert.ok(Math.abs(snapshotFromChain(flows, trades, holdings, prices, 4).equityUsd! - (0.3657 * 2500 + 1_720_174 * 0.0000675 + 9_900_000 * 0.00091)) < 1, "but it is in equity");
-  const eth = p.positions.find((x) => x.asset === "ETH")!;
-  assert.ok((eth.share as number) < 0.1, "shares are of the whole equity, the AOBS included");
+test("a mark that carried the desk's own token is not on the curve and never a stand-in", () => {
+  // 2026-09-06, 13:24 to 13:45Z: the token was on the book for half an hour and its price swings swamped the trading result.
+  const snaps: BookSnapshot[] = [
+    { at: 1, holdings: { ETH: 0.4 }, equityUsd: 1028, inFlightUsd: 0, netCapitalUsd: 948.82, pnlUsd: 79, pnlPct: 0.08, unpriced: [] },
+    { at: 2, holdings: { ETH: 0.4, AOBS: 9_900_000 }, equityUsd: 10040, inFlightUsd: 0, netCapitalUsd: 10611.82, pnlUsd: -571, pnlPct: -0.05, unpriced: [] },
+    { at: 3, holdings: { ETH: 0.4 }, equityUsd: 1031, inFlightUsd: 0, netCapitalUsd: 948.82, pnlUsd: 82, pnlPct: 0.09, unpriced: [] },
+  ];
+  assert.deepEqual(series(snaps, 100, 10).map((p) => p.at), [1, 3]);
+  assert.equal(latestSaneMark(snaps.slice(0, 2))!.at, 1, "the stand-in is the last mark of the book, not the token's");
+  assert.deepEqual(positions([], [], { ETH: 0.4, AOBS: 9_900_000 }, { ETH: 2500, AOBS: 0.001 }).positions.map((x) => x.asset), ["ETH"], "never a position");
 });

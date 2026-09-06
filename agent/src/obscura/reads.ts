@@ -93,8 +93,9 @@ export interface WalletRead {
   /** Every registered token balance keyed SYMBOL@network, the named fields above included. Null = the chain did not answer. */
   tokens?: Record<string, number | null>;
   /**
-   * The desk's own token (AOBS), read on its own. It is wallet value: on the book and in equity, booked as capital
-   * when it arrives so it never reads as profit, but not listed as a position, and never on either leg of a swap. Null = not answered.
+   * The desk's own token (AOBS), read on its own and kept out of `tokens` and off the book: not in equity, not on
+   * the curve, not a position, not in the observation, never on either leg of a swap. It was put on the book for
+   * half an hour on 2026-09-06 and taken off: its price swings swamped the trading result. Null = not answered.
    */
   own?: { symbol: string; contract: string; qty: number | null };
   /** Obscura's own cashback stats for this wallet (GET /rewards/{wallet}). */
@@ -121,8 +122,6 @@ export function walletBalances(w: WalletRead): { byKey: Record<string, number>; 
   ];
   const named = new Set(pairs.map(([k]) => k));
   for (const [k, v] of Object.entries(w.tokens ?? {})) if (!named.has(k)) pairs.push([k, k.split("@")[0], v]);
-  // The desk's own token is wallet value: on the book and in the mark, priced from its pool, never on either leg of a swap.
-  if (w.own) pairs.push([`${w.own.symbol}@robinhood`, w.own.symbol, w.own.qty]);
   const byKey: Record<string, number> = {};
   const bySymbol: Record<string, number> = {};
   const unread: string[] = [];

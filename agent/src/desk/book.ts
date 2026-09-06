@@ -195,13 +195,18 @@ export function saneMark(s: BookSnapshot | null | undefined): boolean {
   return s.equityUsd <= 1000 * Math.max(1, s.netCapitalUsd ?? 1);
 }
 
+/** PURE: a mark that priced the desk's own token (on the book for half an hour on 2026-09-06) is not the book's: not on the curve, never a stand-in. */
+export function carriesOwnToken(s: BookSnapshot): boolean {
+  return Number(s.holdings?.[AGENT_TOKEN_SYMBOL]) > 0;
+}
+
 /** PURE: the latest mark worth showing. */
 export function latestSaneMark(snapshots: BookSnapshot[]): BookSnapshot | null {
-  return snapshots.filter(saneMark).reduce<BookSnapshot | null>((a, b) => (a == null || b.at > a.at ? b : a), null);
+  return snapshots.filter((s) => saneMark(s) && !carriesOwnToken(s)).reduce<BookSnapshot | null>((a, b) => (a == null || b.at > a.at ? b : a), null);
 }
 
 export function series(snapshots: BookSnapshot[], sinceMs: number, now: number): Array<{ at: number; equityUsd: number | null; netCapitalUsd: number; pnlUsd: number | null }> {
-  const sorted = [...snapshots].filter(saneMark).sort((a, b) => a.at - b.at);
+  const sorted = [...snapshots].filter((s) => saneMark(s) && !carriesOwnToken(s)).sort((a, b) => a.at - b.at);
   return sorted
     .filter((s, i) => s.at >= now - sinceMs && !isFailedReadMark(sorted[i - 1], s, sorted[i + 1]))
     // A mark taken before the deposit was recorded has equity but no capital behind it: its PnL would be the whole
@@ -350,7 +355,7 @@ export function positions(flows: CapitalFlow[], trades: Trade[], holdings: Recor
     // Dust after a full sell is not a position: with a pool drained to nothing its price read can be absurd, and a billionth of a token at that price is a nonsense figure on the page.
     if (!(qty > EPS) || (!STABLES.has(asset) && asset !== "ETH" && !isHolding(qty))) continue;
     if (!STABLES.has(asset) && asset !== "ETH" && !lots[asset.toUpperCase()]) continue;
-    // The desk's own token is in equity (the wallet's value, booked as capital) but not a position: it is never traded.
+    // The desk's own token is never a position, whatever the balances say: it is off the book and never traded.
     if (asset.toUpperCase() === AGENT_TOKEN_SYMBOL) continue;
     const priceUsd = prices[asset] ?? (STABLES.has(asset) ? 1 : null);
     const valueUsd = priceUsd == null ? null : qty * priceUsd;

@@ -6,8 +6,6 @@
 // proposal. Meant to run on a timer (launchd, see scripts/). DRY_RUN=1 runs
 // the model call and writes nothing, and never executes.
 import { GatewayClient } from "@openhermit/sdk";
-import { AGENT_TOKEN_SYMBOL } from "../config.ts";
-import { lastAgentTokenPrice } from "./agentToken.ts";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { AGENT_ID, DRY, dataPath } from "../config.ts";
 import { liveReads, assetPrices, walletBalances } from "../obscura/reads.ts";
@@ -195,7 +193,7 @@ if (chain) for (const sym of soldThisCycle) { chain.bySymbol[sym] = 0; chain.byK
 const bookTrades = PAPER ? [...book.trades, ...paperTrades] : book.trades;
 const symbols = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, bookTrades, {}, now).holdings);
 // ETH and NVDA are priced every cycle whether or not they are held: the basis and the samples need them.
-const prices = await assetPrices([...new Set([...symbols, "ETH", ...(BASIS_ON ? ["NVDA"] : [])])], { OBS: reads.market?.priceUsd ?? null, [AGENT_TOKEN_SYMBOL]: lastAgentTokenPrice() });
+const prices = await assetPrices([...new Set([...symbols, "ETH", ...(BASIS_ON ? ["NVDA"] : [])])], { OBS: reads.market?.priceUsd ?? null });
 const mark = chain ? snapshotFromChain(book.flows, bookTrades, chain.bySymbol, prices, now) : snapshot(book.flows, bookTrades, prices, now);
 const open = latestTrades(book.trades).filter((t) => t.status === "pending" || t.status === "proposed");
 // Obscura quotes only the legs it routes (no USDG leg quotes there); the pools quote every Robinhood leg.
