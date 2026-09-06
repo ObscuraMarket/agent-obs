@@ -65,6 +65,8 @@ export interface ScreenerRules {
   minCapUsd: number;
   /** A token above this market cap is not bought: a clip the desk's size can move nothing there. Zero: no ceiling. */
   maxCapUsd: number;
+  /** A token below this market cap is not bought either: under it a pool is too thin to leave. Zero: no floor. */
+  entryCapMinUsd: number;
 }
 export function screenerRulesFromEnv(env: NodeJS.ProcessEnv = process.env): ScreenerRules {
   const n = (k: string, d: number) => Number(env[k] ?? d);
@@ -76,6 +78,7 @@ export function screenerRulesFromEnv(env: NodeJS.ProcessEnv = process.env): Scre
     minSixHourShare: n("OBS_SCREENER_MIN_SIX_HOUR_SHARE", 0.1),
     minCapUsd: n("OBS_SCREENER_MIN_CAP_USD", 1_000_000),
     maxCapUsd: n("OBS_SCREENER_MAX_CAP_USD", 50_000_000),
+    entryCapMinUsd: n("OBS_SCREENER_ENTRY_CAP_MIN_USD", 0),
   };
 }
 

@@ -2,6 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseFeed, deriveTickSpacing, poolIdFor, curvePoolIdFor, exitSignal, exitVerdict, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs, isHolding } from "../src/desk/candidates.ts";
 
+test("the tape roll-over exit can be switched off for a hunt for a multiple, where every hour has three falling buckets", () => {
+  const r = { candidateMaxHoldH: 24, candidateFloorPct: 30, candidateVolumeDropPct: 100, candidateTakeProfitPct: 100, candidateTakeProfitShare: 0.3, candidateTrailArmPct: 50, candidateTrailPct: 30 };
+  const unpaid = { ageH: 2, pnlPct: 12, hourly: [], peakPnlPct: 12, tookProfit: false, tapeTrend: "rolling over" as const, tapeBuyPressurePct: 48 };
+  assert.equal(exitVerdict(unpaid, r)?.kind, "volume", "on by default: an unpaid trade leaves when the tape rolls over");
+  assert.equal(exitVerdict(unpaid, { ...r, tapeRolloverExit: false }), null, "off: it rides");
+  assert.equal(exitVerdict({ ...unpaid, pnlPct: -31 }, { ...r, tapeRolloverExit: false })?.kind, "floor", "the floor still holds");
+  assert.equal(exitVerdict({ ...unpaid, pnlPct: 120, peakPnlPct: 120 }, { ...r, tapeRolloverExit: false })?.kind, "take-profit", "and so does the scale-out at +100%");
+  assert.equal(exitVerdict({ ...unpaid, pnlPct: 40, peakPnlPct: 110, tookProfit: true }, { ...r, tapeRolloverExit: false })?.kind, "trail", "and the trail once the trade has run: a third off a +110% peak");
+});
+
 test("dust after a full sell is not a holding: it takes no slot, triggers no exit and is not on the watch", () => {
   // SHARD on 2026-09-06: 3.18e-10 left after the take-profit sold everything, and it blocked the next entry as a second position.
   assert.equal(isHolding(3.18394308e-10), false);

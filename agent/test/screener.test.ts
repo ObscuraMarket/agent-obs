@@ -51,6 +51,13 @@ test("a survivor becomes a grade B candidate with its record as the reason, unde
   const huge = { ...t, capUsd: 242_000_000, pool: pool({ capUsd: 242_000_000 }) };
   assert.equal(screenerCandidates([huge], now, opts, {} as NodeJS.ProcessEnv).length, 0, "a $242M token is not bought with a $100 clip");
   assert.equal(screenerCandidates([huge], now, opts, { OBS_SCREENER_MAX_CAP_USD: "0" } as unknown as NodeJS.ProcessEnv).length, 1);
+  // The small-cap hunt: a range with a floor as well as a ceiling, and a record scaled to it.
+  const small = { OBS_SCREENER_ENTRY_CAP_MIN_USD: "20000", OBS_SCREENER_MAX_CAP_USD: "100000", OBS_SCREENER_MIN_VOL24_USD: "20000", OBS_SCREENER_MIN_VOL1H_USD: "1000", OBS_SCREENER_MIN_TXNS24: "200", OBS_SCREENER_MIN_LIQ_USD: "8000" } as unknown as NodeJS.ProcessEnv;
+  const tiny = (cap: number) => ({ ...t, capUsd: cap, pool: pool({ capUsd: cap, vol24: 45_000, vol6: 9_000, vol1: 2_100, txns24: 640, liqUsd: 11_000 }) });
+  assert.equal(screenerCandidates([tiny(62_000)], now, opts, small).length, 1, "a $62k token with a day of small trade is in the range");
+  assert.equal(screenerCandidates([tiny(12_000)], now, opts, small).length, 0, "under the floor a pool is too thin to leave");
+  assert.equal(screenerCandidates([tiny(240_000)], now, opts, small).length, 0, "over the ceiling the multiple is not there");
+  assert.equal(screenerCandidates([tiny(62_000)], now, opts, {} as NodeJS.ProcessEnv).length, 0, "at the big-cap record rule the same token fails on volume");
   // Too young for the floor: not a candidate. No key yet: not a candidate. Quiet last hour: on the board but below the bar.
   assert.equal(screenerCandidates([{ ...t, launchAt: now - 20 * 3600e3 }], now, opts, {} as NodeJS.ProcessEnv).length, 0);
   assert.equal(screenerCandidates([{ ...t, key: null }], now, opts, {} as NodeJS.ProcessEnv).length, 0);

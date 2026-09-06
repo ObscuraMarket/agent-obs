@@ -45,6 +45,8 @@ export interface Rails {
   candidateTapeExitMinPct: number;
   candidateTapeExitPressurePct: number;
   candidateTapeExitShare: number;
+  /** Whether three falling five-minute buckets sell an unpaid trade (OBS_CANDIDATE_TAPE_ROLLOVER_EXIT). Off for a hunt for a multiple in a thin pool. */
+  tapeRolloverExit: boolean;
   /** The whole-book brake: once the day's drawdown from its opening mark passes either limit, no new entries until the next UTC day. Exits still run. */
   dailyLossUsd: number;
   dailyLossPct: number;
@@ -95,6 +97,7 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     candidateTapeExitMinPct: Number(env.OBS_CANDIDATE_TAPE_EXIT_MIN_PCT ?? 15),
     candidateTapeExitPressurePct: Number(env.OBS_CANDIDATE_TAPE_EXIT_PRESSURE_PCT ?? 45),
     candidateTapeExitShare: Number(env.OBS_CANDIDATE_TAPE_EXIT_SHARE ?? 0.6),
+    tapeRolloverExit: (env.OBS_CANDIDATE_TAPE_ROLLOVER_EXIT ?? "on") !== "off",
     dailyLossUsd: Number(env.OBS_DAILY_LOSS_USD ?? 50),
     dailyLossPct: Number(env.OBS_DAILY_LOSS_PCT ?? 5),
     minHoursBetweenEntries: Number(env.OBS_MIN_HOURS_BETWEEN_ENTRIES ?? 2),

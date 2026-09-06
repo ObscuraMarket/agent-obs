@@ -451,6 +451,7 @@ export function screenerCandidates(tokens: ScreenerToken[], now: number, opts: F
     // The ceiling: a clip of the desk's size moves nothing on a token this large, and a 15% target there is a week's work, not an hour's.
     const cap = t.capUsd ?? t.pool.capUsd;
     if (rules.maxCapUsd > 0 && cap != null && cap > rules.maxCapUsd) continue;
+    if (rules.entryCapMinUsd > 0 && (cap == null || cap < rules.entryCapMinUsd)) continue;
     const quote = t.pool.quoteSymbol;
     const hooked = t.key.hooks.toLowerCase() !== NATIVE;
     if (hooked && !CURVE_QUOTES[quote]) continue;
@@ -649,6 +650,8 @@ export interface ExitRails {
   candidateMaxHoldH: number;
   candidateFloorPct: number;
   candidateVolumeDropPct: number;
+  /** Whether three falling five-minute buckets sell an unpaid trade (OBS_CANDIDATE_TAPE_ROLLOVER_EXIT). Off when the hunt is a multiple in a thin pool, where every hour has such a stretch. */
+  tapeRolloverExit?: boolean;
   /** Take profit: sell this share of the position once it is up this much. Zero disables. */
   candidateTakeProfitPct?: number;
   candidateTakeProfitShare?: number;
@@ -683,8 +686,9 @@ export function exitVerdict(input: { ageH: number; pnlPct: number | null; hourly
   // The tape rolling over (three 5-minute buckets falling in a row): a trade that has not paid leaves whole;
   // a paid trade scales out below (the tape exit), and once it has, the rest leaves on the next roll-over.
   const paidBar = (r.candidateTapeExitMinPct ?? 0) > 0 ? (r.candidateTapeExitMinPct as number) : (r.candidateTrailArmPct ?? 30);
-  if (input.tapeTrend === "rolling over" && input.pnlPct != null && input.pnlPct < paidBar) return { kind: "volume", share: 1, reason: "the tape rolled over: three 5-minute buckets falling in a row while the trade has not paid" };
-  if (input.tapeTrend === "rolling over" && input.tookProfit) return { kind: "volume", share: 1, reason: "the tape rolled over again after the scale-out: the rest leaves" };
+  const rollover = r.tapeRolloverExit ?? true;
+  if (rollover && input.tapeTrend === "rolling over" && input.pnlPct != null && input.pnlPct < paidBar) return { kind: "volume", share: 1, reason: "the tape rolled over: three 5-minute buckets falling in a row while the trade has not paid" };
+  if (rollover && input.tapeTrend === "rolling over" && input.tookProfit) return { kind: "volume", share: 1, reason: "the tape rolled over again after the scale-out: the rest leaves" };
   const trailArm = r.candidateTrailArmPct ?? 0;
   const trail = r.candidateTrailPct ?? 0;
   if (trail > 0 && input.pnlPct != null && input.peakPnlPct != null && input.peakPnlPct >= trailArm) {
