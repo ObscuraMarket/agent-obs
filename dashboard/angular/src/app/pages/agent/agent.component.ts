@@ -172,7 +172,25 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     });
   }
 
+  /**
+   * A tab in the background can keep a stream connection that is dead without knowing it, and its timers slow to a
+   * crawl; the terminal then sits where it was, minutes behind. When the tab comes back, a stale stream is reopened
+   * at once (the hello replays every line missed, in order) and the panels refresh.
+   */
+  private readonly onVisible = () => {
+    if (document.hidden) { return; }
+    if (this.es && Date.now() - this.esLastEventAt > 20_000) {
+      this.es.close();
+      this.es = undefined;
+      this.connect();
+    }
+    this.refresh();
+  };
+
   ngOnInit(): void {
+    document.addEventListener('visibilitychange', this.onVisible);
+    window.addEventListener('online', this.onVisible);
+    window.addEventListener('pageshow', this.onVisible);
     this.refresh();
     this.poll = interval(15_000).subscribe(() => this.refresh());
     this.startMarquee();
@@ -211,6 +229,9 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    document.removeEventListener('visibilitychange', this.onVisible);
+    window.removeEventListener('online', this.onVisible);
+    window.removeEventListener('pageshow', this.onVisible);
     this.poll?.unsubscribe();
     this.es?.close();
     this.ro?.disconnect();
@@ -920,6 +941,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     es.addEventListener('watch', (ev) => { alive(); this.onWatch(JSON.parse((ev as MessageEvent).data) as ObsWatchEvent); });
     es.addEventListener('research', (ev) => { alive(); this.onResearch(JSON.parse((ev as MessageEvent).data) as ObsResearchEvent); });
     es.addEventListener('trade', (ev) => { alive(); this.onTrade(JSON.parse((ev as MessageEvent).data) as ObsTrade); });
+    es.addEventListener('ping', () => alive());
     // The positions in real time: the API re-prices the book from the live watch's tape every few seconds and pushes it when it moved.
     es.addEventListener('pnl', (ev) => { alive(); this.zone.run(() => this.onPnl(JSON.parse((ev as MessageEvent).data) as Partial<ObsPnl>)); });
     es.onerror = () => {
@@ -947,7 +969,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.esLastEventAt = Date.now();
     if (this.esLivenessTimer) { return; }
     this.esLivenessTimer = setInterval(() => {
-      if (!this.es || Date.now() - this.esLastEventAt < 150_000) { return; }
+      // The API pings every 25 s; 75 s of silence is a dead connection, not a quiet desk.
+      if (!this.es || Date.now() - this.esLastEventAt < 75_000) { return; }
       this.es.close();
       this.es = undefined;
       this.setStreamState('reconnecting');

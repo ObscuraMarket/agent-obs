@@ -293,6 +293,10 @@ Additive fields (since September 3):
   `triggerKind` (since September 6) is `entry`, or `held` / `exit` when the
   trigger is a token the desk holds: a review on its cadence, or a break in
   its tape. Tag those as the holding they are, not as an entry.
+- The stream's `ping` event (since September 6): `{ at }` every 25 seconds, so a
+  listener can tell a quiet desk from a dead connection; treat 75 seconds of
+  silence as dead and reconnect. The `hello` on reconnect carries what was
+  missed, so replay it in order and drop what is already shown.
 - The stream's `pnl` event (since September 6): the `/api/obs/pnl` answer
   without `series`, pushed whenever a position moved, opened or closed, or
   equity changed, checked every four seconds. Held launch tokens are priced

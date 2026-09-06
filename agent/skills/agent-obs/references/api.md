@@ -145,7 +145,7 @@ A `pnl` event carries the `/api/obs/pnl` answer without `series`, pushed
 whenever a position or equity moved (checked every four seconds); held
 launch tokens are priced from the live watch's tape between wallet reads.
 
-A `: ping` comment every 25 seconds keeps the connection open. If the
+A `ping` event (`{ at }`) every 25 seconds keeps the connection open and lets a listener tell silence from a dead connection. If the
 stream cannot be opened, poll `/api/obs/thoughts` and `/api/obs/live`.
 
 ## Other

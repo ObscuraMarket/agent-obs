@@ -530,7 +530,9 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
     }
   };
   const poll = setInterval(look, STREAM_POLL_MS);
-  const ping = setInterval(() => res.write(": ping\n\n"), STREAM_PING_MS);
+  // A real event, not a comment: a comment never reaches an EventSource listener, so the page could not tell a quiet
+  // desk from a dead connection and waited minutes before reconnecting.
+  const ping = setInterval(() => res.write(sseFrame("ping", { at: Date.now() })), STREAM_PING_MS);
   req.on("close", () => {
     clearInterval(poll);
     clearInterval(ping);
