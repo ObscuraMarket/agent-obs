@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decodeSwap, tapeStats, tapeLine, dedupeRows, type SwapRow } from "../src/desk/tape.ts";
+import { tapeWindowMin } from "../src/desk/tape.ts";
 import { similarity, recallLike, launchRecord, launchRecordLine, recallLine, type TradeClose } from "../src/desk/trade-memory.ts";
 import { exitVerdict } from "../src/desk/candidates.ts";
 
@@ -87,4 +88,10 @@ test("the tape exit: a paid trade whose buyers are thinning scales out on the da
   assert.equal(exitVerdict({ ageH: 1, pnlPct: 22, hourly: [], tapeTrend: "holding", tapeBuyPressurePct: 62 }, r), null, "buyers still there: nothing to do");
   assert.equal(exitVerdict({ ageH: 1, pnlPct: 8, hourly: [], tapeTrend: "holding", tapeBuyPressurePct: 30 }, r), null, "not paid enough yet: the floor and the roll-over rules own that");
   assert.equal(exitVerdict({ ageH: 1, pnlPct: 22, hourly: [], tookProfit: true, tapeTrend: "holding", tapeBuyPressurePct: 30, peakPnlPct: 22 }, r), null, "already scaled out once; the trail owns the rest");
+});
+
+test("one tape window for the live watch and the cycle: three hours unless set, never nonsense", () => {
+  assert.equal(tapeWindowMin({} as NodeJS.ProcessEnv), 180);
+  assert.equal(tapeWindowMin({ OBS_LIVE_TAPE_MIN: "240" } as NodeJS.ProcessEnv), 240);
+  assert.equal(tapeWindowMin({ OBS_LIVE_TAPE_MIN: "0" } as NodeJS.ProcessEnv), 180);
 });

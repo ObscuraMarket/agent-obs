@@ -314,8 +314,8 @@ for (const [sym, a] of inPlay) {
       // A token with days of trading: the explorer's holder list, not a transfer scan that reaches back hours and
       // would count a handful of wallets. Falls back to the scan if the explorer does not answer.
       try {
-        const x = await explorerHolders(a.contract);
-        hr = holderReadFromList(x.list, x.holders, sym, a.contract, now, holderRules, infraBase);
+        const x = await explorerHolders(a.contract, undefined, a.decimals);
+        hr = holderReadFromList(x.list, x.holders, sym, a.contract, now, holderRules, infraBase, x.countIsFloor);
         top = x.list.filter((h) => !h.isContract).sort((p, q) => q.balance - p.balance).slice(0, 10).map((h) => h.address);
       } catch {
         transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);

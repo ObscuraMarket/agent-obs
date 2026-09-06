@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { balancesFrom, holderRead, holdersLine, holderRulesFromEnv, holderReadFromList, type TransferRow, type ExplorerHolder } from "../src/desk/holders.ts";
+import { balancesFrom, holderRead, holdersLine, holderRulesFromEnv, holderReadFromList, explorerHolderCount, type TransferRow, type ExplorerHolder } from "../src/desk/holders.ts";
 
 const R = holderRulesFromEnv({} as NodeJS.ProcessEnv);
 
@@ -26,6 +26,21 @@ test("a token with days of trading is read from the explorer's holder list: cont
   const few = holderReadFromList(list.slice(0, 4), 12, "SIXTYNINE", "0x69", 1_788_650_000_000, rules);
   assert.equal(few.ok, false);
   assert.match(few.why, /12 wallets \(30 needed\); the largest wallet holds 60%/);
+});
+
+test("the explorer's holder count is read whichever name its API gives it, and a floor from the list under the bar is unknown, not a fail", () => {
+  // 2026-09-06: the explorer's token record moved from `holders` to `holders_count`; every survivor read as 0 wallets and nothing was bought.
+  assert.equal(explorerHolderCount({ holders_count: 785 }), 785);
+  assert.equal(explorerHolderCount({ holders: "412" }), 412);
+  assert.equal(explorerHolderCount({ holders_count: "0" }), null, "zero is no count");
+  assert.equal(explorerHolderCount(null), null);
+  const rules = holderRulesFromEnv({ OBS_HOLDERS_MAX_TOP1_PCT: "50", OBS_HOLDERS_MAX_TOP10_PCT: "97" } as NodeJS.ProcessEnv);
+  const list: ExplorerHolder[] = Array.from({ length: 20 }, (_, i) => ({ address: `0xeeee0000000000000000000000000000000000${(10 + i).toString(16)}`, isContract: false, balance: 1_000_000 }));
+  const floor = holderReadFromList(list, 20, "WHLR", "0x2e", 1_788_650_000_000, rules, [], true);
+  assert.equal(floor.ok, true, floor.why);
+  assert.match(floor.why, /at least 20 wallets by the explorer/);
+  const exact = holderReadFromList(list, 20, "WHLR", "0x2e", 1_788_650_000_000, rules, [], false);
+  assert.equal(exact.ok, false, "the same twenty, known to be all of them, is under the bar");
 });
 const now = 1_800_000_000_000;
 const POOL = "0xpool";

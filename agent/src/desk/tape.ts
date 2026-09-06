@@ -75,8 +75,18 @@ export function decodeSwap(args: { amount0: bigint; amount1: bigint; sqrtPriceX9
   return { at, block, tx, side, tokenAmount, quoteAmount, price };
 }
 
+/**
+ * PURE: the tape window in minutes (OBS_LIVE_TAPE_MIN, three hours by default). One window for the live watch and
+ * the cycle: the dip read looks back that far for the pump it buys under, and a cycle that read a shorter tape
+ * called the same token a breakdown while the watch that woke it had read a dip.
+ */
+export function tapeWindowMin(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.OBS_LIVE_TAPE_MIN ?? 180);
+  return Number.isFinite(n) && n > 0 ? n : 180;
+}
+
 /** Pull new swaps for a pool since the last stored block (or the last `sinceMin` minutes) and append them. Returns the whole tape for the window. */
-export async function updateTape(spec: PoolSpec, tokenSymbol: string, now = Date.now(), sinceMin = 90): Promise<SwapRow[]> {
+export async function updateTape(spec: PoolSpec, tokenSymbol: string, now = Date.now(), sinceMin = tapeWindowMin()): Promise<SwapRow[]> {
   if (spec.venue !== "uniswap-v4" || !spec.id) return [];
   const tokenIs0 = spec.token0 === tokenSymbol;
   const existing = readTape(spec.id);
@@ -118,7 +128,7 @@ export async function updateTape(spec: PoolSpec, tokenSymbol: string, now = Date
  * not re-read every few seconds. Returns each pool's rows inside the window
  * and the head block, or what it had when the chain did not answer.
  */
-export async function updateTapes(items: Array<{ spec: PoolSpec; symbol: string }>, now = Date.now(), sinceMin = 35, cache?: Map<string, SwapRow[]>): Promise<{ tapes: Map<string, SwapRow[]>; headBlock: number | null }> {
+export async function updateTapes(items: Array<{ spec: PoolSpec; symbol: string }>, now = Date.now(), sinceMin = tapeWindowMin(), cache?: Map<string, SwapRow[]>): Promise<{ tapes: Map<string, SwapRow[]>; headBlock: number | null }> {
   const tapes = new Map<string, SwapRow[]>();
   const live = items.filter((i) => i.spec.venue === "uniswap-v4" && i.spec.id);
   const inWindow = (rows: SwapRow[]) => rows.filter((r) => r.at >= now - sinceMin * 60e3);

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { DATA_DIR, ROOT_DIR, dataPath } from "../config.ts";
 import { readFeed, resolveAny, dynamicPoolSpec, dynamicAssets, earlyAsCandidate, curveKey, isHolding } from "./candidates.ts";
 import { recordResearch } from "./research.ts";
-import { updateTapes, tapeStats, type SwapRow } from "./tape.ts";
+import { updateTapes, tapeStats, tapeWindowMin, type SwapRow } from "./tape.ts";
 import { entryRead, entryRulesFromEnv } from "./entry.ts";
 import { liveReads, walletBalances } from "../obscura/reads.ts";
 import { readPaper, paperBalances } from "./paper.ts";
@@ -179,8 +179,8 @@ async function step(now: number): Promise<void> {
   watchingNow.clear();
   for (const sy of nowWatching) watchingNow.add(sy);
   // One read for every watched pool: the blocks since the last look, kept in memory.
-  // Three hours of tape by default (OBS_LIVE_TAPE_MIN): the dip read looks that far back for the pump it buys under.
-  const { tapes, headBlock: block } = await updateTapes(items, now, Number(process.env.OBS_LIVE_TAPE_MIN ?? 180), tapeCache);
+  // Three hours of tape by default (OBS_LIVE_TAPE_MIN), the same window the cycle reads: the dip read looks that far back for the pump it buys under.
+  const { tapes, headBlock: block } = await updateTapes(items, now, tapeWindowMin(), tapeCache);
   const states: WatchState[] = [];
   for (const { symbol, role, spec } of items) {
     const rows = tapes.get(spec.id as string) ?? [];
