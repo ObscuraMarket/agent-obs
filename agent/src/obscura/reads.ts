@@ -12,7 +12,7 @@
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, DRY, dataPath } from "../config.ts";
+import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, DRY, dataPath, AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "../config.ts";
 import { appendLedger, readLedger } from "../ledger.ts";
 import { ASSETS } from "../desk/assets.ts";
 import { readTokens, dynamicPoolSpec, dynamicAssets } from "../desk/candidates.ts";
@@ -92,6 +92,11 @@ export interface WalletRead {
   nvda: number | null;
   /** Every registered token balance keyed SYMBOL@network, the named fields above included. Null = the chain did not answer. */
   tokens?: Record<string, number | null>;
+  /**
+   * The desk's own token (AOBS), read on its own and kept out of `tokens`: it is shown on the page as a holding,
+   * but it is never on the book, in the mark, in the observation, or on either leg of a swap. Null = not answered.
+   */
+  own?: { symbol: string; contract: string; qty: number | null };
   /** Obscura's own cashback stats for this wallet (GET /rewards/{wallet}). */
   rewards: { swaps: number; volumeUsd: number; rewardsUsd: number; paidUsd: number } | null;
 }
@@ -147,6 +152,7 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
   for (const a of registered.filter((x) => x.chain === "robinhood" && x.symbol !== "USDG")) tokens[`${a.symbol}@${a.network}`] = await tokenBalance(a.contract as string, address, a.decimals);
   // Launch tokens the desk has traded (data/obs-tokens.json): read too, so a held one is on the book.
   for (const t of readTokens()) if (!ASSETS[`${t.symbol}@robinhood`]) tokens[`${t.symbol}@robinhood`] = await tokenBalance(t.contract, address, t.decimals);
+  const own = { symbol: AGENT_TOKEN_SYMBOL, contract: AGENT_TOKEN, qty: await tokenBalance(AGENT_TOKEN, address, 18) };
   const nvda = tokens["NVDA@robinhood"] ?? null;
   const [[ethMainnet, ...mainnetBalances], rewards] = await Promise.all([
     mainnetP,
@@ -164,7 +170,7 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
   mainnetTokens.forEach((a, i) => (tokens[`${a.symbol}@${a.network}`] = mainnetBalances[i] ?? null));
   const usdc = tokens["USDC@erc20"] ?? null;
   const usdt = tokens["USDT@erc20"] ?? null;
-  return { address, ethRobinhood, ethMainnet, usdg, obs, usdc, usdt, nvda, tokens, rewards };
+  return { address, ethRobinhood, ethMainnet, usdg, obs, usdc, usdt, nvda, tokens, own, rewards };
 }
 
 export interface TokenRead {

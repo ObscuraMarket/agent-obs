@@ -12,7 +12,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readLedger } from "./ledger.ts";
 import { liveReads, readsBlock, assetPrices, readMarketSamples, marketSeries, change24h, type Reads } from "./obscura/reads.ts";
-import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, latestSaneMark, bookMovedSince, type Trade, type BookSnapshot } from "./desk/book.ts";
+import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, latestSaneMark, bookMovedSince, ownTokenPosition, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { trackRecord, basisSignal, ratioStats, readPrices, usSession } from "./desk/analysis.ts";
 import { stockReference } from "./obscura/stockRef.ts";
 import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, readTokens, resolveAny, isHolding } from "./desk/candidates.ts";
@@ -623,11 +623,13 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         const live = standIn ?? (chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now));
         const t = latestTrades(book.trades);
         const pos = positions(book.flows, book.trades, live.holdings, prices);
+        // The desk's own token, as a row after the book's positions: shown, priced from its pool, never counted.
+        const own = r.wallet?.own ? ownTokenPosition(r.wallet.own.symbol, r.wallet.own.qty, agentTokenCache?.priceUsd ?? null) : null;
         json(res, 200, {
           ...(behind || standIn ? { pending: true } : {}),
           snapshot: live,
           prices,
-          positions: pos.positions,
+          positions: own ? [...pos.positions, own] : pos.positions,
           realizedUsd: pos.realizedUsd,
           inFlight: pos.inFlight,
           track: trackRecord(pos.events, now),

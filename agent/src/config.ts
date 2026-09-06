@@ -45,6 +45,8 @@ export const RPC_URL = process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.cha
 export const OBS_CONTRACT = (process.env.OBS_CONTRACT || "0xfe242d1da8fd04f6a1f80b6d3d807b02e062ad4e").toLowerCase();
 /** The agent's own token (AOBS on Robinhood Chain). Shown on the page; never traded by the desk. */
 export const AGENT_TOKEN = (process.env.OBS_AGENT_TOKEN || "0x47366e0f257ac009e82bd46fb74e2fb50826ce98").toLowerCase();
+/** The agent's own token's ticker, as the page shows it. */
+export const AGENT_TOKEN_SYMBOL = (process.env.OBS_AGENT_TOKEN_SYMBOL || "AOBS").toUpperCase();
 /**
  * Contracts the desk never trades, whatever the feed says: its own token (AOBS, which the wallet holds and must
  * never sell, buy, or approve) and Obscura's $OBS (the desk's flywheel is never pointed at it), plus

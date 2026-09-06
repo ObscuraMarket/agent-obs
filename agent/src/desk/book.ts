@@ -336,6 +336,15 @@ export interface Positions {
 }
 
 /**
+ * PURE: the desk's own token as a row for the page: what the wallet holds at the token's pool price, with no cost,
+ * no PnL and no share, since the desk never bought it, never sells it, and it is not part of the book's equity.
+ */
+export function ownTokenPosition(symbol: string, qty: number | null | undefined, priceUsd: number | null): Position | null {
+  if (qty == null || !(qty > 0)) return null;
+  return { asset: symbol, qty, priceUsd, valueUsd: priceUsd == null ? null : qty * priceUsd, avgCostUsd: null, costUsd: null, unrealizedUsd: null, unrealizedPct: null, realizedUsd: 0, share: null };
+}
+
+/**
  * PURE: every holding the desk put money into, as a position with its cost, its mark and its PnL, largest first.
  * A token that arrived on its own (an airdrop, a cashback payout, dust sent by a stranger) is wallet value and
  * counts in equity, but it is not a position: the desk never bought it and never sells it, and the page must not

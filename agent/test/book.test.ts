@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince } from "../src/desk/book.ts";
+import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince, ownTokenPosition } from "../src/desk/book.ts";
 
 test("a mark a thousand times the capital is a price read gone wrong, never the book: not shown, not recorded", () => {
   // SHARD dust after the full sell, priced off the drained pool: equity 1.08e41 on $948.82 of capital.
@@ -168,4 +168,16 @@ test("a token that arrived on its own is wallet value, not a position", () => {
   const p = positions(flows, trades, holdings, { ETH: 2500, NSDX: 0.0000675, NVDA: 231 });
   assert.deepEqual(p.positions.map((x) => x.asset).sort(), ["ETH", "NSDX"], "NVDA was never bought or deposited");
   assert.ok(p.positions.every((x) => x.share != null), "shares are of the whole wallet, the NVDA included");
+});
+
+test("the desk's own token is a row for the page with no cost, no PnL and no share, and no row when the wallet holds none", () => {
+  const row = ownTokenPosition("AOBS", 9_900_000, 0.0001)!;
+  assert.equal(row.asset, "AOBS");
+  assert.equal(row.valueUsd, 990);
+  assert.equal(row.avgCostUsd, null);
+  assert.equal(row.unrealizedUsd, null);
+  assert.equal(row.share, null, "not part of the book's equity");
+  assert.equal(ownTokenPosition("AOBS", 9_900_000, null)!.valueUsd, null, "unpriced until its pool answers");
+  assert.equal(ownTokenPosition("AOBS", 0, 0.0001), null);
+  assert.equal(ownTokenPosition("AOBS", null, 0.0001), null);
 });
