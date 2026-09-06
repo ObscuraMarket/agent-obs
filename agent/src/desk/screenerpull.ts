@@ -145,7 +145,8 @@ async function round(): Promise<void> {
   writeKnown(known);
   // A token that enters the range for the first time is named the moment it is found, with its record, so the
   // terminal shows the find and the operator can look at it while the scout is still reading its tape.
-  const inRange = (t: ScreenerToken) => t.kept === "record" && t.capUsd != null && (rules.entryCapMinUsd <= 0 || t.capUsd >= rules.entryCapMinUsd) && (rules.maxCapUsd <= 0 || t.capUsd <= rules.maxCapUsd);
+  const minAgeMs = Number(process.env.OBS_CANDIDATE_MIN_AGE_H ?? 0) * 3600e3;
+  const inRange = (t: ScreenerToken) => t.kept === "record" && t.capUsd != null && (rules.entryCapMinUsd <= 0 || t.capUsd >= rules.entryCapMinUsd) && (rules.maxCapUsd <= 0 || t.capUsd <= rules.maxCapUsd) && now - (t.launchAt ?? t.pool.pairCreatedAt ?? now) >= minAgeMs;
   const before = new Set(prior.tokens.filter(inRange).map((t) => t.token));
   for (const t of kept.filter(inRange)) {
     if (before.has(t.token)) continue;
