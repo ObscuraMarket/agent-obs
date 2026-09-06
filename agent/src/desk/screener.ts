@@ -17,6 +17,8 @@ export interface ScreenerPair {
   poolId: `0x${string}`;
   dex: string;
   labels: string[];
+  /** The token's own symbol as the screener names it, for a token discovered by address alone. */
+  baseSymbol: string;
   quoteSymbol: string;
   quoteAddress: `0x${string}`;
   priceUsd: number | null;
@@ -52,7 +54,16 @@ export interface ScreenerToken {
   readAt: number;
 }
 
-export interface ScreenerFile { at: number; tokens: ScreenerToken[] }
+export interface ScreenerFile { at: number; tokens: ScreenerToken[]; /** Where the cold set's rotation stands, so every round screens the next slice. */ cursor?: number }
+
+/** PURE: the next slice of a rotation over a list, and the cursor after it; wraps around, so a list shorter than the slice is taken whole. */
+export function rotateSlice<T>(items: T[], cursor: number, count: number): { slice: T[]; cursor: number } {
+  if (!items.length || count <= 0) return { slice: [], cursor: 0 };
+  const start = ((cursor % items.length) + items.length) % items.length;
+  const n = Math.min(count, items.length);
+  const slice = [...items.slice(start, start + n), ...items.slice(0, Math.max(0, start + n - items.length))];
+  return { slice, cursor: (start + n) % items.length };
+}
 
 export interface ScreenerRules {
   minVol24Usd: number;
@@ -116,10 +127,12 @@ function toPair(r: Record<string, unknown>): ScreenerPair {
   const chg = (r.priceChange ?? {}) as Record<string, unknown>;
   const liq = (r.liquidity ?? {}) as Record<string, unknown>;
   const t24 = tx.h24 ?? {}, t1 = tx.h1 ?? {};
+  const base = (r.baseToken ?? {}) as Record<string, unknown>;
   return {
     poolId: String(r.pairAddress ?? "").toLowerCase() as `0x${string}`,
     dex: String(r.dexId ?? ""),
     labels: Array.isArray(r.labels) ? (r.labels as unknown[]).map(String) : [],
+    baseSymbol: String(base.symbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12),
     quoteSymbol: String(quote.symbol ?? "").toUpperCase(),
     quoteAddress: String(quote.address ?? "").toLowerCase() as `0x${string}`,
     priceUsd: numOrNull(r.priceUsd),

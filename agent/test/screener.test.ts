@@ -1,13 +1,26 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { recordFails, pickPool, recordLine, screenerRulesFromEnv, type ScreenerPair, type ScreenerToken } from "../src/desk/screener.ts";
+import { recordFails, pickPool, recordLine, screenerRulesFromEnv, rotateSlice, type ScreenerPair, type ScreenerToken } from "../src/desk/screener.ts";
+
+test("the cold set comes around in slices: the cursor walks the list and wraps, and a short list is taken whole", () => {
+  const items = ["a", "b", "c", "d", "e"];
+  let r = rotateSlice(items, 0, 2);
+  assert.deepEqual(r, { slice: ["a", "b"], cursor: 2 });
+  r = rotateSlice(items, r.cursor, 2);
+  assert.deepEqual(r, { slice: ["c", "d"], cursor: 4 });
+  r = rotateSlice(items, r.cursor, 2);
+  assert.deepEqual(r, { slice: ["e", "a"], cursor: 1 }, "wraps around");
+  assert.deepEqual(rotateSlice(items, 7, 10), { slice: ["c", "d", "e", "a", "b"], cursor: 2 }, "a slice larger than the list takes it whole, from the cursor");
+  assert.deepEqual(rotateSlice([], 3, 2), { slice: [], cursor: 0 });
+  assert.deepEqual(rotateSlice(items, 1, 0), { slice: [], cursor: 0 }, "no budget, no slice");
+});
 import { screenerCandidates, gradeCandidate, gradeRulesFromEnv } from "../src/desk/candidates.ts";
 
 const now = 1_788_650_000_000;
 const HOOK = "0xe5e702641ea86f4ae6cc3cdaed2b886f976be044" as const;
 const ZZZ = "0x7dbf38976f6d3b9c529e7d9484a71898b409ee6a" as const;
 const pool = (over: Partial<ScreenerPair> = {}): ScreenerPair => ({
-  poolId: "0x6538e2c223ed70228114983afecbe5e69fe627e2fafdf367bdd6bdeff2ad391f", dex: "uniswap", labels: ["v4"], quoteSymbol: "ETH", quoteAddress: "0x0000000000000000000000000000000000000000",
+  poolId: "0x6538e2c223ed70228114983afecbe5e69fe627e2fafdf367bdd6bdeff2ad391f", dex: "uniswap", labels: ["v4"], baseSymbol: "ZZZ", quoteSymbol: "ETH", quoteAddress: "0x0000000000000000000000000000000000000000",
   priceUsd: 0.027, vol24: 27_438_423, vol6: 3_511_531, vol1: 2_023_076, txns24: 71_065, txns1: 3056, buys1: 1437, sells1: 1619, liqUsd: 480_264, chg1: 66.9, chg24: 3398, fdvUsd: 22_449_025, capUsd: 22_449_025, pairCreatedAt: now - 24.2 * 3600e3,
   ...over,
 });

@@ -124,7 +124,63 @@ async function pull(): Promise<void> {
   writeFileSync(CURSOR, JSON.stringify({ block: Number(to), at: Date.now() }));
 }
 
-console.log(`[launchpull] factory ${factory}, pools under hook ${hook.slice(0, 10)} on ${poolManager.slice(0, 10)} -> ${FEED}, every ${EVERY} s`);
+// The backfill: pool creations under the launchpad's hook over the last OBS_LAUNCH_BACKFILL_DAYS, scanned backwards
+// once in the background and written as bare rows (token, pair, pool, time) to pools-backfill.jsonl for the
+// screener's discovery. A pool means a first buy happened, which cuts a week of launches to the few thousand that
+// ever traded. No per-token chain reads: the screener supplies the symbol. Resumes from its cursor after a restart.
+const BACKFILL_DAYS = Number(process.env.OBS_LAUNCH_BACKFILL_DAYS ?? 7);
+const BACKFILL_FILE = join(dirname(FEED), "pools-backfill.jsonl");
+const BACKFILL_CHUNK = BigInt(process.env.OBS_LAUNCH_BACKFILL_CHUNK ?? 5000);
+const BLOCKS_PER_DAY = 864_000n; // about ten blocks a second
+async function backfill(): Promise<void> {
+  if (BACKFILL_DAYS <= 0) return;
+  let state: { backfillTo?: number; backfillDoneAt?: number; backfillFloor?: number } = {};
+  try { state = JSON.parse(readFileSync(CURSOR, "utf8")) as typeof state; } catch { /* fresh */ }
+  if (state.backfillDoneAt) return;
+  const head = await pub.getBlockNumber();
+  const floor = state.backfillFloor != null ? BigInt(state.backfillFloor) : head - BLOCKS_PER_DAY * BigInt(BACKFILL_DAYS);
+  let to = state.backfillTo != null ? BigInt(state.backfillTo) : head - BigInt(START_BACK);
+  const seenBackfill = new Set<string>();
+  if (existsSync(BACKFILL_FILE)) for (const line of readFileSync(BACKFILL_FILE, "utf8").split("\n")) { try { const r = JSON.parse(line) as { token?: string }; if (r.token) seenBackfill.add(r.token); } catch { /* skip */ } }
+  let pools = 0, kept = 0, calls = 0;
+  const t0 = Date.now();
+  while (to > floor) {
+    const from = to - BACKFILL_CHUNK > floor ? to - BACKFILL_CHUNK : floor;
+    try {
+      const logs = await pub.getLogs({ address: poolManager, event: INITIALIZE, fromBlock: from, toBlock: to });
+      calls++;
+      let blockTime: number | null = null;
+      for (const l of logs) {
+        if (String(l.args.hooks).toLowerCase() !== hook) continue;
+        pools++;
+        const c0 = (l.args.currency0 as string).toLowerCase() as `0x${string}`;
+        const c1 = (l.args.currency1 as string).toLowerCase() as `0x${string}`;
+        const token = pairSymbolOf(c0) ? c1 : pairSymbolOf(c1) ? c0 : null;
+        if (!token || seenBackfill.has(token) || rows.has(token) || NEVER_TRADE.has(token)) continue;
+        if (blockTime == null) { try { blockTime = await timeOf(l.blockNumber); } catch { blockTime = Date.now() - Number(head - l.blockNumber) * 100; } }
+        appendFileSync(BACKFILL_FILE, JSON.stringify({ kind: "pool", token, pair: token === c1 ? c0 : c1, poolId: (l.args.id as string).toLowerCase(), ts: Math.floor(blockTime / 1000), block: Number(l.blockNumber), from: "backfill" }) + "\n");
+        seenBackfill.add(token);
+        kept++;
+      }
+    } catch (e) {
+      console.log(`[launchpull] backfill ${from}-${to}: ${e instanceof Error ? e.message.slice(0, 120) : String(e)}; retrying in a minute`);
+      await new Promise((r) => setTimeout(r, 60_000));
+      continue;
+    }
+    to = from - 1n;
+    let cur: Record<string, unknown> = {};
+    try { cur = JSON.parse(readFileSync(CURSOR, "utf8")) as Record<string, unknown>; } catch { /* fresh */ }
+    writeFileSync(CURSOR, JSON.stringify({ ...cur, backfillTo: Number(to), backfillFloor: Number(floor) }));
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  let cur: Record<string, unknown> = {};
+  try { cur = JSON.parse(readFileSync(CURSOR, "utf8")) as Record<string, unknown>; } catch { /* fresh */ }
+  writeFileSync(CURSOR, JSON.stringify({ ...cur, backfillDoneAt: Date.now() }));
+  console.log(`[launchpull] backfill done: ${pools} pools under the hook in the last ${BACKFILL_DAYS} days, ${kept} new tokens written, ${calls} calls, ${((Date.now() - t0) / 60e3).toFixed(1)} min`);
+}
+
+console.log(`[launchpull] factory ${factory}, pools under hook ${hook.slice(0, 10)} on ${poolManager.slice(0, 10)} -> ${FEED}, every ${EVERY} s; backfill ${BACKFILL_DAYS} days`);
+void backfill().catch((e) => console.log(`[launchpull] backfill: ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`));
 for (;;) {
   try {
     await pull();
