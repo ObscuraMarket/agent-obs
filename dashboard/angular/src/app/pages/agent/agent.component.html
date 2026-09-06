@@ -55,6 +55,14 @@
         </button>
       </div>
     </div>
+    <!-- The day at a glance, and the one line that answers the custody question. -->
+    <div class="summary" *ngIf="summary.length">
+      <div class="sum" *ngFor="let s of summary"><span class="k">{{ s.k }}</span><span class="v num" [ngClass]="s.cls || ''">{{ s.v }}</span></div>
+    </div>
+    <p class="verify" *ngIf="status?.wallet as w">
+      One public wallet, funded by the team and never by anyone else; every trade is a swap you can open on
+      <a [href]="w.explorerUrl" target="_blank" rel="noopener">the explorer</a>. Nothing of yours is ever here.
+    </p>
   </div>
 
   <!-- Market: six house boxes -->
@@ -302,6 +310,14 @@
       </h2>
       <span class="tz" title="Every time on this page is UTC, the desk's own clock">UTC</span>
     </div>
+    <!-- What the tags mean, for a first visit. -->
+    <div class="legend">
+      <span><b class="lg-trigger">trigger</b> a tape gave an entry</span>
+      <span><b class="lg-holding">holding</b> a held token's review, or its break</span>
+      <span><b class="lg-decided">decided</b> the desk's call, with the rails' refusal when there is one</span>
+      <span><b class="lg-bad">holders</b> a gate: ok or not, with the reason</span>
+      <span><b>tape · scout · watch</b> what it is reading between cycles</span>
+    </div>
     <div class="term" #termEl></div>
   </div>
 
@@ -327,7 +343,7 @@
           <tr><th>Asset</th><th class="r">Size</th><th class="r">Price</th><th class="r">Value</th><th class="r">Avg cost</th><th class="r">Unrealized</th><th class="r">Realized</th><th>Share</th></tr>
         </thead>
         <tbody>
-          <tr *ngIf="!positions.length && !inFlight.length"><td colspan="8" class="none">No positions. The desk holds nothing yet.</td></tr>
+          <tr *ngIf="!positions.length && !inFlight.length"><td colspan="8" class="none">{{ flatLine }}</td></tr>
           <tr *ngFor="let x of positions">
             <td class="asset">{{ x.asset }}</td>
             <td class="r num">{{ qty(x.qty) }}</td>
@@ -361,6 +377,26 @@
           </tr>
         </tbody>
       </table>
+    </div>
+    <!-- Closed today: the day's story stays on the page after a trade closes. -->
+    <div class="closed" *ngIf="closed.length">
+      <div class="closed-head"><span>Closed, last 24 hours</span><span class="mutedtx num">{{ closed.length }}</span></div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th>Asset</th><th>In</th><th>Out</th><th class="r">Held</th><th class="r">In</th><th class="r">Result</th><th>How it ended</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let x of closed">
+              <td class="asset"><a *ngIf="x.tx" [href]="'https://robinhoodchain.blockscout.com/tx/' + x.tx" target="_blank" rel="noopener">{{ x.asset }}</a><span *ngIf="!x.tx">{{ x.asset }}</span></td>
+              <td class="num">{{ clock(x.openedAt) }}</td>
+              <td class="num">{{ clock(x.closedAt) }}</td>
+              <td class="r num">{{ x.heldMin < 60 ? x.heldMin + ' min' : (x.heldMin / 60).toFixed(1) + ' h' }}</td>
+              <td class="r num"><span [class.mutedtx]="x.inUsd == null">{{ x.inUsd == null ? 'n/a' : usd(x.inUsd) }}</span></td>
+              <td class="r num"><span [ngClass]="dir(x.resultUsd)">{{ usd(x.resultUsd, true) }}</span></td>
+              <td class="mutedtx">{{ howLabel(x.how) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, snapshotFromChain, series, type BookSnapshot, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince } from "../src/desk/book.ts";
+import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, snapshotFromChain, series, type BookSnapshot, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince, closedTrades, capitalEth } from "../src/desk/book.ts";
 
 test("a mark a thousand times the capital is a price read gone wrong, never the book: not shown, not recorded", () => {
   // SHARD dust after the full sell, priced off the drained pool: equity 1.08e41 on $948.82 of capital.
@@ -180,4 +180,21 @@ test("a mark that carried the desk's own token is not on the curve and never a s
   assert.deepEqual(series(snaps, 100, 10).map((p) => p.at), [1, 3]);
   assert.equal(latestSaneMark(snaps.slice(0, 2))!.at, 1, "the stand-in is the last mark of the book, not the token's");
   assert.deepEqual(positions([], [], { ETH: 0.4, AOBS: 9_900_000 }, { ETH: 2500, AOBS: 0.001 }).positions.map((x) => x.asset), ["ETH"], "never a position");
+});
+
+test("closed round trips pair each realized sell with the buy that opened it, name how it ended, and read newest first", () => {
+  const now = 1_788_708_000_000;
+  const trades: Trade[] = [
+    { at: now - 120 * 60e3, id: "b1", status: "settled", from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "WHLR", amount: 1_267_652, usd: 100 }, partner: "pool", settlementTx: "0xb1" },
+    { at: now - 10 * 60e3, updatedAt: now - 9 * 60e3, id: "s1", status: "settled", exit: true, from: { asset: "WHLR", amount: 760_000, usd: 94.2 }, to: { asset: "ETH", amount: 0.037, usd: null }, partner: "pool", note: "exit (tape-profit), the trade is up 57%", settlementTx: "0xs1" },
+    { at: now - 9 * 60e3, updatedAt: now - 8 * 60e3, id: "s2", status: "settled", exit: true, from: { asset: "WHLR", amount: 507_652, usd: 57.7 }, to: { asset: "ETH", amount: 0.023, usd: null }, partner: "pool", note: "exit (trail), trailing stop", settlementTx: "0xs2" },
+    { at: now - 5 * 60e3, id: "b2", status: "settled", from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "NSDX", amount: 1_720_174, usd: 100 }, partner: "pool", settlementTx: "0xb2" },
+    { at: now - 2 * 60e3, updatedAt: now - 60e3, id: "s3", status: "settled", exit: true, from: { asset: "NSDX", amount: 1_720_174, usd: 103 }, to: { asset: "ETH", amount: 0.041, usd: null }, partner: "pool", note: "ETH/NSDX on chain; expected 0.04", settlementTx: "0xs3" },
+  ];
+  const events = [{ at: now - 9 * 60e3, asset: "WHLR", usd: 34.2, id: "s1" }, { at: now - 8 * 60e3, asset: "WHLR", usd: 17.67, id: "s2" }, { at: now - 60e3, asset: "NSDX", usd: 3.0, id: "s3" }, { at: now - 60e3, asset: "ETH", usd: -0.4, id: "b2" }];
+  const c = closedTrades(trades, events, 24 * 3600e3, now);
+  assert.deepEqual(c.map((x) => [x.asset, x.how, x.resultUsd, x.heldMin]), [["NSDX", "the model", 3.0, 4], ["WHLR", "trail", 17.67, 112], ["WHLR", "tape-profit", 34.2, 111]]);
+  assert.equal(c[0].tx, "0xs3");
+  assert.equal(closedTrades(trades, events, 5 * 60e3, now).length, 1, "the window is honoured: only the close a minute ago");
+  assert.equal(capitalEth([{ at: 1, kind: "deposit", asset: "ETH", amount: 0.4, usd: 948.82 }, { at: 2, kind: "deposit", asset: "ETH", amount: 0.01, usd: 23.72 }, { at: 3, kind: "deposit", asset: "AOBS", amount: 9_900_000, usd: 9663 }]), 0.41);
 });

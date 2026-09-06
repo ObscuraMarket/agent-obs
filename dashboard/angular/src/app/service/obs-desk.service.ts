@@ -223,10 +223,25 @@ export interface ObsPnl {
   realizedUsd?: number;
   inFlight?: ObsInFlight[];
   series: Array<{ at: number; equityUsd: number | null; pnlUsd: number | null }>;
-  capital: { netUsd: number; deposits: number; withdrawals: number };
+  capital: { netUsd: number; deposits: number; withdrawals: number; ethIn?: number };
   trades: { settled: number; pending: number; proposed: number; failed: number };
+  /** Round trips closed in the last 24 hours, newest first (since September 6). */
+  closed?: ObsClosedTrade[];
   canExecute: boolean;
   at: number;
+}
+
+export interface ObsClosedTrade {
+  asset: string;
+  openedAt: number;
+  closedAt: number;
+  heldMin: number;
+  inUsd: number | null;
+  outUsd: number | null;
+  resultUsd: number;
+  /** "trail", "floor", "tape-profit", "take-profit", "time-stop", "volume", or "the model". */
+  how: string;
+  tx: string | null;
 }
 
 export interface ObsFeedItem {

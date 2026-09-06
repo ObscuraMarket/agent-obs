@@ -397,3 +397,52 @@ export function recordTrade(t: Trade): void {
 export function recordCapital(f: CapitalFlow): void {
   appendLedger("obs-capital.jsonl", f as unknown as Record<string, unknown>);
 }
+
+export interface ClosedTrade {
+  asset: string;
+  /** The buy that opened it, and the sell that closed it, milliseconds. */
+  openedAt: number;
+  closedAt: number;
+  heldMin: number;
+  /** Dollars in on the buy, dollars out on the sell as marked, and the realized result against average cost. */
+  inUsd: number | null;
+  outUsd: number | null;
+  resultUsd: number;
+  /** How it ended: the rule's name from the exit note ("trail", "floor", "tape-profit"), or "the model". */
+  how: string;
+  tx: string | null;
+}
+
+/**
+ * PURE: the round trips that closed inside the window, newest first: each realized sell paired with the latest
+ * settled buy of the same asset before it. A partial sell (60% then the rest) is two rows, each with its own result.
+ */
+export function closedTrades(trades: Trade[], events: Array<{ at: number; asset: string; usd: number; id: string }>, sinceMs: number, now: number): ClosedTrade[] {
+  const settled = latestTrades(trades).filter((t) => t.status === "settled").sort((a, b) => a.at - b.at);
+  const out: ClosedTrade[] = [];
+  for (const e of events) {
+    if (e.at < now - sinceMs || e.asset === "ETH" || STABLES.has(e.asset)) continue;
+    const sell = settled.find((t) => t.id === e.id);
+    if (!sell) continue;
+    const buy = [...settled].reverse().find((t) => t.to.asset === e.asset && t.at <= sell.at);
+    if (!buy) continue;
+    const m = /^exit \(([a-z-]+)\)/.exec(sell.note ?? "");
+    out.push({
+      asset: e.asset,
+      openedAt: buy.at,
+      closedAt: sell.updatedAt ?? sell.at,
+      heldMin: Math.max(0, Math.round(((sell.updatedAt ?? sell.at) - buy.at) / 60e3)),
+      inUsd: buy.from.usd ?? null,
+      outUsd: sell.from.usd ?? null,
+      resultUsd: e.usd,
+      how: m ? m[1] : "the model",
+      tx: sell.settlementTx ?? null,
+    });
+  }
+  return out.sort((a, b) => b.closedAt - a.closedAt);
+}
+
+/** PURE: ETH handed to the desk net of ETH taken out, the count the wallet is measured against. */
+export function capitalEth(flows: CapitalFlow[]): number {
+  return flows.filter((f) => f.asset.toUpperCase() === "ETH").reduce((s, f) => s + (f.kind === "deposit" ? f.amount : -f.amount), 0);
+}

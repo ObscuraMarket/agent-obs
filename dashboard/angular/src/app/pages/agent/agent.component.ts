@@ -4,7 +4,7 @@ import { Subscription, interval } from 'rxjs';
 
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import {
-  CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition,
+  CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade,
   ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
 } from '../../service/obs-desk.service';
 
@@ -75,6 +75,12 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   positions: ObsPosition[] = [];
   inFlight: ObsInFlight[] = [];
   posSummary = '';
+  /** The day at a glance, above the fold: trades, the ETH count against the start, what the desk is doing now. */
+  summary: Array<{ k: string; v: string; cls?: string }> = [];
+  closed: ObsClosedTrade[] = [];
+  /** How many tapes the live watch follows, from its last line. */
+  watchingCount = 0;
+  entriesLeft: number | null = null;
   walletRows: KvRow[] = [];
   railGauges: RailGauge[] = [];
   railKv: KvRow[] = [];
@@ -455,6 +461,39 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     return Array.from({ length: n }, (_, i) => (i < f ? cls : ''));
   }
 
+  /** The day at a glance. Every figure here is one the page already holds; nothing is fetched for it. */
+  private buildSummary(): void {
+    const p = this.pnl;
+    const out: Array<{ k: string; v: string; cls?: string }> = [];
+    if (p?.closed) {
+      const wins = p.closed.filter((x) => x.resultUsd > 0).length, losses = p.closed.filter((x) => x.resultUsd < 0).length;
+      const net = p.closed.reduce((s, x) => s + x.resultUsd, 0);
+      out.push({ k: 'Closed, 24h', v: `${p.closed.length} · ${wins} up · ${losses} down · ${this.usd(net, true)}`, cls: this.dir(net) });
+    }
+    const eth = p?.snapshot?.holdings?.['ETH'];
+    const start = p?.capital?.ethIn;
+    if (eth != null && start != null && start > 0) {
+      const pct = ((eth - start) / start) * 100;
+      out.push({ k: 'ETH', v: `${eth.toFixed(4)} vs ${start.toFixed(4)} in · ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`, cls: this.dir(pct) });
+    }
+    const held = this.positions.filter((x) => x.asset !== 'ETH').map((x) => x.asset);
+    const now = held.length ? `holding ${held.join(', ')}` : `flat${this.watchingCount ? `, watching ${this.watchingCount} tape${this.watchingCount === 1 ? '' : 's'}` : ''}`;
+    out.push({ k: 'Now', v: `${now}${this.entriesLeft != null ? ` · ${this.entriesLeft} entr${this.entriesLeft === 1 ? 'y' : 'ies'} left today` : ''}` });
+    this.summary = out;
+  }
+
+  /** The positions table's empty row, true to the day: flat is not "nothing yet". */
+  get flatLine(): string {
+    if (this.closed.length || (this.status?.desk?.trades?.settled ?? 0) > 0) {
+      return `Flat${this.watchingCount ? `, watching ${this.watchingCount} tape${this.watchingCount === 1 ? '' : 's'} for a setup` : ''}${this.entriesLeft != null ? `; ${this.entriesLeft} entr${this.entriesLeft === 1 ? 'y' : 'ies'} left today` : ''}.`;
+    }
+    return 'No positions. The desk holds nothing yet.';
+  }
+
+  howLabel(h: string): string {
+    return ({ 'trail': 'trailing stop', 'floor': 'floor', 'tape-profit': 'buyers thinned', 'take-profit': 'take profit', 'time-stop': 'time stop', 'volume': 'tape rolled over', 'operator': 'operator', 'the model': 'the model sold' } as Record<string, string>)[h] ?? h;
+  }
+
   private buildRails(s: ObsStatus): void {
     const r: ObsRails | undefined = s.rails;
     if (!r) { this.railGauges = []; this.railKv = []; return; }
@@ -462,6 +501,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     // The rule that binds is a count of entries in the trailing 24 hours; the dollar budget is that count times the size,
     // and shown beside a smaller wallet it read as if the desk could spend more than it has.
     const entries = r.entriesToday ?? 0, maxEntries = r.maxEntriesPerDay ?? 0;
+    this.entriesLeft = maxEntries > 0 ? Math.max(0, maxEntries - entries) : null;
+    this.buildSummary();
     this.railGauges = [
       maxEntries > 0
         ? { label: 'Entries today', used: `${entries} / ${maxEntries}`, blocks: this.blocks(entries, maxEntries, entries >= maxEntries ? 'a' : 'g') }
@@ -498,6 +539,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.inFlight = p.inFlight ?? [];
     const n = this.positions.length, f = this.inFlight.length;
     this.posSummary = n ? `${n} position${n > 1 ? 's' : ''}${f ? ` · ${f} in flight` : ''}` : '';
+    this.closed = p.closed ?? [];
+    this.buildSummary();
   }
 
   private buildTicker(items: ObsTrade[]): void {
@@ -1232,6 +1275,10 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   /** The live watch between cycles: a dim line a minute, and a trigger line the moment a tape gives an entry or a held token is looked at. */
   private lastWatchTrigger: string | null = null;
   private onWatch(w: ObsWatchEvent): void {
+    // "watching A x, B y; looks 0.8 s": the count of tapes in play, for the summary and the flat line.
+    const m = /^watching (.+?)(?:;|$)/.exec(w.line || '');
+    const n = m && m[1] !== 'nothing in play' ? m[1].split(', ').length : 0;
+    if (n !== this.watchingCount) { this.watchingCount = n; this.zone.run(() => this.buildSummary()); }
     if (!this.termSeeded) { return; }
     const items: TermItem[] = [];
     if (w.trigger && w.trigger !== this.lastWatchTrigger) {

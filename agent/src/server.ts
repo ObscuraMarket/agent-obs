@@ -12,7 +12,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readLedger } from "./ledger.ts";
 import { liveReads, readsBlock, assetPrices, readMarketSamples, marketSeries, change24h, type Reads } from "./obscura/reads.ts";
-import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, latestSaneMark, bookMovedSince, type Trade, type BookSnapshot } from "./desk/book.ts";
+import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, latestSaneMark, bookMovedSince, closedTrades, capitalEth, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { trackRecord, basisSignal, ratioStats, readPrices, usSession } from "./desk/analysis.ts";
 import { stockReference } from "./obscura/stockRef.ts";
 import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, readTokens, resolveAny, isHolding } from "./desk/candidates.ts";
@@ -317,7 +317,7 @@ async function pnlPayload(hours: number, now: number, withSeries = true): Promis
   const { book } = deskFromDisk();
   const windowMs = (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 90) : 168) * 3600e3;
   const counts = (ts: Trade[]) => ({ settled: ts.filter((x) => x.status === "settled").length, pending: ts.filter((x) => x.status === "pending").length, proposed: ts.filter((x) => x.status === "proposed").length, failed: ts.filter((x) => x.status === "failed" || x.status === "cancelled").length });
-  const capital = (netUsd: number) => ({ netUsd, deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length });
+  const capital = (netUsd: number) => ({ netUsd, ethIn: capitalEth(book.flows), deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length });
   // The chain is the truth once a wallet exists; the ledgers are the fallback. A cold read is never waited for:
   // the ledger's last snapshot answers at once, marked pending, and the next request gets the chain.
   const warm = warmReads();
@@ -345,6 +345,7 @@ async function pnlPayload(hours: number, now: number, withSeries = true): Promis
     realizedUsd: pos.realizedUsd,
     inFlight: pos.inFlight,
     track: trackRecord(pos.events, now),
+    closed: closedTrades(book.trades, pos.events, 24 * 3600e3, now),
     ...(withSeries ? { series: series(book.snapshots, windowMs, now) } : {}),
     capital: capital(live.netCapitalUsd),
     trades: counts(latestTrades(book.trades)),

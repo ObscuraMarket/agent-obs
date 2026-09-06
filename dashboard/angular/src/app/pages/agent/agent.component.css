@@ -1781,3 +1781,25 @@ table.tbl {
   padding: 2px 7px;
   border-radius: 3px;
 }
+
+/* The day at a glance, beneath the chips. */
+.summary { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 18px; margin: 14px auto 0; max-width: 980px; }
+.summary .sum { display: inline-flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.summary .k { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.summary .v { color: var(--white); }
+.summary .v.up { color: var(--lime); }
+.summary .v.down { color: var(--red); }
+.verify { text-align: center; color: var(--muted); font-size: 12.5px; margin: 10px auto 0; max-width: 72ch; }
+.verify a { color: var(--white); text-decoration: underline; text-underline-offset: 3px; }
+
+/* Closed trades beneath the positions. */
+.closed { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.closed-head { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.closed .asset a { color: var(--white); text-decoration: none; border-bottom: 1px solid var(--line); }
+
+/* What the terminal's tags mean. */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 0 0 8px; }
+.legend b { font-weight: 500; text-transform: uppercase; letter-spacing: .06em; margin-right: 6px; color: var(--white); }
+.legend .lg-trigger { color: var(--amber); }
+.legend .lg-holding { color: var(--lime); }
+.legend .lg-bad { color: var(--red); }
