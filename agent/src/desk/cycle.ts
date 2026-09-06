@@ -27,6 +27,7 @@ import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry
 import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, contractsAmong, type HolderRead } from "./holders.ts";
 import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
 import { readLaunch, launchLine, launchRulesFromEnv, launchRulesForRecord, type LaunchRead } from "./launch.ts";
+import { autoEntryPick, autoEntryFor } from "./autoentry.ts";
 import { recordResearch } from "./research.ts";
 import { digestThought, shortWhy } from "./digest.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry } from "./trade-memory.ts";
@@ -374,6 +375,28 @@ if (!thoughts.length) {
 let decision = parsed.decision;
 let proposal: Trade | null = null;
 let executed: Trade | null = null;
+// The reads decide the entry (OBS_AUTO_ENTRY=on): a candidate that passed the entry read, the holder read and the
+// launch read in this same cycle is bought at the rails' size when the model held anyway; its writing stays public.
+if ((process.env.OBS_AUTO_ENTRY ?? "off") === "on" && decision.kind === "hold") {
+  const heldSet = new Set(heldDyn.map((a) => a.symbol));
+  const board = candidates.filter((c) => c.grade).map((c) => c.symbol).concat(early.filter((e) => e.tradable).map((e) => e.symbol));
+  const readsFor = [...new Set(board)].map((sym) => {
+    const er = entryReads.get(sym);
+    const hr = holderReads.get(sym);
+    const lr = launchReads.get(sym);
+    return { symbol: sym, grade: graded.get(sym)?.grade ?? null, entryOk: !!er?.ok, entryWhy: er?.why ?? "", holdersOk: !hr || hr.transfers === 0 || hr.ok, launchOk: lr && lr.exists ? lr.verdict.ok : null, held: heldSet.has(sym) };
+  });
+  const pick = autoEntryPick(readsFor);
+  const ethUsd = prices.ETH ?? reads.prices.ethUsd ?? null;
+  if (pick && ethUsd != null && ethUsd > 0) {
+    const rails = railsFromEnv();
+    const auto = autoEntryFor(pick, observation, rails.probeUsd, ethUsd, rails.candidateFloorPct);
+    decision = { kind: "propose-swap", amount: auto.amountEth, from: "ETH@robinhood", to: `${pick.symbol}@robinhood`, reason: auto.reason };
+    parsed.analysis = auto.analysis;
+    thoughts.push(auto.line);
+    console.log(`[desk] auto entry: ${auto.amountEth} ETH to ${pick.symbol} (${pick.entryWhy.slice(0, 120)})`);
+  }
+}
 if (decision.kind === "propose-swap" && decision.from && decision.to && decision.amount) {
   const from = resolveAny(decision.from, feed);
   const named = resolveAny(decision.to, feed);
