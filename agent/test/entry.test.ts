@@ -44,6 +44,20 @@ test("a pullback that held a higher low and turned up with buyers back is an ent
   assert.match(entryLine(e), /PULLBACK, ENTRY ALLOWED/);
 });
 
+test("a survivor drifting a few percent under where the window started is not a breakdown once the tolerance is set", () => {
+  // Thirty minutes of steady two-way trade with the price 2% under where the window started, a tight 10-minute range and buyers present.
+  const rows: SwapRow[] = [];
+  for (let m = 29; m >= 0; m--) rows.push(row(m, m % 2 === 0 ? "buy" : "sell", 100 + (m % 2 === 0 ? 20 : 0), m > 20 ? 1.0 : 0.98 + (m % 3) * 0.004));
+  const strict = entryRead(rows, "TOK", now, R, true);
+  assert.equal(strict.state, "breakdown", "with no tolerance any tick under the start is a breakdown");
+  const eased = entryRead(rows, "TOK", now, { ...R, breakdownPct: 5, baseRangePct: 10 }, true);
+  assert.notEqual(eased.state, "breakdown");
+  assert.equal(eased.state, "base");
+  assert.equal(eased.ok, true);
+  assert.equal(entryRulesFromEnv({ OBS_ENTRY_BREAKDOWN_PCT: "5" } as unknown as NodeJS.ProcessEnv).breakdownPct, 5);
+  assert.equal(R.breakdownPct, 0, "off by default");
+});
+
 test("with pullbacks switched off the same tape is read as a pullback and refused: the desk buys bases only", () => {
   const rows = [quietStart, row(9, "buy", 100, 1.2), row(7, "buy", 300, 1.5), row(6, "buy", 400, 1.6), row(3, "sell", 200, 1.35), row(1, "buy", 250, 1.42)];
   const e = entryRead(rows, "TOK", now, { ...R, allowPullback: false });

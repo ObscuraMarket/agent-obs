@@ -31,6 +31,8 @@ export interface EntryRules {
   minBuyPressurePct: number;
   /** Whether a held pullback after a run counts as an entry (OBS_ENTRY_PULLBACK). Off, the desk buys bases only. */
   allowPullback: boolean;
+  /** How far under where the window started the price may sit before that alone is a breakdown (OBS_ENTRY_BREAKDOWN_PCT). Zero: any tick under it. A token with a day of trading drifts a few percent either way and is not breaking down. */
+  breakdownPct: number;
 }
 
 export function entryRulesFromEnv(env: NodeJS.ProcessEnv = process.env): EntryRules {
@@ -48,6 +50,7 @@ export function entryRulesFromEnv(env: NodeJS.ProcessEnv = process.env): EntryRu
     baseMin: n("OBS_ENTRY_BASE_MIN", 10),
     minBuyPressurePct: n("OBS_ENTRY_MIN_BUY_PRESSURE_PCT", 50),
     allowPullback: (env.OBS_ENTRY_PULLBACK ?? "on") !== "off",
+    breakdownPct: n("OBS_ENTRY_BREAKDOWN_PCT", 0),
   };
 }
 
@@ -110,7 +113,9 @@ export function entryRead(rows: SwapRow[], symbol: string, now: number, r: Entry
   const trough = Math.min(...w.slice(peakIdx).map((x) => x.price));
   const runPct = ((peak - first) / first) * 100;
   const offPeakPct = ((peak - last) / peak) * 100;
-  const higherLow = trough > first;
+  // Where the window started, with the tolerance: a survivor drifting a few percent under it has not broken down.
+  const floor = first * (1 - r.breakdownPct / 100);
+  const higherLow = trough > floor;
   const bouncePct = ((last - trough) / trough) * 100;
   const rec = w.filter((x) => x.at >= now - 10 * 60e3);
   const buyQ = rec.filter((x) => x.side === "buy").reduce((s, x) => s + x.quoteAmount, 0);
@@ -122,8 +127,8 @@ export function entryRead(rows: SwapRow[], symbol: string, now: number, r: Entry
   const read: EntryRead = { ...base, runPct, offPeakPct, higherLow, bouncePct, recentBuyPressurePct: pressure, rangePct };
   const pressureOk = pressure != null && pressure >= r.minBuyPressurePct;
   const pressureNote = pressure == null ? "no swaps in the last 10 min" : `buy pressure ${pressure.toFixed(0)}% over the last 10 min`;
-  if (offPeakPct > r.pullbackMaxPct || last < first) {
-    return { ...read, state: "breakdown", why: `${offPeakPct.toFixed(0)}% off its peak${last < first ? " and back below where the window started" : ""}: breakdown, no entry` };
+  if (offPeakPct > r.pullbackMaxPct || last < floor) {
+    return { ...read, state: "breakdown", why: `${offPeakPct.toFixed(0)}% off its peak${last < floor ? ` and ${r.breakdownPct > 0 ? `more than ${r.breakdownPct}% ` : ""}below where the window started` : ""}: breakdown, no entry` };
   }
   if (offPeakPct >= r.pullbackMinPct) {
     if (higherLow && bouncePct >= r.bounceMinPct && pressureOk) {
