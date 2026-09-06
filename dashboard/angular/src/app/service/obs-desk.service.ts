@@ -119,7 +119,7 @@ export interface ObsAgentToken {
 /** One line of the research log: what the desk learned about a token, as it learned it (stream event `research`, endpoint `/api/obs/research`). */
 export interface ObsResearchEvent {
   at: number;
-  kind: 'launch' | 'ignited' | 'watch' | 'dropped' | 'entry' | 'holders' | 'launch-read' | 'trigger' | 'decision' | 'scout';
+  kind: 'launch' | 'ignited' | 'watch' | 'dropped' | 'entry' | 'holders' | 'launch-read' | 'trigger' | 'holding' | 'decision' | 'scout';
   symbol: string;
   ok: boolean | null;
   note: string;
@@ -133,6 +133,8 @@ export interface ObsWatchEvent {
   lookMs: number | null;
   line: string;
   trigger: string | null;
+  /** What the trigger was: `entry` on a watched token, `held` (a review) or `exit` (its tape broke) on a token the desk holds. */
+  triggerKind?: 'exit' | 'entry' | 'held' | null;
   cycleRunning: boolean;
 }
 

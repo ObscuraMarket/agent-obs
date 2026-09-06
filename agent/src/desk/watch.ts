@@ -51,6 +51,8 @@ export interface Trigger {
   symbol: string;
   kind: "exit" | "entry" | "held";
   reason: string;
+  /** The short form: the entry read's sentence, the break on a held token, or how long since its last review. */
+  what: string;
 }
 
 const PRIORITY: Record<Trigger["kind"], number> = { exit: 0, entry: 1, held: 2 };
@@ -62,21 +64,33 @@ export function triggersFor(prev: Record<string, WatchState>, next: WatchState[]
     const p = prev[s.symbol];
     const sinceMin = lastThinkAt[s.symbol] != null ? (now - lastThinkAt[s.symbol]) / 60e3 : Infinity;
     if (s.role === "held") {
-      if (s.trend === "rolling over" && p?.trend !== "rolling over") out.push({ symbol: s.symbol, kind: "exit", reason: `the tape rolled over on held ${s.symbol}` });
-      else if (s.offPeakPct != null && s.offPeakPct >= r.giveBackPct && (p?.offPeakPct == null || p.offPeakPct < r.giveBackPct)) out.push({ symbol: s.symbol, kind: "exit", reason: `held ${s.symbol} is ${s.offPeakPct.toFixed(0)}% off its tape peak` });
-      else if (s.buyPressurePct != null && s.buyPressurePct < r.thinPressurePct && (p?.buyPressurePct == null || p.buyPressurePct >= r.thinPressurePct)) out.push({ symbol: s.symbol, kind: "exit", reason: `the buyers are thinning on held ${s.symbol}: buy pressure ${s.buyPressurePct.toFixed(0)}%` });
-      else if (sinceMin >= r.heldEveryMin) out.push({ symbol: s.symbol, kind: "held", reason: `held ${s.symbol}, ${sinceMin === Infinity ? "not reviewed yet" : `${sinceMin.toFixed(0)} min since its last review`}` });
+      if (s.trend === "rolling over" && p?.trend !== "rolling over") out.push({ symbol: s.symbol, kind: "exit", reason: `the tape rolled over on held ${s.symbol}`, what: "the tape rolled over" });
+      else if (s.offPeakPct != null && s.offPeakPct >= r.giveBackPct && (p?.offPeakPct == null || p.offPeakPct < r.giveBackPct)) out.push({ symbol: s.symbol, kind: "exit", reason: `held ${s.symbol} is ${s.offPeakPct.toFixed(0)}% off its tape peak`, what: `${s.offPeakPct.toFixed(0)}% off its tape peak` });
+      else if (s.buyPressurePct != null && s.buyPressurePct < r.thinPressurePct && (p?.buyPressurePct == null || p.buyPressurePct >= r.thinPressurePct)) out.push({ symbol: s.symbol, kind: "exit", reason: `the buyers are thinning on held ${s.symbol}: buy pressure ${s.buyPressurePct.toFixed(0)}%`, what: "the buyers are thinning" });
+      else if (sinceMin >= r.heldEveryMin) {
+        const since = sinceMin === Infinity ? "not reviewed yet" : `${sinceMin.toFixed(0)} min since its last review`;
+        out.push({ symbol: s.symbol, kind: "held", reason: `held ${s.symbol}, ${since}`, what: since });
+      }
       continue;
     }
     if (!s.entryOk || sinceMin < r.cooldownMin) continue;
-    if (!p?.entryOk) out.push({ symbol: s.symbol, kind: "entry", reason: `${s.symbol} gave an entry: ${s.why}` });
-    else if (sinceMin >= r.entryEveryMin) out.push({ symbol: s.symbol, kind: "entry", reason: `${s.symbol} still has an entry after ${sinceMin.toFixed(0)} min: ${s.why}` });
+    if (!p?.entryOk) out.push({ symbol: s.symbol, kind: "entry", reason: `${s.symbol} gave an entry: ${s.why}`, what: s.why });
+    else if (sinceMin >= r.entryEveryMin) out.push({ symbol: s.symbol, kind: "entry", reason: `${s.symbol} still has an entry after ${sinceMin.toFixed(0)} min: ${s.why}`, what: s.why });
   }
   return out.sort((a, b) => PRIORITY[a.kind] - PRIORITY[b.kind]);
 }
 
-/** PURE: one line for the log, once a minute. */
+/** PURE: a held token's tape in one clause for the terminal: "tape holding, 12% off its peak, buy pressure 58%, 14 swaps in the last 15 min". */
+export function holdingNote(s: WatchState, windowMin = 15): string {
+  const bits = [`tape ${s.trend}`];
+  if (s.offPeakPct != null) bits.push(s.offPeakPct < 1 ? "at its peak" : `${s.offPeakPct.toFixed(0)}% off its peak`);
+  if (s.buyPressurePct != null) bits.push(`buy pressure ${s.buyPressurePct.toFixed(0)}%`);
+  bits.push(s.swaps ? `${s.swaps} swap${s.swaps === 1 ? "" : "s"} in the last ${windowMin} min` : `no swaps in the last ${windowMin} min`);
+  return bits.join(", ");
+}
+
+/** PURE: one line for the log, once a minute. A held token reads by its trend; its entry read is not what the desk watches on it. */
 export function heartbeatLine(states: WatchState[], block: number | null, lastTrigger: string | null, lookMs: number | null = null): string {
-  const what = states.length ? states.map((s) => `${s.symbol} ${s.role} ${s.entryOk ? "ENTRY" : s.entryState}${s.role === "held" ? `/${s.trend}` : ""}`).join(", ") : "nothing in play";
+  const what = states.length ? states.map((s) => (s.role === "held" ? `${s.symbol} held ${s.trend}` : `${s.symbol} ${s.role} ${s.entryOk ? "ENTRY" : s.entryState}`)).join(", ") : "nothing in play";
   return `[live] block ${block ?? "?"}${lookMs != null ? ` (looks ${(lookMs / 1000).toFixed(1)} s)` : ""}: ${what}${lastTrigger ? `; last trigger ${lastTrigger}` : ""}`;
 }

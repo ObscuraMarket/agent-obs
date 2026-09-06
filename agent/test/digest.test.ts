@@ -72,6 +72,10 @@ test("the live watch reduces to one terminal line, and a stale file to nothing",
   assert.equal(w.block, 55262326);
   assert.equal(watchEvent({ ...live, at: now - 60_000 }, now), null, "older than half a minute is not live");
   assert.equal(watchEvent({ ...live, watching: [] }, now)!.line, "watching nothing in play; looks 0.8 s");
+  assert.equal(w.triggerKind, null, "an older file has no trigger kind");
+  const held = watchEvent({ ...live, watching: [{ symbol: "MEME", role: "held", entryState: "pullback", entryOk: true, trend: "holding" }], lastTrigger: "18:30:00Z held MEME, 5 min since its last review", lastTriggerKind: "held" }, now)!;
+  assert.equal(held.line, "watching MEME held, holding; looks 0.8 s", "a held token reads by its trend even when its tape gives an entry");
+  assert.equal(held.triggerKind, "held");
 });
 
 test("short reasons for chips, plain headlines, and the agent's lines without repeats", () => {

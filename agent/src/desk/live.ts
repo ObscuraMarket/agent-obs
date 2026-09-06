@@ -19,7 +19,7 @@ import { liveReads, walletBalances } from "../obscura/reads.ts";
 import { readPaper, paperBalances } from "./paper.ts";
 import { readBook, boughtSymbols } from "./book.ts";
 import { readScout } from "./scout.ts";
-import { triggersFor, watchRulesFromEnv, heartbeatLine, type WatchState, type Role } from "./watch.ts";
+import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, type WatchState, type Role, type Trigger } from "./watch.ts";
 
 const POLL_MS = Number(process.env.OBS_LIVE_POLL_MS ?? 3000);
 const BALANCES_MS = Number(process.env.OBS_LIVE_BALANCES_MS ?? 60_000);
@@ -35,6 +35,7 @@ let prev: Record<string, WatchState> = {};
 const lastThinkAt: Record<string, number> = {};
 let running: ChildProcess | null = null;
 let lastTrigger: string | null = null;
+let lastTriggerKind: Trigger["kind"] | null = null;
 let cycles = 0;
 let held: string[] = [];
 let balancesAt = 0;
@@ -79,12 +80,16 @@ function pruneTapes(now: number): void {
 }
 
 /** One desk cycle, the same script the timers run, with the trigger in its environment. One at a time. */
-function runCycle(reason: string, symbol: string, now: number): void {
+function runCycle(t: Trigger, state: WatchState | undefined, now: number): void {
+  const { symbol, reason } = t;
   lastThinkAt[symbol] = now;
   lastTrigger = `${new Date(now).toISOString().slice(11, 19)}Z ${reason}`;
+  lastTriggerKind = t.kind;
   cycles++;
   console.log(`[live] trigger: ${reason}; running the desk`);
-  recordResearch({ kind: "trigger", symbol, ok: null, note: compactWhy(reason.replace(/^\S+ gave an entry: /, "")) });
+  // The terminal's line: an entry is "gave an entry"; a held token is what its tape is doing, on the cadence or at the break.
+  if (t.kind === "entry") recordResearch({ kind: "trigger", symbol, ok: null, note: compactWhy(t.what) });
+  else recordResearch({ kind: "holding", symbol, ok: t.kind === "exit" ? false : null, note: `${t.kind === "exit" ? t.what : "review"}|${state ? holdingNote(state) : t.what}` });
   const child = spawn(join(ROOT_DIR, "node_modules", ".bin", "tsx"), ["src/desk/cycle.ts"], {
     cwd: ROOT_DIR,
     env: { ...process.env, OBS_TICK: "fast", OBS_MIN_THOUGHT_GAP_MIN: String(rules.cooldownMin), OBS_LIVE_TRIGGER: reason },
@@ -185,8 +190,10 @@ async function step(now: number): Promise<void> {
   }
   // The tape's entry state changing on a watched token is research worth a line: the state, and the two
   // figures that decide it, at most once every three minutes per token and state so a flapping read does not flood the log.
+  // Not on a held token: the desk is in it, its line is the holding review, and "no entry" would read as if it were not.
   if (!firstLook) {
     for (const st of states) {
+      if (st.role === "held") continue;
       const p = prev[st.symbol];
       if (p && p.entryState === st.entryState && p.entryOk === st.entryOk) continue;
       if (!p && st.entryState === "quiet") continue;
@@ -199,10 +206,10 @@ async function step(now: number): Promise<void> {
   firstLook = false;
   const triggers = triggersFor(prev, states, lastThinkAt, now, rules);
   prev = Object.fromEntries(states.map((s) => [s.symbol, s]));
-  if (triggers.length && !running) runCycle(triggers[0].reason, triggers[0].symbol, now);
+  if (triggers.length && !running) runCycle(triggers[0], states.find((s) => s.symbol === triggers[0].symbol), now);
   const lookMs = Date.now() - now;
   looks.push(lookMs);
-  writeFileSync(dataPath(LIVE_FILE), JSON.stringify({ at: Date.now(), block, paper: PAPER, pollMs: POLL_MS, lookMs, watching: states, lastTrigger, cycles, cycleRunning: !!running }));
+  writeFileSync(dataPath(LIVE_FILE), JSON.stringify({ at: Date.now(), block, paper: PAPER, pollMs: POLL_MS, lookMs, watching: states, lastTrigger, lastTriggerKind, cycles, cycleRunning: !!running }));
   if (now - lastBeat >= 60_000) {
     lastBeat = now;
     const mean = looks.reduce((s, v) => s + v, 0) / Math.max(1, looks.length);

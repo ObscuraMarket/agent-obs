@@ -285,10 +285,13 @@ Additive fields (since September 3):
   `thought` events carry the same field.
 - The stream's `watch` event (since September 5): the live watch between
   cycles, so the terminal moves while the agent is looking rather than
-  only when it thinks. `{ at, block, lookMs, line, trigger, cycleRunning }`
+  only when it thinks. `{ at, block, lookMs, line, trigger, triggerKind, cycleRunning }`
   with `line` such as `watching JOHN breakdown, BOW ENTRY (pullback); looks 0.8 s`,
   sent about once a minute while the watch is live, and immediately when
   `trigger` changes (a tape gave an entry, whether or not a cycle followed).
+  `triggerKind` (since September 6) is `entry`, or `held` / `exit` when the
+  trigger is a token the desk holds: a review on its cadence, or a break in
+  its tape. Tag those as the holding they are, not as an entry.
   The `hello` frame carries the current one as `watch` when the watch is
   live. Draw it dim; it is context, not a decision.
 
@@ -420,7 +423,8 @@ The research log: what the desk learned about tokens between cycles, one
 line each, newest first. `{ items: [{ at, kind, symbol, ok, note, line }], at }`.
 `kind` is `launch` (a new launch and its gate), `ignited`, `watch` (a pool
 taken onto the block-by-block watch), `dropped`, `entry` (the tape's entry
-state changed), `holders`, `launch-read`, `trigger`, `decision`. `ok` is
+state changed), `holders`, `launch-read`, `trigger`, `holding` (a token the
+desk holds: its review, or with `ok` false the break in its tape), `decision`. `ok` is
 `true` when a gate passed, `false` when it refused, `null` when it is not a
 verdict. `line` is the sentence to show, written for a newcomer
 ("COFF's launch: FAIL, dev buy 27.3%. Not buying."). The stream sends each

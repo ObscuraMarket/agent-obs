@@ -1,7 +1,8 @@
 // The research log: one plain line for each thing the desk learns about a
 // token, as it learns it. A new launch and its gate; an ignition; a token
 // taken onto the watch and dropped from it; the tape's entry state changing;
-// a holders read; a launch read; a trigger; a decision. The cycles say what
+// a holders read; a launch read; a trigger; a held position's review or
+// the break in its tape; a decision. The cycles say what
 // the agent decided; this says what it was doing in between, in words a
 // newcomer follows. Kept in obs-research.jsonl, served by the API, drawn by
 // the page's terminal between the cycles.
@@ -10,7 +11,7 @@ import { DRY } from "../config.ts";
 
 export const RESEARCH_LEDGER = "obs-research.jsonl";
 
-export type ResearchKind = "launch" | "ignited" | "watch" | "dropped" | "entry" | "holders" | "launch-read" | "trigger" | "decision" | "scout";
+export type ResearchKind = "launch" | "ignited" | "watch" | "dropped" | "entry" | "holders" | "launch-read" | "trigger" | "holding" | "decision" | "scout";
 
 export interface ResearchEvent {
   at: number;
@@ -62,6 +63,13 @@ export function researchLine(e: ResearchInput): string {
       return e.ok == null ? `${s}'s launch: ${e.note}.` : e.ok ? `${s}'s launch: ${e.note}. OK.` : `${s}'s launch: FAIL, ${e.note}. Not buying.`;
     case "trigger":
       return `${s} gave an entry: ${e.note}. Thinking now.`;
+    case "holding": {
+      // "review|<the tape>" on the cadence; "<the break>|<the tape>" the moment a held token's tape breaks.
+      const [what, ...rest] = e.note.split("|");
+      const n = rest.join("|").trim();
+      if (what === "review") return `Holding ${s}: ${n}. Reviewing.`;
+      return `Holding ${s}: ${what}${n ? ` (${n})` : ""}. Checking the exits now.`;
+    }
     case "decision":
       return `Decided: ${e.note}`;
     case "scout":

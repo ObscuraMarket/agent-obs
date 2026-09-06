@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { triggersFor, watchRulesFromEnv, heartbeatLine, type WatchState } from "../src/desk/watch.ts";
+import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, type WatchState } from "../src/desk/watch.ts";
 
 const R = watchRulesFromEnv({} as NodeJS.ProcessEnv);
 const now = 1_800_000_000_000;
@@ -26,6 +26,8 @@ test("a held token fires an exit trigger the moment its tape breaks, and a revie
   assert.deepEqual(triggersFor({ HLD: held }, [held], { HLD: now - 2 * M }, now, R), [], "quiet and recently reviewed");
   assert.equal(triggersFor({ HLD: held }, [held], { HLD: now - 6 * M }, now, R)[0]?.kind, "held", "due a review");
   assert.equal(triggersFor({}, [held], {}, now, R)[0]?.reason, "held HLD, not reviewed yet");
+  assert.equal(triggersFor({ HLD: held }, [rolled], { HLD: now - 1 * M }, now, R)[0].what, "the tape rolled over", "the short form for the terminal");
+  assert.equal(triggersFor({ HLD: held }, [held], { HLD: now - 6 * M }, now, R)[0]?.what, "6 min since its last review");
   const thinning = st({ symbol: "HLD", role: "held", buyPressurePct: 38 });
   assert.match(triggersFor({ HLD: st({ symbol: "HLD", role: "held", buyPressurePct: 55 }) }, [thinning], { HLD: now - 1 * M }, now, R)[0].reason, /buyers are thinning/);
   assert.deepEqual(triggersFor({ HLD: thinning }, [thinning], { HLD: now - 1 * M }, now, R), [], "already thin, already fired");
@@ -35,8 +37,16 @@ test("exits come before entries before reviews, and the heartbeat reads at a gla
   const states = [st({ symbol: "A", role: "held" }), st({ symbol: "B", entryOk: true, entryState: "base", why: "base" }), st({ symbol: "C", role: "held", trend: "rolling over" })];
   const t = triggersFor({ C: st({ symbol: "C", role: "held" }) }, states, {}, now, R);
   assert.deepEqual(t.map((x) => `${x.kind}:${x.symbol}`), ["exit:C", "entry:B", "held:A"]);
-  assert.equal(heartbeatLine(states, 1234, null), "[live] block 1234: A held waiting/holding, B launch ENTRY, C held waiting/rolling over");
+  assert.equal(heartbeatLine(states, 1234, null), "[live] block 1234: A held holding, B launch ENTRY, C held rolling over");
   assert.equal(heartbeatLine([], null, "10:00:00Z x"), "[live] block ?: nothing in play; last trigger 10:00:00Z x");
   assert.equal(heartbeatLine([], 7, null, 1234), "[live] block 7 (looks 1.2 s): nothing in play");
   assert.equal(watchRulesFromEnv({ OBS_CANDIDATE_TRAIL_PCT: "20" } as NodeJS.ProcessEnv).giveBackPct, 20, "the give-back follows the trailing stop unless set");
+});
+
+test("a held token's line is what its tape is doing, not its entry read", () => {
+  assert.equal(holdingNote(st({ role: "held", offPeakPct: 12, buyPressurePct: 58.4, swaps: 14 })), "tape holding, 12% off its peak, buy pressure 58%, 14 swaps in the last 15 min");
+  assert.equal(holdingNote(st({ role: "held", trend: "rising", offPeakPct: 0, buyPressurePct: null, swaps: 1 })), "tape rising, at its peak, 1 swap in the last 15 min");
+  assert.equal(holdingNote(st({ role: "held", trend: "thin", offPeakPct: null, swaps: 0 })), "tape thin, no swaps in the last 15 min");
+  const held = st({ symbol: "HLD", role: "held", entryOk: true, entryState: "pullback" });
+  assert.equal(heartbeatLine([held], 1, null), "[live] block 1: HLD held holding", "an entry read on a held token is not an ENTRY");
 });

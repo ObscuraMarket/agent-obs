@@ -166,18 +166,20 @@ export interface WatchEvent {
   line: string;
   /** The last trigger the watch fired, verbatim, when there is one. */
   trigger: string | null;
+  /** What that trigger was: an entry on a watched token, or a review or a break on a held one. */
+  triggerKind: "exit" | "entry" | "held" | null;
   cycleRunning: boolean;
 }
 
 /** PURE: the live watch's file reduced to a line. Null when the file is stale (older than 30 s) or empty. */
-export function watchEvent(live: { at?: number; block?: number | null; lookMs?: number | null; watching?: Array<{ symbol: string; role?: string; entryState?: string; entryOk?: boolean; trend?: string }>; lastTrigger?: string | null; cycleRunning?: boolean } | null, now = Date.now()): WatchEvent | null {
+export function watchEvent(live: { at?: number; block?: number | null; lookMs?: number | null; watching?: Array<{ symbol: string; role?: string; entryState?: string; entryOk?: boolean; trend?: string }>; lastTrigger?: string | null; lastTriggerKind?: "exit" | "entry" | "held" | null; cycleRunning?: boolean } | null, now = Date.now()): WatchEvent | null {
   if (!live || !live.at || now - live.at > 30_000) return null;
   const w = live.watching ?? [];
   const what = w.length
-    ? w.map((s) => `${s.symbol} ${s.entryOk ? `ENTRY (${s.entryState})` : s.role === "held" ? `held, ${s.trend ?? "holding"}` : s.entryState ?? "watching"}`).join(", ")
+    ? w.map((s) => `${s.symbol} ${s.role === "held" ? `held, ${s.trend ?? "holding"}` : s.entryOk ? `ENTRY (${s.entryState})` : s.entryState ?? "watching"}`).join(", ")
     : "nothing in play";
   const looks = live.lookMs != null ? `; looks ${(live.lookMs / 1000).toFixed(1)} s` : "";
-  return { at: live.at, block: live.block ?? null, lookMs: live.lookMs ?? null, line: `watching ${what}${looks}`, trigger: live.lastTrigger ?? null, cycleRunning: !!live.cycleRunning };
+  return { at: live.at, block: live.block ?? null, lookMs: live.lookMs ?? null, line: `watching ${what}${looks}`, trigger: live.lastTrigger ?? null, triggerKind: live.lastTriggerKind ?? null, cycleRunning: !!live.cycleRunning };
 }
 
 /** PURE: one short status line per token, the way the page shows it. */

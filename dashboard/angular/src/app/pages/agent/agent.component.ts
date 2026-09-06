@@ -1202,15 +1202,17 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.push([this.researchLine(r, true)]);
   }
 
-  /** The live watch between cycles: a dim line a minute, and a trigger line the moment a tape gives an entry. */
+  /** The live watch between cycles: a dim line a minute, and a trigger line the moment a tape gives an entry or a held token is looked at. */
   private lastWatchTrigger: string | null = null;
   private onWatch(w: ObsWatchEvent): void {
     if (!this.termSeeded) { return; }
     const items: TermItem[] = [];
     if (w.trigger && w.trigger !== this.lastWatchTrigger) {
       this.lastWatchTrigger = w.trigger;
+      // A held token's review or break is tagged as the holding it is; only a watched token's entry is a "trigger".
+      const holding = w.triggerKind === 'held' || w.triggerKind === 'exit';
       // The trigger text opens with the desk's UTC clock; the row already carries the viewer's, so one clock per line.
-      items.push(this.line('trigger', w.at, 'trigger', w.trigger.replace(/^\d\d:\d\d:\d\dZ\s+/, '') + (w.cycleRunning ? ' (thinking)' : ''), true));
+      items.push(this.line(holding ? 'trigger holding' : 'trigger', w.at, holding ? 'holding' : 'trigger', w.trigger.replace(/^\d\d:\d\d:\d\dZ\s+/, '') + (w.cycleRunning ? ' (thinking)' : ''), true));
     }
     const term = this.term();
     const last = term?.lastElementChild as HTMLElement | null;

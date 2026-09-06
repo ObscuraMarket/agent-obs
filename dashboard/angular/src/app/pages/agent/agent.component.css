@@ -1088,7 +1088,17 @@
   color: var(--amber);
 }
 
-/* The live watch between cycles: dim, it is context; a trigger is the moment a tape gave an entry. */
+/* A token the desk holds: its review reads in the position's colour; a break in its tape keeps the verdict's red. */
+.term ::ng-deep .research.r-holding,
+.term ::ng-deep .research.r-holding .tag {
+  opacity: 1;
+}
+
+.term ::ng-deep .research.r-holding:not(.bad) .tag {
+  color: var(--lime);
+}
+
+/* The live watch between cycles: dim, it is context; a trigger is the moment a tape gave an entry, or a held token was looked at. */
 .term ::ng-deep .watch,
 .term ::ng-deep .watch .tag {
   color: var(--white);
@@ -1098,6 +1108,11 @@
 .term ::ng-deep .trigger,
 .term ::ng-deep .trigger .tag {
   color: var(--amber);
+}
+
+.term ::ng-deep .trigger.holding,
+.term ::ng-deep .trigger.holding .tag {
+  color: var(--lime);
 }
 
 /* Everything it read, folded behind one click. */

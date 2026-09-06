@@ -104,8 +104,11 @@ carries `token.change24h` for OBS the same way. The desk never trades it.
 The research log: what the desk learned about tokens between cycles, one
 line each, newest first: `{ items: [{ at, kind, symbol, ok, note, line }] }`.
 `kind`: `launch`, `ignited`, `watch`, `dropped`, `entry`, `holders`,
-`launch-read`, `trigger`, `decision`. `ok` true (a gate passed), false (it
-refused) or null. `line` is the sentence to show: "COFF's launch: FAIL, dev
+`launch-read`, `trigger`, `holding`, `decision`. `ok` true (a gate passed),
+false (it refused) or null. `holding` is a token the desk holds: its review
+on the cadence ("Holding TRIBUTE: tape holding, 12% off its peak, buy
+pressure 58%, 14 swaps in the last 15 min. Reviewing.") or, with `ok`
+false, the break in its tape that sent the desk to its exits. `line` is the sentence to show: "COFF's launch: FAIL, dev
 buy 27.3%. Not buying." On the stream each new one is a `research` event and
 `hello` carries the last forty.
 
@@ -129,8 +132,11 @@ live watch is running and immediately when its trigger changes:
 
 ```
 event: watch
-data: {"at":1788632975808,"block":55262326,"lookMs":812,"line":"watching JOHN breakdown, BOW quiet; looks 0.8 s","trigger":"18:22:50Z JOHN gave an entry: ...","cycleRunning":false}
+data: {"at":1788632975808,"block":55262326,"lookMs":812,"line":"watching JOHN breakdown, BOW quiet; looks 0.8 s","trigger":"18:22:50Z JOHN gave an entry: ...","triggerKind":"entry","cycleRunning":false}
 ```
+
+`triggerKind` is `entry` (a watched token's tape gave an entry), `held` (a
+token the desk holds, reviewed on its cadence) or `exit` (its tape broke).
 
 A `: ping` comment every 25 seconds keeps the connection open. If the
 stream cannot be opened, poll `/api/obs/thoughts` and `/api/obs/live`.

@@ -17,5 +17,7 @@ test("every research event reads as one plain sentence a newcomer follows", () =
   assert.equal(researchLine({ kind: "launch-read", symbol: "COFF", ok: false, note: "dev buy 27.3%" }), "COFF's launch: FAIL, dev buy 27.3%. Not buying.");
   assert.equal(researchLine({ kind: "launch-read", symbol: "XI", ok: true, note: "dev buy 1.85%, no exempt wallets, links set, score 100" }), "XI's launch: dev buy 1.85%, no exempt wallets, links set, score 100. OK.");
   assert.equal(researchLine({ kind: "trigger", symbol: "JOHN", ok: null, note: "pullback holding, entry allowed" }), "JOHN gave an entry: pullback holding, entry allowed. Thinking now.");
+  assert.equal(researchLine({ kind: "holding", symbol: "TRIBUTE", ok: null, note: "review|tape holding, 12% off its peak, buy pressure 58%, 14 swaps in the last 15 min" }), "Holding TRIBUTE: tape holding, 12% off its peak, buy pressure 58%, 14 swaps in the last 15 min. Reviewing.");
+  assert.equal(researchLine({ kind: "holding", symbol: "TRIBUTE", ok: false, note: "the tape rolled over|tape rolling over, 31% off its peak, buy pressure 40%, 9 swaps in the last 15 min" }), "Holding TRIBUTE: the tape rolled over (tape rolling over, 31% off its peak, buy pressure 40%, 9 swaps in the last 15 min). Checking the exits now.");
   assert.equal(researchLine({ kind: "decision", symbol: "", ok: null, note: "hold. Candidates either fail launch safety checks or are gated by the entry read." }), "Decided: hold. Candidates either fail launch safety checks or are gated by the entry read.");
 });
