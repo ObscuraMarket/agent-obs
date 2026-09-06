@@ -15,7 +15,7 @@ import { liveReads, readsBlock, assetPrices, readMarketSamples, marketSeries, ch
 import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, latestSaneMark, bookMovedSince, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { trackRecord, basisSignal, ratioStats, readPrices, usSession } from "./desk/analysis.ts";
 import { stockReference } from "./obscura/stockRef.ts";
-import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, readTokens, resolveAny } from "./desk/candidates.ts";
+import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, readTokens, resolveAny, isHolding } from "./desk/candidates.ts";
 import { entryRead, entryRulesFromEnv } from "./desk/entry.ts";
 import { readCloses, launchRecord, launchRecordLine } from "./desk/trade-memory.ts";
 import { readTape, tapeStats } from "./desk/tape.ts";
@@ -241,20 +241,36 @@ function readsBehindBook(trades: Trade[]): boolean {
   if (!readsRefreshing) readsRefreshing = refreshReads().catch(() => undefined).finally(() => { readsRefreshing = null; });
   return true;
 }
-let pricesCache: { at: number; key: string; value: Record<string, number | null> } | null = null;
-let pricesRefreshing: Promise<void> | null = null;
-/** Prices: the same rule as the reads; a stale value is served and refreshed behind the request. */
-async function cachedPrices(symbols: string[]): Promise<Record<string, number | null>> {
-  const key = [...new Set(symbols.map((s) => s.toUpperCase()))].sort().join(",");
-  if (pricesCache && pricesCache.key === key) {
-    if (Date.now() - pricesCache.at >= READS_TTL_MS && !pricesRefreshing) {
-      pricesRefreshing = assetPrices(symbols, { OBS: readsCache?.value.market?.priceUsd ?? null }).then((value) => { pricesCache = { at: Date.now(), key, value }; }).catch(() => undefined).finally(() => { pricesRefreshing = null; });
-    }
-    return pricesCache.value;
-  }
-  const value = await assetPrices(symbols, { OBS: readsCache?.value.market?.priceUsd ?? null });
-  pricesCache = { at: Date.now(), key, value };
-  return value;
+/**
+ * Prices, one entry per symbol with the moment it was read. A request is answered from the book at once, fresh or
+ * stale, and anything missing or older than the TTL is refreshed behind it; refreshes run one after another, since
+ * a launch token's price is a pool read on a rate-limited RPC. The old cache was keyed on the whole symbol set, so a
+ * new position or a restart forced a cold read of every symbol, one pool at a time, with every request waiting on it.
+ */
+const priceBook = new Map<string, { at: number; price: number | null }>();
+let priceRefresh: Promise<void> | null = null;
+function refreshPrices(symbols: string[]): Promise<void> {
+  const run = (priceRefresh ?? Promise.resolve())
+    .then(() => assetPrices(symbols, { OBS: readsCache?.value.market?.priceUsd ?? null }))
+    .then((value) => { const at = Date.now(); for (const [s, p] of Object.entries(value)) priceBook.set(s.toUpperCase(), { at, price: p }); })
+    .catch(() => undefined);
+  priceRefresh = run.finally(() => { if (priceRefresh === run) priceRefresh = null; });
+  return priceRefresh;
+}
+/** Prices for these symbols from the book, at once; null for a symbol never read. `wait` awaits the refresh only when a symbol has never been read (the cold boot), for background callers. */
+async function cachedPrices(symbols: string[], opts: { wait?: boolean } = {}): Promise<Record<string, number | null>> {
+  const want = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const now = Date.now();
+  const stale = want.filter((s) => { const e = priceBook.get(s); return !e || now - e.at >= READS_TTL_MS; });
+  const refresh = stale.length ? refreshPrices(stale) : null;
+  if (opts.wait && refresh && want.some((s) => !priceBook.has(s))) await refresh;
+  const out: Record<string, number | null> = {};
+  for (const s of want) out[s] = priceBook.get(s)?.price ?? null;
+  return out;
+}
+/** PURE: the held symbols (above dust) whose price has never been read: the snapshot cannot be marked from the chain until they are. */
+function unpricedHeld(bySymbol: Record<string, number>): string[] {
+  return Object.entries(bySymbol).filter(([s, q]) => isHolding(q) && !priceBook.has(s.toUpperCase())).map(([s]) => s);
 }
 /** The reads when they are warm, else null at once: for endpoints that must never wait. */
 function warmReads(): Reads | null {
@@ -270,7 +286,7 @@ async function refreshAgentToken(): Promise<void> {
   if (agentTokenRefreshing) return;
   agentTokenRefreshing = true;
   try {
-    const p = await cachedPrices(["ETH"]);
+    const p = await cachedPrices(["ETH"], { wait: true });
     agentTokenCache = await readAgentToken(p.ETH ?? null, Date.now());
   } catch {
     /* keep the last read */
@@ -439,7 +455,7 @@ let signalsRefreshing = false;
 async function computeSignals(now: number): Promise<Record<string, unknown>> {
   const r = await cachedReads();
         const basisOn = (process.env.OBS_BASIS ?? "off") === "on";
-        const prices = await cachedPrices(basisOn ? ["ETH", "NVDA"] : ["ETH"]);
+        const prices = await cachedPrices(basisOn ? ["ETH", "NVDA"] : ["ETH"], { wait: true });
         const ref = basisOn ? await stockReference("NVDA", now) : null;
         const nvda = basisOn ? prices.NVDA ?? null : null;
         const basis = ref && nvda ? basisSignal(nvda, ref, 0.62, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
@@ -600,11 +616,15 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         const chain = !behind && r.wallet ? walletBalances(r.wallet) : null;
         const held = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, book.trades, {}, now).holdings);
         const prices = await cachedPrices(held);
-        const live = chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now);
+        // A held token whose price has never been read (a new position, or the first request after a restart) would
+        // mark the wallet short by that position; the cycle's last mark stands in, pending, until its price lands.
+        const unpriced = chain ? unpricedHeld(chain.bySymbol) : [];
+        const standIn = unpriced.length ? latestSaneMark(book.snapshots) : null;
+        const live = standIn ?? (chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now));
         const t = latestTrades(book.trades);
         const pos = positions(book.flows, book.trades, live.holdings, prices);
         json(res, 200, {
-          ...(behind ? { pending: true } : {}),
+          ...(behind || standIn ? { pending: true } : {}),
           snapshot: live,
           prices,
           positions: pos.positions,
@@ -695,8 +715,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   void refreshSignals();
   setInterval(() => void refreshSignals(), 20_000).unref();
   // Warm the reads and prices at boot, and keep them warm, so no visitor ever pays for a cold read.
-  void cachedReads().then(() => cachedPrices(["ETH"])).catch(() => undefined);
-  setInterval(() => { void cachedReads().catch(() => undefined); void cachedPrices(["ETH"]).catch(() => undefined); }, READS_TTL_MS).unref();
+  // Warm at boot and keep warm: ETH and whatever the wallet holds, so the first request after a restart, and the first
+  // after a new position, is answered from the book rather than waiting on a cold read of every pool.
+  const heldSymbols = () => { const w = readsCache?.value.wallet; return w ? ["ETH", ...Object.keys(walletBalances(w).bySymbol)] : ["ETH"]; };
+  void cachedReads().then(() => cachedPrices(heldSymbols())).catch(() => undefined);
+  setInterval(() => { void cachedReads().then(() => cachedPrices(heldSymbols())).catch(() => undefined); }, READS_TTL_MS).unref();
   createServer(handle).listen(PORT, process.env.OBS_DASHBOARD_HOST || "127.0.0.1", () => {
     console.log(`[obs] dashboard API on http://localhost:${PORT} (page at /, JSON under /api/obs/*)`);
   });
