@@ -274,7 +274,7 @@ if (PAPER && chain && heldDyn.length) {
 const inPlay = new Map<string, ReturnType<typeof resolveAny>>();
 for (const a of heldDyn) inPlay.set(a.symbol, a);
 for (const e of early.filter((x) => x.tradable).slice(0, 3)) if (!inPlay.has(e.symbol)) inPlay.set(e.symbol, resolveAny(`${e.symbol}@robinhood`, feed));
-for (const cnd of candidates.filter((x) => x.grade).slice(0, 2)) if (!inPlay.has(cnd.symbol)) inPlay.set(cnd.symbol, resolveAny(`${cnd.symbol}@robinhood`, feed));
+for (const cnd of candidates.filter((x) => x.grade).slice(0, Number(process.env.OBS_CYCLE_READ_CANDIDATES ?? 2))) if (!inPlay.has(cnd.symbol)) inPlay.set(cnd.symbol, resolveAny(`${cnd.symbol}@robinhood`, feed));
 const tapes: string[] = [];
 const tapeTrend = new Map<string, string>();
 // The entry read per token: volume puts it on watch, the price action gives the entry.

@@ -12,6 +12,7 @@ import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync, wri
 import { dirname, join } from "node:path";
 import { fetchTokenPairs, fetchTokensBatch, pickPool, readScreener, writeScreener, screenerRulesFromEnv, recordFails, capKeeps, rotateSlice, type ScreenerToken, type ScreenerPair } from "./screener.ts";
 import { curveKey } from "./candidates.ts";
+import { recordResearch } from "./research.ts";
 import { NEVER_TRADE, dataPath } from "../config.ts";
 
 const FEED = process.env.OBS_CANDIDATE_FEED ?? "";
@@ -142,6 +143,16 @@ async function round(): Promise<void> {
   kept.sort((a, b) => b.pool.vol24 - a.pool.vol24);
   writeScreener({ at: now, tokens: kept, cursor });
   writeKnown(known);
+  // A token that enters the range for the first time is named the moment it is found, with its record, so the
+  // terminal shows the find and the operator can look at it while the scout is still reading its tape.
+  const inRange = (t: ScreenerToken) => t.kept === "record" && t.capUsd != null && (rules.entryCapMinUsd <= 0 || t.capUsd >= rules.entryCapMinUsd) && (rules.maxCapUsd <= 0 || t.capUsd <= rules.maxCapUsd);
+  const before = new Set(prior.tokens.filter(inRange).map((t) => t.token));
+  for (const t of kept.filter(inRange)) {
+    if (before.has(t.token)) continue;
+    const ageH = (now - (t.launchAt ?? t.pool.pairCreatedAt ?? now)) / 3600e3;
+    const k = (x: number) => (x >= 1e6 ? `$${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `$${(x / 1e3).toFixed(0)}k` : `$${Math.round(x)}`);
+    recordResearch({ kind: "scout", symbol: t.symbol, ok: null, note: `found ${t.symbol} in the wider net: ${ageH >= 48 ? `${(ageH / 24).toFixed(1)} days` : `${ageH.toFixed(0)} h`} old, cap ${k(t.capUsd ?? 0)}, ${k(t.pool.vol24)} in 24h, ${k(t.pool.vol1)} last hour, liquidity ${t.pool.liqUsd != null ? k(t.pool.liqUsd) : "unknown"}, on its ${t.pool.quoteSymbol} pool. Reading its tape.` });
+  }
   const caps = kept.filter((t) => t.kept === "cap").length;
   console.log(`[screener] known ${known.size} (+${added}), hot ${hot.length}, cold ${cold.length} of which ${coldSlice.length} this round (cursor ${cursor}); ${calls} calls (${failed} failed), ${main.size} answered: ${kept.length} kept (${kept.length - caps} with a record, ${caps} by market cap)${kept.length ? `: ${kept.slice(0, 6).map((t) => `${t.symbol} $${Math.round(t.pool.vol24 / 1000)}k/24h${t.capUsd != null ? ` cap $${(t.capUsd / 1e6).toFixed(2)}M` : ""}`).join(", ")}` : ""}; ${((Date.now() - now) / 1000).toFixed(0)} s`);
 }

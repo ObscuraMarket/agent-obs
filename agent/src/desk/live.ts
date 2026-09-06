@@ -155,7 +155,7 @@ async function step(now: number): Promise<void> {
   const scout = readScout();
   const scoutFresh = scout.ranked.length > 0 && now - scout.at < 15 * 60e3;
   const survivors = scoutFresh ? scout.ranked.map((r) => r.symbol) : feed.candidates.filter((x) => x.stable?.stable || (x.record && x.record.vol1 > 0)).map((c) => c.symbol);
-  for (const symbol of survivors.slice(0, 6)) add(symbol, "stable");
+  for (const symbol of survivors.slice(0, MAX_WATCH)) add(symbol, "stable");
   const items: Array<{ symbol: string; role: Role; spec: NonNullable<ReturnType<typeof dynamicPoolSpec>> }> = [];
   for (const { symbol, role } of inPlay.slice(0, MAX_WATCH)) {
     const a = resolveAny(`${symbol}@robinhood`, feed);
