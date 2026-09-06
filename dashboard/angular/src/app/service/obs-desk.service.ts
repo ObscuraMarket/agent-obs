@@ -25,6 +25,9 @@ export interface ObsRails {
   tradingOn: boolean;
   maxSwapUsd: number;
   dailySwapUsd: number;
+  /** Entries sent in the trailing 24 hours and the cap; the rule that binds. */
+  entriesToday?: number;
+  maxEntriesPerDay?: number;
   maxOpenOrders: number;
   gasReserveEth: number;
   sentTodayUsd: number;

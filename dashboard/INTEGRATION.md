@@ -124,7 +124,10 @@ gasReserveEth, sentTodayUsd, openOrders, allowedAssets, allowedPartners,
 allowedChains }`. `allowedChains` is the chains both legs of a swap must be
 on, `["robinhood"]`: the desk trades on Robinhood Chain only.
 `sentTodayUsd` is dollars sent into entries in the last 24 hours (exits do
-not count); `openOrders`
+not count); `entriesToday` and `maxEntriesPerDay` (since September 6) are
+the count of entries in the last 24 hours and its cap, the rule that binds:
+show these as the daily gauge, since the dollar budget is the cap times the
+size and reads oddly beside a smaller wallet; `openOrders`
 counts pending swaps; `allowedPartners` is `null` when any Obscura route may
 be used.
 

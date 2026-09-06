@@ -42,7 +42,7 @@ function readWatch(now = Date.now()): WatchEvent | null {
 }
 /** How often the stream repeats the watch line when nothing else moved. */
 const WATCH_EVERY_MS = 60_000;
-import { tradingArmed, railsFromEnv, sentTodayUsd, type Rails } from "./desk/rails.ts";
+import { tradingArmed, railsFromEnv, sentTodayUsd, entryStats, type Rails } from "./desk/rails.ts";
 import { walletBalances } from "./obscura/reads.ts";
 import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL, dataPath } from "./config.ts";
 import { xLive, xConfigured } from "./social/xClient.ts";
@@ -164,6 +164,9 @@ export interface RailsSummary {
   tradingOn: boolean;
   maxSwapUsd: number;
   dailySwapUsd: number;
+  /** Entries sent in the trailing 24 hours, and the cap: the rule that binds, since the dollar budget is the cap times the size. */
+  entriesToday: number;
+  maxEntriesPerDay: number;
   maxOpenOrders: number;
   gasReserveEth: number;
   /** Dollars sent into routes in the last 24 hours, against the daily cap. */
@@ -185,6 +188,8 @@ export function railsSummary(rails: Rails, trades: Trade[], now: number): RailsS
     maxOpenOrders: rails.maxOpenOrders,
     gasReserveEth: rails.gasReserveEth,
     sentTodayUsd: sentTodayUsd(t, now),
+    entriesToday: entryStats(t, now).entriesToday,
+    maxEntriesPerDay: rails.maxEntriesPerDay,
     openOrders: t.filter((x) => x.status === "pending").length,
     allowedAssets: [...rails.allowedAssets],
     allowedPartners: rails.allowedPartners ? [...rails.allowedPartners] : null,
