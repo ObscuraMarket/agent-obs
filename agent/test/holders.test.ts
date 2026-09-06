@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { balancesFrom, holderRead, holdersLine, holderRulesFromEnv, holderReadFromList, explorerHolderCount, type TransferRow, type ExplorerHolder } from "../src/desk/holders.ts";
+import { balancesFrom, holderRead, holdersLine, holderRulesFromEnv, holderReadFromList, explorerHolderCount, withoutWalletCount, type TransferRow, type ExplorerHolder, type HolderRead } from "../src/desk/holders.ts";
 
 const R = holderRulesFromEnv({} as NodeJS.ProcessEnv);
 
@@ -41,6 +41,20 @@ test("the explorer's holder count is read whichever name its API gives it, and a
   assert.match(floor.why, /at least 20 wallets by the explorer/);
   const exact = holderReadFromList(list, 20, "WHLR", "0x2e", 1_788_650_000_000, rules, [], false);
   assert.equal(exact.ok, false, "the same twenty, known to be all of them, is under the bar");
+});
+
+test("when the explorer refuses, a transfer scan's wallet count is not a verdict on a token with days of trading", () => {
+  // RWAPACT, 2026-09-06 11:35Z: the explorer answered 403; the scan of recent transfers saw 17 wallets move and the gate failed a token with 280 holders.
+  const base: HolderRead = { symbol: "RWAPACT", token: "0x4b", at: 1, transfers: 40, wallets: 17, top1Pct: 10, top10Pct: 60, earlyBuyers: 0, earlySameBlock: 0, earlySameSize: 0, bundlePct: null, freshTop10: null, infra: [], ok: false, why: "17 wallets (30 needed)" };
+  const r = withoutWalletCount(base, "the explorer answered 403; read from recent transfers");
+  assert.equal(r.ok, true, r.why);
+  assert.match(r.why, /wallet count not read \(the explorer answered 403; read from recent transfers\); largest 10%, top ten 60%/);
+  const concentrated = withoutWalletCount({ ...base, top1Pct: 70, why: "17 wallets (30 needed); the largest wallet holds 70% (50% allowed)" }, "the explorer answered 403; read from recent transfers");
+  assert.equal(concentrated.ok, false, "a real concentration failure still stands");
+  assert.match(concentrated.why, /^the largest wallet holds 70% \(50% allowed\) \(the explorer answered 403/);
+  const fine = withoutWalletCount({ ...base, ok: true, wallets: 45, why: "45 wallets, largest 10%" }, "note");
+  assert.equal(fine.ok, true);
+  assert.match(fine.why, /45 wallets, largest 10% \(note\)/);
 });
 const now = 1_800_000_000_000;
 const POOL = "0xpool";

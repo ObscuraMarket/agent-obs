@@ -24,7 +24,7 @@ import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCh
 import { stockReference } from "../obscura/stockRef.ts";
 import { updateTape, tapeStats, tapeLine } from "./tape.ts";
 import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry.ts";
-import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, contractsAmong, explorerHolders, holderReadFromList, type HolderRead } from "./holders.ts";
+import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, contractsAmong, explorerHolders, holderReadFromList, withoutWalletCount, type HolderRead } from "./holders.ts";
 import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
 import { readLaunch, launchLine, launchRulesFromEnv, launchRulesForRecord, type LaunchRead } from "./launch.ts";
 import { autoEntryPick, autoEntryFor } from "./autoentry.ts";
@@ -316,11 +316,13 @@ for (const [sym, a] of inPlay) {
       try {
         const x = await explorerHolders(a.contract, undefined, a.decimals);
         hr = holderReadFromList(x.list, x.holders, sym, a.contract, now, holderRules, infraBase, x.countIsFloor);
+        if (x.ageMin != null) hr.why += ` (the explorer is refusing; its read from ${x.ageMin} min ago stands in)`;
         top = x.list.filter((h) => !h.isContract).sort((p, q) => q.balance - p.balance).slice(0, 10).map((h) => h.address);
-      } catch {
+      } catch (e) {
+        const reason = e instanceof Error ? e.message.replace(/^explorer /, "") : "no answer";
+        console.log(`[desk] holders: the explorer did not answer for ${sym} (${reason}); reading recent transfers`);
         transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);
-        hr = holderRead(transfers, sym, a.contract, now, holderRules, infraBase, null);
-        hr.why += " (the explorer did not answer; read from recent transfers)";
+        hr = withoutWalletCount(holderRead(transfers, sym, a.contract, now, holderRules, infraBase, null), `the explorer ${reason}; read from recent transfers`);
       }
     } else {
       transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);

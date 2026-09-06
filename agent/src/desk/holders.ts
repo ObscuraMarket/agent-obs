@@ -272,6 +272,11 @@ export function holderReadFromList(list: ExplorerHolder[], holdersCount: number,
 }
 
 const explorerCache = new Map<string, { at: number; list: ExplorerHolder[]; holders: number; countIsFloor: boolean }>();
+/** How old a last good explorer read may be and still stand in while the explorer refuses. */
+const EXPLORER_STALE_MS = 6 * 3600e3;
+/** A pause between explorer calls, so a cycle reading several tokens does not look like a burst. */
+const EXPLORER_PAUSE_MS = 300;
+let explorerLastCallAt = 0;
 /** PURE: the explorer's holder count from its token record, whichever name its API gives it; null when it has none. */
 export function explorerHolderCount(info: { holders?: string | number | null; holders_count?: string | number | null } | null | undefined): number | null {
   const n = Number(info?.holders_count ?? info?.holders);
@@ -283,15 +288,23 @@ export function explorerHolderCount(info: { holders?: string | number | null; ho
  * does not answer, the holder list still does, and the count is then what its first pages show, a floor when more
  * pages remain. Throws only when the list itself does not answer.
  */
-export async function explorerHolders(token: string, ttlMs = 10 * 60e3, decimalsHint: number | null = null): Promise<{ list: ExplorerHolder[]; holders: number; countIsFloor: boolean }> {
+export async function explorerHolders(token: string, ttlMs = 10 * 60e3, decimalsHint: number | null = null): Promise<{ list: ExplorerHolder[]; holders: number; countIsFloor: boolean; ageMin?: number }> {
   const k = token.toLowerCase();
   const c = explorerCache.get(k);
   if (c && Date.now() - c.at < ttlMs) return c;
   const headers = { "User-Agent": UA, accept: "application/json" };
   const get = async (url: string): Promise<unknown> => {
+    const wait = EXPLORER_PAUSE_MS - (Date.now() - explorerLastCallAt);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    explorerLastCallAt = Date.now();
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error(`explorer answered ${res.status}`);
     return res.json();
+  };
+  // The last good read stands in while the explorer refuses, up to six hours old, and says how old it is.
+  const standIn = (e: unknown): { list: ExplorerHolder[]; holders: number; countIsFloor: boolean; ageMin: number } => {
+    if (c && Date.now() - c.at < EXPLORER_STALE_MS) return { ...c, ageMin: Math.round((Date.now() - c.at) / 60e3) };
+    throw e;
   };
   let count: number | null = null;
   let decimals = decimalsHint ?? 18;
@@ -305,19 +318,36 @@ export async function explorerHolders(token: string, ttlMs = 10 * 60e3, decimals
   const list: ExplorerHolder[] = [];
   let next: Record<string, unknown> | null = null;
   let pages = 0;
-  do {
-    const qs = next ? `?${new URLSearchParams(Object.entries(next).map(([a, b]) => [a, String(b)] as [string, string])).toString()}` : "";
-    const page = (await get(`${EXPLORER_URL}/api/v2/tokens/${token}/holders${qs}`)) as { items?: Array<{ address?: { hash?: string; is_contract?: boolean }; value?: string | number }>; next_page_params?: Record<string, unknown> | null };
-    for (const h of page.items ?? []) {
-      const address = String(h.address?.hash ?? "").toLowerCase();
-      if (address) list.push({ address, isContract: !!h.address?.is_contract, balance: Number(h.value ?? 0) / 10 ** decimals });
-    }
-    next = page.next_page_params ?? null;
-    pages++;
-  } while (count == null && next && pages < 3);
+  try {
+    do {
+      const qs = next ? `?${new URLSearchParams(Object.entries(next).map(([a, b]) => [a, String(b)] as [string, string])).toString()}` : "";
+      const page = (await get(`${EXPLORER_URL}/api/v2/tokens/${token}/holders${qs}`)) as { items?: Array<{ address?: { hash?: string; is_contract?: boolean }; value?: string | number }>; next_page_params?: Record<string, unknown> | null };
+      for (const h of page.items ?? []) {
+        const address = String(h.address?.hash ?? "").toLowerCase();
+        if (address) list.push({ address, isContract: !!h.address?.is_contract, balance: Number(h.value ?? 0) / 10 ** decimals });
+      }
+      next = page.next_page_params ?? null;
+      pages++;
+    } while (count == null && next && pages < 3);
+  } catch (e) {
+    return standIn(e);
+  }
   const out = { at: Date.now(), list, holders: count ?? list.length, countIsFloor: count == null && !!next };
   explorerCache.set(k, out);
   return out;
+}
+
+/**
+ * PURE: a transfer-scan read for a token with days of trading, with the wallet count set aside. The scan reaches
+ * back hours and counts the wallets it saw move, which is no measure of how many hold a token that old; when the
+ * explorer's count could not be read, that failure alone is not a verdict, and the read says what was not read.
+ */
+export function withoutWalletCount(h: HolderRead, note: string): HolderRead {
+  const countFail = new RegExp(`^${h.wallets} wallets \\(\\d+ needed\\)(; )?`);
+  if (h.ok || !countFail.test(h.why)) return { ...h, why: `${h.why} (${note})` };
+  const rest = h.why.replace(countFail, "");
+  if (rest.trim()) return { ...h, why: `${rest} (${note})` };
+  return { ...h, ok: true, why: `wallet count not read (${note}); largest ${h.top1Pct?.toFixed(0) ?? "?"}%, top ten ${h.top10Pct?.toFixed(0) ?? "?"}% among the wallets that moved recently` };
 }
 
 /** Transaction counts for a few wallets, one call each; a wallet the chain did not answer for is left out. */
