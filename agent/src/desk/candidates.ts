@@ -10,6 +10,7 @@
 // the desk learned about them: whether a sell was proven to work (the probe
 // rule), or whether the token could not be sold and is blacklisted.
 import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { encodeAbiParameters, keccak256, createPublicClient, http, parseAbi, decodeEventLog } from "viem";
 import { dataPath, USDG_CONTRACT, RPC_URL, NEVER_TRADE } from "../config.ts";
 import { chainMemory } from "../obscura/pools.ts";
@@ -474,9 +475,14 @@ export function readFeed(now = Date.now(), env: NodeJS.ProcessEnv = process.env)
   const path = env.OBS_CANDIDATE_FEED?.trim() || null;
   const opts = feedOptions(env);
   let snap: FeedSnapshot = { candidates: [], early: [], hourly: {}, readAt: now, path };
-  if (path && existsSync(path)) {
+  // The desk's own launch feed from the launchpad's contract (launchpull.ts) is read first, so a launch is known
+  // seconds after its block; the watcher's later row for the same token adds what it learned since.
+  const chainPath = env.OBS_CHAIN_FEED?.trim() || (path ? join(dirname(path), "launch-chain.jsonl") : null);
+  const chainText = chainPath && existsSync(chainPath) ? (() => { try { return tailOf(chainPath, 2 * 1024 * 1024); } catch { return ""; } })() : "";
+  if ((path && existsSync(path)) || chainText) {
     try {
-      snap = { ...parseFeed(tailOf(path, Number(env.OBS_FEED_TAIL_MB ?? 24) * 1024 * 1024), now, opts), readAt: now, path };
+      const text = path && existsSync(path) ? tailOf(path, Number(env.OBS_FEED_TAIL_MB ?? 24) * 1024 * 1024) : "";
+      snap = { ...parseFeed(chainText + (chainText && !chainText.endsWith("\n") ? "\n" : "") + text, now, opts), readAt: now, path };
     } catch {
       /* an unreadable feed is an empty feed */
     }
