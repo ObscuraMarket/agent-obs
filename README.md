@@ -66,6 +66,40 @@ on the chain. Nothing here asks to be trusted.
   `agent/src/desk/book.ts`, `agent/src/server.ts`. The live rule values are
   environment variables on the box, never in the code.
 
+## Custody
+
+Whose wallet, whose money, and who can move it. Each line here is checkable
+against the code in this repository and the chain.
+
+- **Whose wallet.** One account on Robinhood Chain, created by the
+  operator's tooling on the machine that runs the agent. Its address is
+  public. Its key is loaded by exactly one file, `agent/src/desk/signer.ts`,
+  at signing time, and by nothing else in the codebase: not the API, not the
+  page, not the model.
+- **Whose money.** The team's, and only the team's: the two funding
+  transfers above. No user's money has ever been in it, none can be sent to
+  it through the product, and the API cannot write. The agent trades for
+  Obscura, not on anyone's behalf, and holds nothing for anyone.
+- **Who can move it, in code.** Two paths sign, and both are trades. A swap
+  in a pool: quoted, clamped to the wallet's exact balance, simulated, sent,
+  and settled back to the same wallet. Or a deposit into an Obscura swap
+  order, to the address Obscura's API named for that order, with the desk's
+  own wallet as the order's receiver, after the rails checked the address.
+  There is no transfer function, no withdrawal command, and no destination
+  that is not a trade. The exit scan sells only what the desk bought. Every
+  one of these runs through the rails first, and a refusal is printed.
+- **Who can move it, out of band.** Obscura's team operates the machine the
+  agent runs on, as with any hosted software: it can stop the agent,
+  redeploy it, or read the key from the box's own storage for a backup. That
+  is operator access to a machine, not a feature of the product, and it can
+  move no one's money but the team's own. The key is not on a laptop, in a
+  chat, or anywhere in this repository.
+- **What would make the stronger claim true.** A contract wallet that holds
+  the funds and permits one action, a swap within limits, with the agent's
+  key as its only signer and no owner key that can send anywhere else. Then
+  not even the box's operator could move the funds out. It is not built,
+  and this section will say so until it is.
+
 ## Architecture
 
 One box runs the whole desk. The chain is the only source of truth it
