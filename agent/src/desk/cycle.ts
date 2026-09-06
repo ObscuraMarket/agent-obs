@@ -343,6 +343,12 @@ for (const [sym, a] of inPlay) {
 }
 const memory = { record: launchRecordLine(launchRecord(closes)), recalls: recalls.slice(0, 4) };
 const observation = observationLines({ reads, book: mark, quotes, open, now, unread: chain?.unread, candidates: feed.path ? candidates : undefined, early: feed.path ? early : undefined, heldCandidates, paper: PAPER, market, session, basis, reference: ref ? { perpTradesDay: ref.perpTradesDay, printStatus: ref.printStatus, printAt: ref.printAt } : undefined, tapes, memory: feed.path ? memory : undefined });
+// The size a new entry takes, said in ETH, so a buy names the amount the rails will send rather than a guess.
+{
+  const entryUsd = railsFromEnv().probeUsd;
+  const ethUsd = prices.ETH ?? reads.prices.ethUsd ?? null;
+  if (ethUsd != null && ethUsd > 0) observation.splice(1, 0, `Size of a new entry: $${entryUsd} of ETH, which is ${(entryUsd / ethUsd).toFixed(4)} ETH at $${ethUsd.toFixed(2)}; a buy names that amount of ETH.`);
+}
 console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  - " + l).join("\n")}`);
 
 // The persona thinks.

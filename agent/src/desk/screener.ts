@@ -63,6 +63,8 @@ export interface ScreenerRules {
   minSixHourShare: number;
   /** A launchpad token at or above this market cap is on watch whatever its record, as long as it traded today. */
   minCapUsd: number;
+  /** A token above this market cap is not bought: a clip the desk's size can move nothing there. Zero: no ceiling. */
+  maxCapUsd: number;
 }
 export function screenerRulesFromEnv(env: NodeJS.ProcessEnv = process.env): ScreenerRules {
   const n = (k: string, d: number) => Number(env[k] ?? d);
@@ -73,6 +75,7 @@ export function screenerRulesFromEnv(env: NodeJS.ProcessEnv = process.env): Scre
     minLiqUsd: n("OBS_SCREENER_MIN_LIQ_USD", 50_000),
     minSixHourShare: n("OBS_SCREENER_MIN_SIX_HOUR_SHARE", 0.1),
     minCapUsd: n("OBS_SCREENER_MIN_CAP_USD", 1_000_000),
+    maxCapUsd: n("OBS_SCREENER_MAX_CAP_USD", 50_000_000),
   };
 }
 

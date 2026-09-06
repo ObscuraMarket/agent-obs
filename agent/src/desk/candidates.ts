@@ -431,6 +431,9 @@ export function screenerCandidates(tokens: ScreenerToken[], now: number, opts: F
     if (ageMs < (opts.minTokenAgeMs ?? 0)) continue;
     const kind: "record" | "cap" = recordFails(t.pool, rules) ? "cap" : "record";
     if (kind === "cap" && !capKeeps(t.pool, rules) && !(t.capUsd != null && t.capUsd >= rules.minCapUsd && t.pool.vol24 > 0)) continue;
+    // The ceiling: a clip of the desk's size moves nothing on a token this large, and a 15% target there is a week's work, not an hour's.
+    const cap = t.capUsd ?? t.pool.capUsd;
+    if (rules.maxCapUsd > 0 && cap != null && cap > rules.maxCapUsd) continue;
     const quote = t.pool.quoteSymbol;
     const hooked = t.key.hooks.toLowerCase() !== NATIVE;
     if (hooked && !CURVE_QUOTES[quote]) continue;

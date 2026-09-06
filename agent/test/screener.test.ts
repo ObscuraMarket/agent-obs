@@ -47,6 +47,10 @@ test("a survivor becomes a grade B candidate with its record as the reason, unde
   assert.equal(g.grade, "B", "the record is the grade even with the stability rule on");
   assert.equal(g.capUsd, 25);
   assert.match(g.why, /^record:/);
+  // Over the cap ceiling: not a candidate, however good the record; with the ceiling off it is.
+  const huge = { ...t, capUsd: 242_000_000, pool: pool({ capUsd: 242_000_000 }) };
+  assert.equal(screenerCandidates([huge], now, opts, {} as NodeJS.ProcessEnv).length, 0, "a $242M token is not bought with a $100 clip");
+  assert.equal(screenerCandidates([huge], now, opts, { OBS_SCREENER_MAX_CAP_USD: "0" } as unknown as NodeJS.ProcessEnv).length, 1);
   // Too young for the floor: not a candidate. No key yet: not a candidate. Quiet last hour: on the board but below the bar.
   assert.equal(screenerCandidates([{ ...t, launchAt: now - 20 * 3600e3 }], now, opts, {} as NodeJS.ProcessEnv).length, 0);
   assert.equal(screenerCandidates([{ ...t, key: null }], now, opts, {} as NodeJS.ProcessEnv).length, 0);
