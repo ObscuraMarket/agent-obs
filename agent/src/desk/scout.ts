@@ -36,10 +36,19 @@ export interface ScoutFile { at: number; slots: number; ranked: ScoutRow[] }
  * to be watching right now: buyers present, a tape that is not rolling over, a price off its peak but not broken,
  * liquidity the ticket can leave, and enough trade to read. Each point carries its reason.
  */
-export function scoutScore(c: Candidate, s: TapeStats, e: EntryRead): { score: number; reasons: string[] } {
+export function scoutScore(c: Candidate, s: TapeStats, e: EntryRead, long?: TapeStats): { score: number; reasons: string[] } {
   const r: string[] = [];
   let score = 0;
   const add = (pts: number, why: string) => { score += pts; r.push(`${pts >= 0 ? "+" : ""}${pts} ${why}`); };
+  // The setup the desk hunts: a pump inside the last three hours, now pulling back with buyers still there. A run of
+  // 50% or more from the window's start to its peak, the price 15 to 60% off that peak, and buy pressure over the hour
+  // still at 45% or more. The pullback entry forms out of exactly this, and the scout puts it on the watch first.
+  if (long && long.first != null && long.peak != null && long.last != null && long.first > 0) {
+    const runPct = ((long.peak - long.first) / long.first) * 100;
+    const offPct = long.offPeakPct ?? 0;
+    if (runPct >= 50 && offPct >= 15 && offPct <= 60 && (s.buyPressurePct ?? 0) >= 45) add(20, `pulling back ${offPct.toFixed(0)}% from a +${runPct.toFixed(0)}% pump inside three hours, buyers still ${(s.buyPressurePct ?? 0).toFixed(0)}%`);
+    else if (runPct >= 50 && offPct > 60) add(-10, `the pump inside three hours gave back ${offPct.toFixed(0)}%`);
+  }
   // Read at all: a tape with no trade cannot give an entry.
   if (s.swaps >= 30) add(20, `${s.swaps} swaps in the last hour`);
   else if (s.swaps >= 10) add(10, `${s.swaps} swaps in the last hour`);
@@ -103,10 +112,11 @@ export async function scoutRound(now = Date.now(), slots = Number(process.env.OB
     const spec = dynamicPoolSpec(candidateAsset(c));
     if (!spec) continue;
     let tape: SwapRow[] = [];
-    try { tape = await updateTape(spec, c.symbol, now, 60); } catch { /* an unread tape scores as no trade */ }
+    try { tape = await updateTape(spec, c.symbol, now, 180); } catch { /* an unread tape scores as no trade */ }
     const s = tapeStats(tape, c.symbol, now, 60);
+    const long = tapeStats(tape, c.symbol, now, 180);
     const e = entryRead(tape, c.symbol, now, rules, true);
-    const { score, reasons } = scoutScore(c, s, e);
+    const { score, reasons } = scoutScore(c, s, e, long);
     rows.push({ symbol: c.symbol, token: c.token, poolId: c.poolId, score, reasons, record: c.record?.line ?? c.stable?.why ?? "", capUsd: c.record?.capUsd ?? null, vol24: c.record?.vol24 ?? c.volUsd, vol1: c.record?.vol1 ?? c.volUsd, liqUsd: c.record?.liqUsd ?? null, tape: { swaps: s.swaps, buyPressurePct: s.buyPressurePct, movePct: s.movePct, offPeakPct: s.offPeakPct, trend: s.trend, lastSwapAgoMin: s.lastSwapAgoMin }, entry: { state: e.state, ok: e.ok, why: e.why } });
   }
   const ranked = rankScout(rows, slots);

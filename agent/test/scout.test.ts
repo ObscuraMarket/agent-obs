@@ -25,6 +25,18 @@ test("the scout scores a live tape with buyers, off its peak but not broken, abo
   assert.ok(broken.score < live.score);
 });
 
+test("the setup the desk hunts scores extra: a pump inside three hours, now pulling back with buyers still there", () => {
+  // TRIBUTE, 2026-09-06: +137% from the window's start to its peak, then 30% off it with buyers at 55%.
+  const long = stats({ windowMin: 180, first: 2.4e-8, peak: 5.43e-8, last: 3.8e-8, offPeakPct: 30, movePct: 58 });
+  const pulling = scoutScore(cand(), stats({ buyPressurePct: 55 }), entry({ state: "pullback", ok: false, why: "pullback not held, no entry yet" }), long);
+  assert.ok(pulling.reasons.some((r) => /pulling back 30% from a \+126% pump inside three hours, buyers still 55%/.test(r)), pulling.reasons.join(" | "));
+  const gaveBack = scoutScore(cand(), stats({ buyPressurePct: 20 }), entry({ state: "breakdown", ok: false }), stats({ windowMin: 180, first: 2.4e-8, peak: 5.43e-8, last: 1.8e-8, offPeakPct: 67 }));
+  assert.ok(gaveBack.reasons.some((r) => /gave back 67%/.test(r)), "a pump that gave back most of itself with no buyers is not the setup");
+  assert.ok(pulling.score > gaveBack.score);
+  const noPump = scoutScore(cand(), stats({ buyPressurePct: 55 }), entry({ state: "waiting", ok: false }), stats({ windowMin: 180, first: 2.4e-8, peak: 2.6e-8, last: 2.5e-8, offPeakPct: 4 }));
+  assert.ok(!noPump.reasons.some((r) => /pump/.test(r)), "no pump, no pump points");
+});
+
 test("the watch's slots go to the highest scores, then the busiest last hour", () => {
   const row = (symbol: string, score: number, vol1: number): ScoutRow => ({ symbol, token: "0x", poolId: "0x", score, reasons: [], record: "", capUsd: 50_000, vol24: 100_000, vol1, liqUsd: 20_000, tape: { swaps: 20, buyPressurePct: 55, movePct: 0, offPeakPct: 10, trend: "holding", lastSwapAgoMin: 3 }, entry: { state: "waiting", ok: false, why: "" } });
   const ranked = rankScout([row("A", 40, 500), row("B", 70, 100), row("C", 70, 900), row("D", 10, 5000)], 3);
