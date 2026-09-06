@@ -93,8 +93,8 @@ export interface WalletRead {
   /** Every registered token balance keyed SYMBOL@network, the named fields above included. Null = the chain did not answer. */
   tokens?: Record<string, number | null>;
   /**
-   * The desk's own token (AOBS), read on its own. It is wallet value: on the book, in the mark and on the page,
-   * booked as capital when it arrives so it never reads as profit, and never on either leg of a swap. Null = not answered.
+   * The desk's own token (AOBS), read on its own. It is wallet value: on the book and in equity, booked as capital
+   * when it arrives so it never reads as profit, but not listed as a position, and never on either leg of a swap. Null = not answered.
    */
   own?: { symbol: string; contract: string; qty: number | null };
   /** Obscura's own cashback stats for this wallet (GET /rewards/{wallet}). */

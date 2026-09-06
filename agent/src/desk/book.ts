@@ -11,6 +11,7 @@
 // its dollar value rides as "in flight" rather than vanishing from equity.
 // PnL is equity minus net capital: honest, mark-to-market, no accrual games.
 import { appendLedger, readLedger } from "../ledger.ts";
+import { AGENT_TOKEN_SYMBOL } from "../config.ts";
 
 export type TradeStatus = "proposed" | "pending" | "settled" | "failed" | "cancelled";
 
@@ -336,15 +337,6 @@ export interface Positions {
 }
 
 /**
- * PURE: the desk's own token as a row for the page: what the wallet holds at the token's pool price, with no cost,
- * no PnL and no share, since the desk never bought it, never sells it, and it is not part of the book's equity.
- */
-export function ownTokenPosition(symbol: string, qty: number | null | undefined, priceUsd: number | null): Position | null {
-  if (qty == null || !(qty > 0)) return null;
-  return { asset: symbol, qty, priceUsd, valueUsd: priceUsd == null ? null : qty * priceUsd, avgCostUsd: null, costUsd: null, unrealizedUsd: null, unrealizedPct: null, realizedUsd: 0, share: null };
-}
-
-/**
  * PURE: every holding the desk put money into, as a position with its cost, its mark and its PnL, largest first.
  * A token that arrived on its own (an airdrop, a cashback payout, dust sent by a stranger) is wallet value and
  * counts in equity, but it is not a position: the desk never bought it and never sells it, and the page must not
@@ -358,6 +350,8 @@ export function positions(flows: CapitalFlow[], trades: Trade[], holdings: Recor
     // Dust after a full sell is not a position: with a pool drained to nothing its price read can be absurd, and a billionth of a token at that price is a nonsense figure on the page.
     if (!(qty > EPS) || (!STABLES.has(asset) && asset !== "ETH" && !isHolding(qty))) continue;
     if (!STABLES.has(asset) && asset !== "ETH" && !lots[asset.toUpperCase()]) continue;
+    // The desk's own token is in equity (the wallet's value, booked as capital) but not a position: it is never traded.
+    if (asset.toUpperCase() === AGENT_TOKEN_SYMBOL) continue;
     const priceUsd = prices[asset] ?? (STABLES.has(asset) ? 1 : null);
     const valueUsd = priceUsd == null ? null : qty * priceUsd;
     const l = lots[asset];
