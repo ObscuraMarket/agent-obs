@@ -335,6 +335,19 @@ function readCurves(): Record<string, CurveKey> {
 const INIT_ABI = parseAbi(["event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)"]);
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 /** A pool's exact key from its Initialize event, read once and kept in data/obs-curves.json. Null when the chain did not answer. */
+/** A pool key learned elsewhere (the launch poller reads Initialize events as they land) goes into the same cache, so no look has to ask the chain for it. */
+export function rememberCurve(key: CurveKey): void {
+  const known = readCurves();
+  const id = key.poolId.toLowerCase();
+  if (known[id]) return;
+  known[id] = { ...key, poolId: id as `0x${string}` };
+  try {
+    writeFileSync(dataPath(CURVES_FILE), JSON.stringify(known, null, 2) + "\n");
+  } catch {
+    /* the next look reads it from chain instead */
+  }
+}
+
 export async function curveKey(poolId: `0x${string}`): Promise<CurveKey | null> {
   const id = poolId.toLowerCase() as `0x${string}`;
   const known = readCurves();

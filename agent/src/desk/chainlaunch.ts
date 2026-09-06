@@ -27,6 +27,8 @@ export interface ChainLaunchFacts {
   at: number;
   block: number;
   tx: string;
+  /** When its curve pool was created, milliseconds: the first buy, and the moment the desk can trade it. Null until then. */
+  firstSwapAt?: number | null;
 }
 
 /** PURE: the feed row. `ts` is in seconds like the watcher's rows; the gate is the launchpad's own standard, since the factory knows the token. */
@@ -46,7 +48,7 @@ export function chainLaunchRow(f: ChainLaunchFacts, loggedAt: number): Record<st
     curvePoolId,
     gate: { ok: true, standard: "PonsV2LauncherToken" },
     ignitionTs: null,
-    firstSwapTs: null,
+    firstSwapTs: f.firstSwapAt ? Math.floor(f.firstSwapAt / 1000) : null,
     block: f.block,
     tx: f.tx,
     from: "chain",

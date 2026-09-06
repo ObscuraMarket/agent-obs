@@ -29,6 +29,13 @@ test("a launch read from the chain becomes a feed row the parser takes as an ear
   assert.equal(e.creatorTaxBps, 100);
   assert.equal(e.curvePoolId, row.curvePoolId);
   assert.equal(e.ignitedAfterMin, null, "the chain row knows nothing of ignition; the watcher's later row can add it");
+  assert.equal(e.firstSwapAt, null, "no pool yet");
+  // The pool's creation re-emits the row with the first swap on it: the moment the desk can trade the launch.
+  const pooled = chainLaunchRow({ token: TOKEN, symbol: "ZZZ", name: "Sleepy", pairToken: "0x0000000000000000000000000000000000000000", creatorTaxBps: 100, at: now - 40e3, block: 55_500_000, tx: "0xabc", firstSwapAt: now - 5e3 }, now);
+  assert.equal(pooled.firstSwapTs, Math.floor((now - 5e3) / 1000));
+  const withPool = parseFeed(JSON.stringify(row) + "\n" + JSON.stringify(pooled) + "\n", now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 30 * 60e3 });
+  assert.equal(withPool.early.length, 1);
+  assert.equal(withPool.early[0].firstSwapAt, Math.floor((now - 5e3) / 1000) * 1000);
   // The watcher's later row for the same token wins the merge and adds the ignition.
   const watcher = { ...row, ignitionTs: Math.floor((now - 10e3) / 1000), from: undefined };
   const merged = parseFeed(JSON.stringify(row) + "\n" + JSON.stringify(watcher) + "\n", now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 30 * 60e3 });
