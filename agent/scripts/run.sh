@@ -50,7 +50,9 @@ tsx src/desk/live.ts &
 LIVE=$!
 tsx src/desk/feedpull.ts &
 FEED=$!
-trap 'log "stopping"; kill $API $LIVE $FEED 2>/dev/null; exit 0' TERM INT
+tsx src/desk/screenerpull.ts &
+SCREENER=$!
+trap 'log "stopping"; kill $API $LIVE $FEED $SCREENER 2>/dev/null; exit 0' TERM INT
 
 # 4. The loops, on a one-minute tick so each cadence keeps its own clock.
 next_desk=0; next_post=0; next_engage=0
@@ -69,6 +71,7 @@ while true; do
   if ! kill -0 $API 2>/dev/null; then log "API exited; restarting it"; tsx src/server.ts & API=$!; fi
   if ! kill -0 $LIVE 2>/dev/null; then log "live watch exited; restarting it"; tsx src/desk/live.ts & LIVE=$!; fi
   if ! kill -0 $FEED 2>/dev/null; then log "feed puller exited; restarting it"; tsx src/desk/feedpull.ts & FEED=$!; fi
+  if ! kill -0 $SCREENER 2>/dev/null; then log "screener poller exited; restarting it"; tsx src/desk/screenerpull.ts & SCREENER=$!; fi
   sleep 60 &
   wait $!
 done

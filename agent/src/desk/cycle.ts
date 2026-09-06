@@ -139,7 +139,7 @@ if (process.env.OBS_TICK === "fast" && !DRY) {
   }
   // Stable tokens are hunted on the tick too: their volume is established by the hourly trail, so only the price action is asked.
   if (!probeable) {
-    for (const c of feedNow.candidates.filter((x) => x.stable?.stable).slice(0, 3)) {
+    for (const c of feedNow.candidates.filter((x) => x.stable?.stable || (x.record && x.record.vol1 > 0)).slice(0, 3)) {
       const a = resolveAny(`${c.symbol}@robinhood`, feedNow);
       const spec = a?.candidate ? dynamicPoolSpec(a) : null;
       const er = entryRead(spec ? await updateTape(spec, c.symbol, now) : [], c.symbol, now, tickRules, true);

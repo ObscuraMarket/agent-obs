@@ -148,7 +148,7 @@ async function step(now: number): Promise<void> {
     const key = !l.sidePools.length && l.curvePoolId ? await curveKey(l.curvePoolId as `0x${string}`) : null;
     if (earlyAsCandidate(l, now, wantIgnition, key)) add(l.symbol, "launch");
   }
-  for (const c of feed.candidates.filter((x) => x.stable?.stable).slice(0, 3)) add(c.symbol, "stable");
+  for (const c of feed.candidates.filter((x) => x.stable?.stable || (x.record && x.record.vol1 > 0)).slice(0, 4)) add(c.symbol, "stable");
   const items: Array<{ symbol: string; role: Role; spec: NonNullable<ReturnType<typeof dynamicPoolSpec>> }> = [];
   for (const { symbol, role } of inPlay.slice(0, MAX_WATCH)) {
     const a = resolveAny(`${symbol}@robinhood`, feed);

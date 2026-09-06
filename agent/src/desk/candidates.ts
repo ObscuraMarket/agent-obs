@@ -44,6 +44,8 @@ export interface Candidate {
   curve?: { hookAddress: `0x${string}`; feePips: number; quote: string; quoteAddress: `0x${string}`; quoteIs0: boolean; creatorTaxBps: number | null };
   /** The token's hourly trail read for stability, when the feed had one. */
   stable?: StabilityRead;
+  /** A trading record from the screener (a day or more of volume, liquidity and swaps), for a survivor the feed no longer follows. */
+  record?: { line: string; ageH: number; vol24: number; vol1: number; liqUsd: number | null };
 }
 export interface HourlyStat {
   hour: number;
@@ -411,18 +413,77 @@ function tailOf(path: string, bytes = TAIL_BYTES): string {
   }
 }
 
+import { readScreener, recordLine, recordFails, screenerRulesFromEnv, type ScreenerToken } from "./screener.ts";
+
+/**
+ * PURE: the survivors from the screener file as candidates: a token old enough
+ * (the same age floor as the feed), still trading by the record rule, with
+ * its pool key resolved. A hooked pool trades as a curve at the hook's fee
+ * plus the creator tax; a hookless pool must be quoted in USDG.
+ */
+export function screenerCandidates(tokens: ScreenerToken[], now: number, opts: FeedOptions, env: NodeJS.ProcessEnv = process.env): Candidate[] {
+  const rules = screenerRulesFromEnv(env);
+  const curveFeePct = Number(env.OBS_CURVE_FEE_PCT ?? 2);
+  const out: Candidate[] = [];
+  for (const t of tokens) {
+    if (!t.key || NEVER_TRADE.has(t.token.toLowerCase()) || ASSETS[`${t.symbol}@robinhood`]) continue;
+    const ageMs = now - (t.launchAt ?? t.pool.pairCreatedAt ?? now);
+    if (ageMs < (opts.minTokenAgeMs ?? 0)) continue;
+    if (recordFails(t.pool, rules)) continue;
+    const quote = t.pool.quoteSymbol;
+    const hooked = t.key.hooks.toLowerCase() !== NATIVE;
+    if (hooked && !CURVE_QUOTES[quote]) continue;
+    if (!hooked && quote !== "USDG") continue;
+    const quoteIs0 = t.key.currency1.toLowerCase() === t.token.toLowerCase();
+    const taxPct = (t.creatorTaxBps ?? 0) / 100;
+    const record = { line: recordLine(t, now), ageH: ageMs / 3600e3, vol24: t.pool.vol24, vol1: t.pool.vol1, liqUsd: t.pool.liqUsd };
+    out.push({
+      at: t.readAt,
+      poolId: t.pool.poolId,
+      token: t.token,
+      symbol: t.symbol,
+      tierPct: hooked ? curveFeePct + taxPct : t.key.fee / 10_000,
+      feePips: t.key.fee,
+      tickSpacing: t.key.tickSpacing,
+      gateOk: true,
+      source: t.source,
+      hour: Math.floor(ageMs / 3600e3),
+      volUsd: t.pool.vol1,
+      movePct: t.pool.chg1 ?? 0,
+      senders: 0,
+      swaps: t.pool.txns1,
+      px: t.pool.priceUsd,
+      usdgIs0: quote === "USDG" && quoteIs0,
+      ...(hooked ? { curve: { hookAddress: t.key.hooks, feePips: t.key.fee, quote, quoteAddress: quoteIs0 ? t.key.currency0 : t.key.currency1, quoteIs0, creatorTaxBps: t.creatorTaxBps } } : {}),
+      record,
+    });
+  }
+  out.sort((a, b) => (b.record?.vol24 ?? 0) - (a.record?.vol24 ?? 0));
+  return out;
+}
+
 let cache: { at: number; snap: FeedSnapshot } | null = null;
-/** The feed as of now. Empty when no feed is configured or the file is missing. Cached for a minute. */
+/** The feed as of now, with the screener's survivors ahead of it. Empty when no feed is configured or the file is missing. Cached for a minute. */
 export function readFeed(now = Date.now(), env: NodeJS.ProcessEnv = process.env): FeedSnapshot {
   if (cache && now - cache.at < 60_000) return cache.snap;
   const path = env.OBS_CANDIDATE_FEED?.trim() || null;
+  const opts = feedOptions(env);
   let snap: FeedSnapshot = { candidates: [], early: [], hourly: {}, readAt: now, path };
   if (path && existsSync(path)) {
     try {
-      snap = { ...parseFeed(tailOf(path, Number(env.OBS_FEED_TAIL_MB ?? 24) * 1024 * 1024), now, feedOptions(env)), readAt: now, path };
+      snap = { ...parseFeed(tailOf(path, Number(env.OBS_FEED_TAIL_MB ?? 24) * 1024 * 1024), now, opts), readAt: now, path };
     } catch {
       /* an unreadable feed is an empty feed */
     }
+  }
+  try {
+    const survivors = screenerCandidates(readScreener().tokens, now, opts, env);
+    if (survivors.length) {
+      const have = new Set(survivors.map((c) => c.token));
+      snap = { ...snap, candidates: [...survivors, ...snap.candidates.filter((c) => !have.has(c.token))] };
+    }
+  } catch {
+    /* no screener file, no survivors */
   }
   cache = { at: now, snap };
   return snap;
@@ -670,6 +731,8 @@ export function gradeCandidate(c: Candidate, trail: HourlyStat[], depthUsd: numb
   const t = trail.slice(-2);
   const trend: Graded["trend"] = t.length === 2 ? (t[1].usd < t[0].usd * r.trendFloor ? "rolling over" : "holding") : "unknown";
   const move = Math.abs(c.movePct);
+  // A survivor from the screener: its record is its grade, a swing at ordinary size, as long as its last hour still trades.
+  if (c.record) return c.record.vol1 > 0 ? { grade: "B", capUsd: r.capUsd.B, why: c.record.line, depthUsd, drawdownPct, trend: "holding" } : { grade: null, capUsd: 0, why: `below the bar: nothing traded in its last hour (${c.record.line})`, depthUsd, drawdownPct, trend: "unknown" };
   // A trading record first: with the rule on, a token whose hourly trail does not read stable is not graded, whatever its last hour printed.
   if (r.requireStable && !c.stable?.stable) return { grade: null, capUsd: 0, why: `no trading record yet: ${c.stable ? c.stable.why : "its hourly trail was not read"}`, depthUsd, drawdownPct, trend };
   const fails: string[] = [];
