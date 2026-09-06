@@ -104,7 +104,7 @@ if (ARMED && readTokens().length) {
     const boughtForExit = boughtSymbols(bookForExit.trades);
     const heldNames = Object.values(dynamicAssets()).filter((a) => boughtForExit.has(a.symbol) && isHolding(chainForExit.bySymbol[a.symbol])).map((a) => a.symbol);
     if (heldNames.length) {
-      const exitPrices = await assetPrices(heldNames, {});
+      const exitPrices = await assetPrices([...heldNames, "ETH"], {});
       const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookForExit.trades, now) }, undefined, now);
       for (const t of exits) console.log(`[desk] forced exit ${t.id} ${t.status}: ${t.note}`);
     }

@@ -74,6 +74,11 @@ export type Prices = Record<string, number | null>;
 const STABLES = new Set(["USDG", "USDC", "USDT", "DAI", "USDE"]);
 const EPS = 1e-12;
 
+/** PURE: whether a balance is a position or the dust a full sell leaves behind (OBS_DUST_QTY, whole units). A billionth of a token is not a holding, not a position on the page, not an exit and not a slot taken. */
+export function isHolding(qty: number | null | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  return (qty ?? 0) > Number(env.OBS_DUST_QTY ?? 1e-6);
+}
+
 /** PURE: the symbols the desk itself bought (a settled or in-flight swap into them). A balance in anything else, an airdrop or dust sent to the wallet, is never a holding: never counted, never watched, never sold. */
 export function boughtSymbols(rows: Trade[]): Set<string> {
   const out = new Set<string>();
@@ -125,6 +130,8 @@ export function valueHoldings(holdings: Record<string, number>, prices: Prices):
   let priced = 0;
   const unpriced: string[] = [];
   for (const [asset, qty] of Object.entries(holdings)) {
+    // Dust in a token is not counted: a drained pool can print an absurd price, and a billionth of a token at it would swing the equity.
+    if (!STABLES.has(asset) && asset !== "ETH" && !isHolding(qty)) continue;
     const p = prices[asset] ?? (STABLES.has(asset) ? 1 : null);
     if (p == null) {
       unpriced.push(asset);
@@ -313,7 +320,8 @@ export function positions(flows: CapitalFlow[], trades: Trade[], holdings: Recor
   const total = valueHoldings(holdings, prices).usd;
   const rows: Position[] = [];
   for (const [asset, qty] of Object.entries(holdings)) {
-    if (!(qty > EPS)) continue;
+    // Dust after a full sell is not a position: with a pool drained to nothing its price read can be absurd, and a billionth of a token at that price is a nonsense figure on the page.
+    if (!(qty > EPS) || (!STABLES.has(asset) && asset !== "ETH" && !isHolding(qty))) continue;
     const priceUsd = prices[asset] ?? (STABLES.has(asset) ? 1 : null);
     const valueUsd = priceUsd == null ? null : qty * priceUsd;
     const l = lots[asset];

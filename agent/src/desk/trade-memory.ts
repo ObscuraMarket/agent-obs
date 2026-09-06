@@ -45,7 +45,13 @@ export interface TradeClose {
 }
 
 export const readEntries = (): TradeEntry[] => readLedger<TradeEntry>(ENTRIES_LEDGER).filter((e) => e && e.symbol && Number.isFinite(Number(e.at)));
-export const readCloses = (): TradeClose[] => readLedger<TradeClose>(CLOSES_LEDGER).filter((c) => c && c.symbol && Number.isFinite(Number(c.at)));
+/** PURE: one row per close, the last written wins, so a corrected row for the same entry replaces the first. */
+export function dedupeCloses(rows: TradeClose[]): TradeClose[] {
+  const byKey = new Map<string, TradeClose>();
+  for (const c of rows) if (c && c.symbol && Number.isFinite(Number(c.at))) byKey.set(`${c.symbol}:${c.enteredAt}:${c.paper ? "paper" : "real"}`, c);
+  return [...byKey.values()].sort((a, b) => a.at - b.at);
+}
+export const readCloses = (): TradeClose[] => dedupeCloses(readLedger<TradeClose>(CLOSES_LEDGER));
 export const recordEntry = (e: TradeEntry): void => appendLedger(ENTRIES_LEDGER, e as unknown as Record<string, unknown>);
 export const recordClose = (c: TradeClose): void => appendLedger(CLOSES_LEDGER, c as unknown as Record<string, unknown>);
 

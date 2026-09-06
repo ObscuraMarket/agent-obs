@@ -423,7 +423,9 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
     const usd = prices[a.symbol] != null ? amount * (prices[a.symbol] as number) : null;
     const r = await exec({ from: a, to: eth, amount, usd, exit: true }, ctx, now);
     if (r.ok) {
-      const row: Trade = { ...r.trade, note: `exit (${v.kind}), ${v.reason}; ${r.trade.note ?? ""}` };
+      // The ETH that came back is priced so the close is recorded as what it was: the exit prices carry ETH for this.
+      const toUsd = r.trade.to.usd ?? (prices.ETH != null && r.trade.to.amount != null ? r.trade.to.amount * prices.ETH : null);
+      const row: Trade = { ...r.trade, to: { ...r.trade.to, usd: toUsd }, note: `exit (${v.kind}), ${v.reason}; ${r.trade.note ?? ""}` };
       if (exec === executeOnChain) recordTrade(row);
       out.push(row);
       if (v.share >= 1) rememberClose(a.symbol, a.contract ?? "", firstBuy, p?.costUsd ?? null, (p?.realizedUsd ?? 0) + (row.to.usd ?? 0) - (p?.costUsd ?? 0), peakPnlPct, v.kind, exec !== executeOnChain, now);
