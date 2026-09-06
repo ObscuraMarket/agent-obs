@@ -34,6 +34,8 @@ const wantIgnition = (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off";
 let prev: Record<string, WatchState> = {};
 const lastThinkAt: Record<string, number> = {};
 let running: ChildProcess | null = null;
+/** An exit trigger that fired while a cycle was running: held until that cycle ends, then run, since the break on the tape does not wait. */
+let pendingExit: Trigger | null = null;
 let lastTrigger: string | null = null;
 let lastTriggerKind: Trigger["kind"] | null = null;
 let cycles = 0;
@@ -105,6 +107,11 @@ function runCycle(t: Trigger, state: WatchState | undefined, now: number): void 
     console.log(`[live] desk cycle done (exit ${code ?? "?"})`);
     running = null;
     tapeCache.clear();
+    if (pendingExit) {
+      const t = pendingExit;
+      pendingExit = null;
+      runCycle(t, prev[t.symbol], Date.now());
+    }
   });
 }
 
@@ -207,6 +214,10 @@ async function step(now: number): Promise<void> {
   const triggers = triggersFor(prev, states, lastThinkAt, now, rules);
   prev = Object.fromEntries(states.map((s) => [s.symbol, s]));
   if (triggers.length && !running) runCycle(triggers[0], states.find((s) => s.symbol === triggers[0].symbol), now);
+  else if (triggers.length && triggers[0].kind === "exit" && !pendingExit) {
+    pendingExit = triggers[0];
+    console.log(`[live] exit trigger held for the next cycle: ${triggers[0].reason}`);
+  }
   const lookMs = Date.now() - now;
   looks.push(lookMs);
   writeFileSync(dataPath(LIVE_FILE), JSON.stringify({ at: Date.now(), block, paper: PAPER, pollMs: POLL_MS, lookMs, watching: states, lastTrigger, lastTriggerKind, cycles, cycleRunning: !!running }));
