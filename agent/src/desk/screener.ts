@@ -31,6 +31,8 @@ export interface ScreenerPair {
   chg1: number | null;
   chg24: number | null;
   fdvUsd: number | null;
+  /** The screener's market cap, or its fully diluted value when that is all it has. */
+  capUsd: number | null;
   pairCreatedAt: number | null;
 }
 
@@ -44,6 +46,9 @@ export interface ScreenerToken {
   creatorTaxBps: number | null;
   pool: ScreenerPair;
   key: { currency0: `0x${string}`; currency1: `0x${string}`; fee: number; tickSpacing: number; hooks: `0x${string}` } | null;
+  /** Why it is kept: it passes the record rule, or its market cap alone puts it on watch. */
+  kept: "record" | "cap";
+  capUsd: number | null;
   readAt: number;
 }
 
@@ -56,6 +61,8 @@ export interface ScreenerRules {
   minLiqUsd: number;
   /** The last six hours must carry at least this share of the day's volume: still trading, not a morning that died. */
   minSixHourShare: number;
+  /** A launchpad token at or above this market cap is on watch whatever its record, as long as it traded today. */
+  minCapUsd: number;
 }
 export function screenerRulesFromEnv(env: NodeJS.ProcessEnv = process.env): ScreenerRules {
   const n = (k: string, d: number) => Number(env[k] ?? d);
@@ -65,7 +72,13 @@ export function screenerRulesFromEnv(env: NodeJS.ProcessEnv = process.env): Scre
     minTxns24: n("OBS_SCREENER_MIN_TXNS24", 1000),
     minLiqUsd: n("OBS_SCREENER_MIN_LIQ_USD", 50_000),
     minSixHourShare: n("OBS_SCREENER_MIN_SIX_HOUR_SHARE", 0.1),
+    minCapUsd: n("OBS_SCREENER_MIN_CAP_USD", 1_000_000),
   };
+}
+
+/** PURE: on watch by market cap: at or above the cap floor and traded in the last day. */
+export function capKeeps(p: ScreenerPair, r: ScreenerRules): boolean {
+  return p.capUsd != null && p.capUsd >= r.minCapUsd && p.vol24 > 0;
 }
 
 /** PURE: the record rule. Null when the pool passes; otherwise the first reason it does not. */
@@ -83,42 +96,60 @@ export function recordLine(t: ScreenerToken, now: number): string {
   const p = t.pool;
   const ageH = ((now - (t.launchAt ?? p.pairCreatedAt ?? now)) / 3600e3);
   const k = (x: number) => (x >= 1e6 ? `$${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `$${(x / 1e3).toFixed(0)}k` : `$${Math.round(x)}`);
-  return `record: ${ageH >= 48 ? `${(ageH / 24).toFixed(1)} days` : `${ageH.toFixed(0)} h`} old, ${k(p.vol24)} in 24h, ${k(p.vol6)} in 6h, ${k(p.vol1)} last hour, ${p.txns24.toLocaleString("en-US")} swaps in 24h, liquidity ${p.liqUsd != null ? k(p.liqUsd) : "unknown"}, price ${p.chg1 != null ? `${p.chg1 >= 0 ? "+" : ""}${p.chg1.toFixed(0)}% 1h` : ""}${p.chg24 != null ? `, ${p.chg24 >= 0 ? "+" : ""}${p.chg24.toFixed(0)}% 24h` : ""} on its ${p.quoteSymbol} pool`;
+  return `${t.kept === "cap" ? "on watch by market cap" : "record"}: ${ageH >= 48 ? `${(ageH / 24).toFixed(1)} days` : `${ageH.toFixed(0)} h`} old${t.capUsd != null ? `, cap ${k(t.capUsd)}` : ""}, ${k(p.vol24)} in 24h, ${k(p.vol6)} in 6h, ${k(p.vol1)} last hour, ${p.txns24.toLocaleString("en-US")} swaps in 24h, liquidity ${p.liqUsd != null ? k(p.liqUsd) : "unknown"}, price ${p.chg1 != null ? `${p.chg1 >= 0 ? "+" : ""}${p.chg1.toFixed(0)}% 1h` : ""}${p.chg24 != null ? `, ${p.chg24 >= 0 ? "+" : ""}${p.chg24.toFixed(0)}% 24h` : ""} on its ${p.quoteSymbol} pool`;
 }
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && Number.isFinite(Number(v)) ? Number(v) : 0);
 const numOrNull = (v: unknown): number | null => (v == null ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 
-/** The screener's pools for one token on Robinhood Chain. Empty on any failure; the caller retries next round. */
+/** PURE: one screener row as a pair. */
+function toPair(r: Record<string, unknown>): ScreenerPair {
+  const quote = (r.quoteToken ?? {}) as Record<string, unknown>;
+  const vol = (r.volume ?? {}) as Record<string, unknown>;
+  const tx = (r.txns ?? {}) as Record<string, Record<string, unknown>>;
+  const chg = (r.priceChange ?? {}) as Record<string, unknown>;
+  const liq = (r.liquidity ?? {}) as Record<string, unknown>;
+  const t24 = tx.h24 ?? {}, t1 = tx.h1 ?? {};
+  return {
+    poolId: String(r.pairAddress ?? "").toLowerCase() as `0x${string}`,
+    dex: String(r.dexId ?? ""),
+    labels: Array.isArray(r.labels) ? (r.labels as unknown[]).map(String) : [],
+    quoteSymbol: String(quote.symbol ?? "").toUpperCase(),
+    quoteAddress: String(quote.address ?? "").toLowerCase() as `0x${string}`,
+    priceUsd: numOrNull(r.priceUsd),
+    vol24: num(vol.h24), vol6: num(vol.h6), vol1: num(vol.h1),
+    txns24: num(t24.buys) + num(t24.sells), txns1: num(t1.buys) + num(t1.sells), buys1: num(t1.buys), sells1: num(t1.sells),
+    liqUsd: numOrNull(liq.usd),
+    chg1: numOrNull(chg.h1), chg24: numOrNull(chg.h24),
+    fdvUsd: numOrNull(r.fdv),
+    capUsd: numOrNull(r.marketCap) ?? numOrNull(r.fdv),
+    pairCreatedAt: numOrNull(r.pairCreatedAt),
+  };
+}
+const baseOf = (r: Record<string, unknown>) => String(((r.baseToken ?? {}) as Record<string, unknown>).address ?? "").toLowerCase();
+
+/** The screener's pools for one token on Robinhood Chain. Throws on a bad answer; the caller retries next round. */
 export async function fetchTokenPairs(token: string, timeoutMs = 8000): Promise<ScreenerPair[]> {
   const res = await fetch(`https://api.dexscreener.com/token-pairs/v1/robinhood/${token}`, { headers: { "User-Agent": UA, accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`screener answered ${res.status}`);
   const rows = (await res.json()) as Array<Record<string, unknown>>;
   if (!Array.isArray(rows)) return [];
-  const out: ScreenerPair[] = [];
+  return rows.filter((r) => baseOf(r) === token.toLowerCase()).map(toPair);
+}
+
+/** The screener's main pool for up to thirty tokens in one call, by token. A token it does not know is absent. */
+export async function fetchTokensBatch(tokens: string[], timeoutMs = 10_000): Promise<Map<string, ScreenerPair>> {
+  const out = new Map<string, ScreenerPair>();
+  if (!tokens.length) return out;
+  const res = await fetch(`https://api.dexscreener.com/tokens/v1/robinhood/${tokens.slice(0, 30).join(",")}`, { headers: { "User-Agent": UA, accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`screener answered ${res.status}`);
+  const body = (await res.json()) as unknown;
+  const rows = (Array.isArray(body) ? body : ((body as { pairs?: unknown[] })?.pairs ?? [])) as Array<Record<string, unknown>>;
   for (const r of rows) {
-    const base = (r.baseToken ?? {}) as Record<string, unknown>;
-    const quote = (r.quoteToken ?? {}) as Record<string, unknown>;
-    if (String(base.address ?? "").toLowerCase() !== token.toLowerCase()) continue;
-    const vol = (r.volume ?? {}) as Record<string, unknown>;
-    const tx = (r.txns ?? {}) as Record<string, Record<string, unknown>>;
-    const chg = (r.priceChange ?? {}) as Record<string, unknown>;
-    const liq = (r.liquidity ?? {}) as Record<string, unknown>;
-    const t24 = tx.h24 ?? {}, t1 = tx.h1 ?? {};
-    out.push({
-      poolId: String(r.pairAddress ?? "").toLowerCase() as `0x${string}`,
-      dex: String(r.dexId ?? ""),
-      labels: Array.isArray(r.labels) ? (r.labels as unknown[]).map(String) : [],
-      quoteSymbol: String(quote.symbol ?? "").toUpperCase(),
-      quoteAddress: String(quote.address ?? "").toLowerCase() as `0x${string}`,
-      priceUsd: numOrNull(r.priceUsd),
-      vol24: num(vol.h24), vol6: num(vol.h6), vol1: num(vol.h1),
-      txns24: num(t24.buys) + num(t24.sells), txns1: num(t1.buys) + num(t1.sells), buys1: num(t1.buys), sells1: num(t1.sells),
-      liqUsd: numOrNull(liq.usd),
-      chg1: numOrNull(chg.h1), chg24: numOrNull(chg.h24),
-      fdvUsd: numOrNull(r.fdv),
-      pairCreatedAt: numOrNull(r.pairCreatedAt),
-    });
+    const t = baseOf(r);
+    const p = toPair(r);
+    const prev = out.get(t);
+    if (!prev || (p.liqUsd ?? 0) > (prev.liqUsd ?? 0)) out.set(t, p);
   }
   return out;
 }

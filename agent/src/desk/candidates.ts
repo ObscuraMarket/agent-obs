@@ -44,8 +44,8 @@ export interface Candidate {
   curve?: { hookAddress: `0x${string}`; feePips: number; quote: string; quoteAddress: `0x${string}`; quoteIs0: boolean; creatorTaxBps: number | null };
   /** The token's hourly trail read for stability, when the feed had one. */
   stable?: StabilityRead;
-  /** A trading record from the screener (a day or more of volume, liquidity and swaps), for a survivor the feed no longer follows. */
-  record?: { line: string; ageH: number; vol24: number; vol1: number; liqUsd: number | null };
+  /** A trading record from the screener (a day or more of volume, liquidity and swaps), or a market cap that puts the token on watch; the last hour's volume against the bar a live hour needs. */
+  record?: { kind: "record" | "cap"; line: string; ageH: number; capUsd: number | null; vol24: number; vol1: number; liveBar: number; liqUsd: number | null };
 }
 export interface HourlyStat {
   hour: number;
@@ -413,7 +413,7 @@ function tailOf(path: string, bytes = TAIL_BYTES): string {
   }
 }
 
-import { readScreener, recordLine, recordFails, screenerRulesFromEnv, type ScreenerToken } from "./screener.ts";
+import { readScreener, recordLine, recordFails, capKeeps, screenerRulesFromEnv, type ScreenerToken } from "./screener.ts";
 
 /**
  * PURE: the survivors from the screener file as candidates: a token old enough
@@ -429,7 +429,8 @@ export function screenerCandidates(tokens: ScreenerToken[], now: number, opts: F
     if (!t.key || NEVER_TRADE.has(t.token.toLowerCase()) || ASSETS[`${t.symbol}@robinhood`]) continue;
     const ageMs = now - (t.launchAt ?? t.pool.pairCreatedAt ?? now);
     if (ageMs < (opts.minTokenAgeMs ?? 0)) continue;
-    if (recordFails(t.pool, rules)) continue;
+    const kind: "record" | "cap" = recordFails(t.pool, rules) ? "cap" : "record";
+    if (kind === "cap" && !capKeeps(t.pool, rules) && !(t.capUsd != null && t.capUsd >= rules.minCapUsd && t.pool.vol24 > 0)) continue;
     const quote = t.pool.quoteSymbol;
     const hooked = t.key.hooks.toLowerCase() !== NATIVE;
     if (hooked && !CURVE_QUOTES[quote]) continue;
@@ -437,7 +438,7 @@ export function screenerCandidates(tokens: ScreenerToken[], now: number, opts: F
     const quoteIs0 = t.key.currency1.toLowerCase() === t.token.toLowerCase();
     const taxPct = (t.creatorTaxBps ?? 0) / 100;
     if ((hooked ? curveFeePct + taxPct : t.key.fee / 10_000) > opts.maxTierPct) continue;
-    const record = { line: recordLine(t, now), ageH: ageMs / 3600e3, vol24: t.pool.vol24, vol1: t.pool.vol1, liqUsd: t.pool.liqUsd };
+    const record = { kind, line: recordLine({ ...t, kept: kind }, now), ageH: ageMs / 3600e3, capUsd: t.capUsd ?? t.pool.capUsd, vol24: t.pool.vol24, vol1: t.pool.vol1, liveBar: rules.minVol1hUsd, liqUsd: t.pool.liqUsd };
     out.push({
       at: t.readAt,
       poolId: t.pool.poolId,
@@ -733,7 +734,11 @@ export function gradeCandidate(c: Candidate, trail: HourlyStat[], depthUsd: numb
   const trend: Graded["trend"] = t.length === 2 ? (t[1].usd < t[0].usd * r.trendFloor ? "rolling over" : "holding") : "unknown";
   const move = Math.abs(c.movePct);
   // A survivor from the screener: its record is its grade, a swing at ordinary size, as long as its last hour still trades.
-  if (c.record) return c.record.vol1 > 0 ? { grade: "B", capUsd: r.capUsd.B, why: c.record.line, depthUsd, drawdownPct, trend: "holding" } : { grade: null, capUsd: 0, why: `below the bar: nothing traded in its last hour (${c.record.line})`, depthUsd, drawdownPct, trend: "unknown" };
+  // A token on watch by market cap alone is graded only while its last hour clears the live bar; otherwise it is watched, not bought.
+  if (c.record) {
+    if (c.record.kind === "record") return c.record.vol1 > 0 ? { grade: "B", capUsd: r.capUsd.B, why: c.record.line, depthUsd, drawdownPct, trend: "holding" } : { grade: null, capUsd: 0, why: `below the bar: nothing traded in its last hour (${c.record.line})`, depthUsd, drawdownPct, trend: "unknown" };
+    return c.record.vol1 >= c.record.liveBar ? { grade: "B", capUsd: r.capUsd.B, why: c.record.line, depthUsd, drawdownPct, trend: "holding" } : { grade: null, capUsd: 0, why: `on watch, not tradable: its last hour ($${Math.round(c.record.vol1).toLocaleString("en-US")}) is under the $${c.record.liveBar.toLocaleString("en-US")} a live hour needs (${c.record.line})`, depthUsd, drawdownPct, trend: "unknown" };
+  }
   // A trading record first: with the rule on, a token whose hourly trail does not read stable is not graded, whatever its last hour printed.
   if (r.requireStable && !c.stable?.stable) return { grade: null, capUsd: 0, why: `no trading record yet: ${c.stable ? c.stable.why : "its hourly trail was not read"}`, depthUsd, drawdownPct, trend };
   const fails: string[] = [];
