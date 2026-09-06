@@ -96,6 +96,9 @@ if (!DRY) {
 // The rails' own exits, before the model thinks: a held launch token past
 // its time stop, through its floor, or with volume rolling over is sold
 // back to ETH here, and the reason is public. Only when armed.
+// What the rails sold at the top of this cycle: the wallet read below is cached and may still show it, and a token
+// sold seconds ago must not be described as held in the same breath.
+const soldThisCycle = new Set<string>();
 if (ARMED && readTokens().length) {
   const readsForExit = await liveReads();
   const chainForExit = readsForExit.wallet ? walletBalances(readsForExit.wallet) : null;
@@ -107,6 +110,7 @@ if (ARMED && readTokens().length) {
       const exitPrices = await assetPrices([...heldNames, "ETH"], {});
       const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookForExit.trades, now) }, undefined, now);
       for (const t of exits) console.log(`[desk] forced exit ${t.id} ${t.status}: ${t.note}`);
+      for (const t of exits) if (t.status === "settled" || t.status === "pending") soldThisCycle.add(t.from.asset);
     }
   }
 }
@@ -175,6 +179,7 @@ const real = reads.wallet ? walletBalances(reads.wallet) : null;
 const paperTrades = PAPER ? readPaper() : [];
 // In a paper session the book he sees is the real wallet with the paper trades applied.
 const chain = real && PAPER ? { ...real, bySymbol: paperBalances(real.bySymbol, paperTrades), byKey: paperByKey(real.byKey, paperBalances(real.bySymbol, paperTrades)) } : real;
+if (chain) for (const sym of soldThisCycle) { chain.bySymbol[sym] = 0; chain.byKey[`${sym}@robinhood`] = 0; }
 const bookTrades = PAPER ? [...book.trades, ...paperTrades] : book.trades;
 const symbols = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, bookTrades, {}, now).holdings);
 // ETH and NVDA are priced every cycle whether or not they are held: the basis and the samples need them.

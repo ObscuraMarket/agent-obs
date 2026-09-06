@@ -1001,6 +1001,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   private line(cls: string, ts: number | null, tag: string, text: string, animate: boolean): TermItem {
     const row = document.createElement('div');
     row.className = 'ln ' + cls;
+    // The row carries its time, so a cycle's write-up that lands after the trades it produced can be put back before them.
+    if (ts != null) { row.dataset['at'] = String(ts); }
     const a = document.createElement('span');
     a.className = 'ts num';
     a.textContent = ts == null ? '' : this.clock(ts);
@@ -1034,7 +1036,19 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     }
     this.termTyping = true;
     const stick = this.nearBottom(term);
-    term.appendChild(it.row);
+    // A cycle's lines are stamped at the cycle's start; the trades it sent settle and print first. Put its lines back
+    // before any trade row stamped later, so the terminal reads decision, then trade, in the order they happened.
+    const at = Number(it.row.dataset['at'] ?? NaN);
+    let before: Element | null = null;
+    if (Number.isFinite(at)) {
+      for (let el = term.lastElementChild; el; el = el.previousElementSibling) {
+        const t = Number((el as HTMLElement).dataset['at'] ?? NaN);
+        if (!Number.isFinite(t)) { continue; }
+        if (t > at && (el.classList.contains('trade') || el.classList.contains('watch') || el.classList.contains('trigger'))) { before = el; continue; }
+        break;
+      }
+    }
+    if (before) { term.insertBefore(it.row, before); } else { term.appendChild(it.row); }
     while (term.children.length > TERM_LINE_CAP) { term.removeChild(term.firstChild as Node); }
     if (!it.animate) {
       if (it.node) { it.tx.textContent = ''; it.tx.appendChild(it.node); }
@@ -1195,7 +1209,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     const items: TermItem[] = [];
     if (w.trigger && w.trigger !== this.lastWatchTrigger) {
       this.lastWatchTrigger = w.trigger;
-      items.push(this.line('trigger', w.at, 'trigger', w.trigger + (w.cycleRunning ? ' (thinking)' : ''), true));
+      // The trigger text opens with the desk's UTC clock; the row already carries the viewer's, so one clock per line.
+      items.push(this.line('trigger', w.at, 'trigger', w.trigger.replace(/^\d\d:\d\d:\d\dZ\s+/, '') + (w.cycleRunning ? ' (thinking)' : ''), true));
     }
     const term = this.term();
     const last = term?.lastElementChild as HTMLElement | null;
