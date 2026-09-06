@@ -144,7 +144,7 @@ export interface RailContext {
   lastEntryAt?: number | null;
   entriesToday?: number;
   now?: number;
-  /** Dollar value of swaps already sent in the trailing 24h. */
+  /** Dollar value of entries already sent in the trailing 24h (exits do not count). */
   sentTodayUsd: number;
 }
 
@@ -194,13 +194,18 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   return { ok: true };
 }
 
-/** PURE: dollars sent in the trailing 24h, from the trade ledger (pending or settled, not proposals). */
+/**
+ * PURE: dollars put at risk in the trailing 24h, from the trade ledger (pending or settled, not proposals).
+ * Entries only: an exit brings money back and is never blocked by the daily cap, so counting it would spend the
+ * budget twice per round trip and halve the day the operator sized.
+ */
 export function sentTodayUsd(trades: Trade[], now: number): number {
   const seen = new Set<string>();
   let usd = 0;
   for (const t of [...trades].sort((a, b) => (b.updatedAt ?? b.at) - (a.updatedAt ?? a.at))) {
     if (seen.has(t.id)) continue;
     seen.add(t.id);
+    if (t.exit) continue;
     if ((t.status === "pending" || t.status === "settled") && t.at >= now - 24 * 3600e3) usd += t.from.usd ?? 0;
   }
   return usd;

@@ -49,7 +49,7 @@ test("the rails pass a small, funded, allowlisted swap and refuse everything els
   assert.match(no({ from: USDG, to: ETH, amount: 10 }, { nativeOnFromChain: 0.0001 }), /gas reserve on robinhood/);
 });
 
-test("the daily cap counts sent swaps once per id and ignores proposals", () => {
+test("the daily cap counts sent entries once per id, ignores proposals, and never counts an exit", () => {
   const now = 1_000_000_000_000;
   const trades = [
     { at: now - 3600e3, id: "a", status: "pending" as const, from: { asset: "ETH", amount: 0.01, usd: 24 }, to: { asset: "USDG", amount: 0, usd: null }, partner: "x" },
@@ -58,6 +58,8 @@ test("the daily cap counts sent swaps once per id and ignores proposals", () => 
     { at: now - 30 * 3600e3, id: "c", status: "settled" as const, from: { asset: "ETH", amount: 0.01, usd: 24 }, to: { asset: "USDG", amount: 23.5, usd: null }, partner: "x" },
   ];
   assert.equal(sentTodayUsd(trades, now), 24);
+  const sell = { at: now - 600e3, id: "d", status: "settled" as const, exit: true, from: { asset: "TOK", amount: 1000, usd: 106 }, to: { asset: "ETH", amount: 0.04, usd: null }, partner: "pool" };
+  assert.equal(sentTodayUsd([...trades, sell], now), 24, "a sell brings money back; it is not spend against the day");
 });
 
 test("Obscura's status words map to the ledger's three states", () => {

@@ -123,7 +123,8 @@ and what is used, `{ tradingOn, maxSwapUsd, dailySwapUsd, maxOpenOrders,
 gasReserveEth, sentTodayUsd, openOrders, allowedAssets, allowedPartners,
 allowedChains }`. `allowedChains` is the chains both legs of a swap must be
 on, `["robinhood"]`: the desk trades on Robinhood Chain only.
-`sentTodayUsd` is dollars sent into routes in the last 24 hours; `openOrders`
+`sentTodayUsd` is dollars sent into entries in the last 24 hours (exits do
+not count); `openOrders`
 counts pending swaps; `allowedPartners` is `null` when any Obscura route may
 be used.
 
