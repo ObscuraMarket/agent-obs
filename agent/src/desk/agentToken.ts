@@ -3,7 +3,8 @@
 // many wallets hold it. The desk never trades it (NEVER_TRADE in the rails);
 // this is the one place it reads it, and only to show it.
 import { createPublicClient, http, parseAbi, formatUnits } from "viem";
-import { AGENT_TOKEN, RPC_URL, EXPLORER_URL } from "../config.ts";
+import { AGENT_TOKEN, RPC_URL, EXPLORER_URL, dataPath } from "../config.ts";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { chainMemory, poolRead, fullRangeAmounts, type PoolSpec } from "../obscura/pools.ts";
 import { curvePoolIdFor, curveKey } from "./candidates.ts";
 import { updateTape } from "./tape.ts";
@@ -139,4 +140,25 @@ export async function readAgentToken(ethUsd: number | null, now = Date.now()): P
   }
   cache = { at: now, read };
   return read;
+}
+
+const LAST_READ_FILE = "obs-agent-token.json";
+/** The API's latest read of the token, kept for the cycle, which runs in another process and must not walk the pool itself each time. */
+export function rememberAgentTokenRead(r: AgentTokenRead): void {
+  try {
+    writeFileSync(dataPath(LAST_READ_FILE), JSON.stringify({ at: r.at, symbol: r.symbol, priceUsd: r.priceUsd, marketCapUsd: r.marketCapUsd }));
+  } catch {
+    /* the next refresh writes it */
+  }
+}
+/** PURE over the file: the token's last pool price when it is recent enough to mark with, else null. */
+export function lastAgentTokenPrice(maxAgeMs = 30 * 60e3, now = Date.now()): number | null {
+  const p = dataPath(LAST_READ_FILE);
+  if (!existsSync(p)) return null;
+  try {
+    const r = JSON.parse(readFileSync(p, "utf8")) as { at?: number; priceUsd?: number | null };
+    return r.priceUsd != null && r.priceUsd > 0 && r.at != null && now - r.at <= maxAgeMs ? r.priceUsd : null;
+  } catch {
+    return null;
+  }
 }

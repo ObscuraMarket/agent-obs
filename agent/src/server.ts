@@ -24,8 +24,8 @@ import { readThoughts, type Thought } from "./desk/thoughts.ts";
 import { digestThought, watchEvent, type WatchEvent } from "./desk/digest.ts";
 import { readResearch } from "./desk/research.ts";
 import { readScout } from "./desk/scout.ts";
-import { readAgentToken, type AgentTokenRead } from "./desk/agentToken.ts";
-import { AGENT_TOKEN } from "./config.ts";
+import { readAgentToken, rememberAgentTokenRead, lastAgentTokenPrice, type AgentTokenRead } from "./desk/agentToken.ts";
+import { AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "./config.ts";
 
 /** A thought as the page reads it: the record plus its digest (verdict, headline, each token's status). Additive. */
 const withDigest = (t: Thought) => ({ ...t, digest: digestThought(t) });
@@ -251,7 +251,7 @@ const priceBook = new Map<string, { at: number; price: number | null }>();
 let priceRefresh: Promise<void> | null = null;
 function refreshPrices(symbols: string[]): Promise<void> {
   const run = (priceRefresh ?? Promise.resolve())
-    .then(() => assetPrices(symbols, { OBS: readsCache?.value.market?.priceUsd ?? null }))
+    .then(() => assetPrices(symbols, { OBS: readsCache?.value.market?.priceUsd ?? null, [AGENT_TOKEN_SYMBOL]: agentTokenCache?.priceUsd ?? lastAgentTokenPrice() }))
     .then((value) => { const at = Date.now(); for (const [s, p] of Object.entries(value)) priceBook.set(s.toUpperCase(), { at, price: p }); })
     .catch(() => undefined);
   priceRefresh = run.finally(() => { if (priceRefresh === run) priceRefresh = null; });
@@ -288,6 +288,7 @@ async function refreshAgentToken(): Promise<void> {
   try {
     const p = await cachedPrices(["ETH"], { wait: true });
     agentTokenCache = await readAgentToken(p.ETH ?? null, Date.now());
+    rememberAgentTokenRead(agentTokenCache);
   } catch {
     /* keep the last read */
   } finally {
@@ -623,8 +624,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         const live = standIn ?? (chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now));
         const t = latestTrades(book.trades);
         const pos = positions(book.flows, book.trades, live.holdings, prices);
-        // The desk's own token, as a row after the book's positions: shown, priced from its pool, never counted.
-        const own = r.wallet?.own ? ownTokenPosition(r.wallet.own.symbol, r.wallet.own.qty, agentTokenCache?.priceUsd ?? null) : null;
+        // The desk's own token: on the book once its arrival is booked as capital; until then, a plain row after the positions.
+        const own = r.wallet?.own && !pos.positions.some((p) => p.asset === r.wallet?.own?.symbol) ? ownTokenPosition(r.wallet.own.symbol, r.wallet.own.qty, agentTokenCache?.priceUsd ?? null) : null;
         json(res, 200, {
           ...(behind || standIn ? { pending: true } : {}),
           snapshot: live,

@@ -89,3 +89,10 @@ test("the prompt tells the truth about whether a swap can execute", () => {
   assert.match(buildThoughtPrompt([], [], "", "2026-09-01T12:00:00.000Z", false, ["ETH@robinhood", "USDG@robinhood"]), /Assets you may name: ETH@robinhood, USDG@robinhood\./);
   assert.ok(!/—/.test(p));
 });
+
+test("the observation tells the model what the desk's own token is when the book holds it", () => {
+  const book = { ...snapshot([], [], {}, 1), holdings: { ETH: 0.36, AOBS: 9_900_000 }, equityUsd: 10_800, netCapitalUsd: 10_768, pnlUsd: 32, pnlPct: 0.003, unpriced: [] };
+  const lines = observationLines({ reads, book, quotes: [], open: [], now: 1 });
+  assert.ok(lines.some((l) => /9,900,000 AOBS/.test(l)), "on the book");
+  assert.ok(lines.some((l) => /AOBS is the desk's own token: held and marked as wallet value, booked as capital, never traded/.test(l)));
+});

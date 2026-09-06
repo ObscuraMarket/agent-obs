@@ -9,6 +9,7 @@
 // is a separate, deliberate stage with its own rails, and until it exists a
 // proposal is exactly what the dashboard shows it as.
 import { appendLedger, readLedger } from "../ledger.ts";
+import { AGENT_TOKEN_SYMBOL } from "../config.ts";
 import { DEFAULT_TRADE_ASSETS } from "./rails.ts";
 import { forbiddenReason, stripDashes } from "../social/postGuards.ts";
 import { walletLines, marketLine, type Reads } from "../obscura/reads.ts";
@@ -57,6 +58,7 @@ export function observationLines(i: { reads: Reads; book: BookSnapshot; quotes: 
   if (!h.length && i.book.netCapitalUsd === 0) lines.push("Book: no capital yet. The desk holds nothing and has been handed nothing; there is nothing to trade and nothing to mark.");
   else {
     lines.push(`Book: ${h.length ? h.map(([a, q]) => `${qty(q)} ${a}`).join(", ") : "empty"}${i.book.inFlightUsd > 0 ? `, ${usd(i.book.inFlightUsd)} in flight` : ""}.`);
+    if (h.some(([a]) => a === AGENT_TOKEN_SYMBOL)) lines.push(`${AGENT_TOKEN_SYMBOL} is the desk's own token: held and marked as wallet value, booked as capital, never traded, on neither leg of any swap.`);
     lines.push(
       `Equity ${i.book.equityUsd == null ? "not priced this cycle" : usd(i.book.equityUsd)} against ${usd(i.book.netCapitalUsd)} net capital; PnL ${i.book.pnlUsd == null ? "not measured" : `${usd(i.book.pnlUsd)}${i.book.pnlPct != null ? ` (${(i.book.pnlPct * 100).toFixed(2)}%)` : ""}`}.${i.book.unpriced.length ? ` Unpriced and excluded: ${i.book.unpriced.join(", ")}.` : ""}`,
     );
