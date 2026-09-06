@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { AGENT_ID, DRY, dataPath } from "../config.ts";
 import { liveReads, assetPrices, walletBalances } from "../obscura/reads.ts";
 import { quoteWatchlist, parseWatchlist, DEFAULT_WATCHLIST } from "../obscura/orders.ts";
-import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, type Trade, markIsTrustworthy } from "./book.ts";
+import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, boughtSymbols, type Trade, markIsTrustworthy } from "./book.ts";
 import { observationLines, buildThoughtPrompt, parseThoughtReply, guardThoughts, readThoughts, recordThought, type QuoteRead, type Thought } from "./thoughts.ts";
 import { recallForPrompt, remember } from "../journal.ts";
 import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity, entryStats, baseLeg } from "./rails.ts";
@@ -101,7 +101,8 @@ if (ARMED && readTokens().length) {
   const chainForExit = readsForExit.wallet ? walletBalances(readsForExit.wallet) : null;
   if (chainForExit) {
     const bookForExit = readBook();
-    const heldNames = Object.values(dynamicAssets()).filter((a) => isHolding(chainForExit.bySymbol[a.symbol])).map((a) => a.symbol);
+    const boughtForExit = boughtSymbols(bookForExit.trades);
+    const heldNames = Object.values(dynamicAssets()).filter((a) => boughtForExit.has(a.symbol) && isHolding(chainForExit.bySymbol[a.symbol])).map((a) => a.symbol);
     if (heldNames.length) {
       const exitPrices = await assetPrices(heldNames, {});
       const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookForExit.trades, now) }, undefined, now);
@@ -221,7 +222,9 @@ for (const l of feed.early.slice(0, 6)) {
 // Curve keys first (read from chain once, then cached), so an ignited launch with no side pool resolves in this same cycle.
 for (const l of feed.early.slice(0, 8)) if (l.gateOk && l.ignitedAfterMin != null && !l.sidePools.length && l.curvePoolId && (l.creatorTaxBps == null || l.creatorTaxBps <= 100)) await curveKey(l.curvePoolId as `0x${string}`);
 const dyn = dynamicAssets(feed);
-const heldDyn = Object.values(dyn).filter((a) => isHolding(chain?.bySymbol[a.symbol]));
+// Held means bought by the desk and still in the wallet above dust: an airdrop is never a holding, whatever the wallet shows.
+const bought = boughtSymbols(bookTrades);
+const heldDyn = Object.values(dyn).filter((a) => bought.has(a.symbol) && isHolding(chain?.bySymbol[a.symbol]));
 const pos = positions(book.flows, bookTrades, chain?.bySymbol ?? mark.holdings, prices).positions;
 const heldCandidates = heldDyn.map((a) => {
   const p = pos.find((x) => x.asset === a.symbol);

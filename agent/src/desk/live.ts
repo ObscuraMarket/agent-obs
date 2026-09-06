@@ -17,6 +17,7 @@ import { updateTapes, tapeStats, type SwapRow } from "./tape.ts";
 import { entryRead, entryRulesFromEnv } from "./entry.ts";
 import { liveReads, walletBalances } from "../obscura/reads.ts";
 import { readPaper, paperBalances } from "./paper.ts";
+import { readBook, boughtSymbols } from "./book.ts";
 import { triggersFor, watchRulesFromEnv, heartbeatLine, type WatchState, type Role } from "./watch.ts";
 
 const POLL_MS = Number(process.env.OBS_LIVE_POLL_MS ?? 3000);
@@ -51,7 +52,8 @@ function refreshHeld(now: number): void {
       const chain = reads.wallet ? walletBalances(reads.wallet) : null;
       if (!chain) return;
       const by = PAPER ? paperBalances(chain.bySymbol, readPaper()) : chain.bySymbol;
-      held = Object.values(dynamicAssets()).filter((a) => isHolding(by[a.symbol])).map((a) => a.symbol);
+      const bought = boughtSymbols([...readBook().trades, ...(PAPER ? readPaper() : [])]);
+      held = Object.values(dynamicAssets()).filter((a) => bought.has(a.symbol) && isHolding(by[a.symbol])).map((a) => a.symbol);
     })
     .catch((e) => console.log(`[live] balances not read: ${e instanceof Error ? e.message : String(e)}`))
     .finally(() => {

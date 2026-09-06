@@ -16,7 +16,7 @@ import { encodeAbiParameters, encodeFunctionData, parseAbi, type Hex } from "vie
 import { chainMemory, poolRead, type PoolSpec, type PoolRead } from "../obscura/pools.ts";
 import { ASSETS, assetKey, chainOf, type Asset } from "./assets.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
-import { recordTrade, readBook, latestTrades, type Trade } from "./book.ts";
+import { recordTrade, readBook, latestTrades, boughtSymbols, type Trade } from "./book.ts";
 import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx } from "./signer.ts";
 import { WALLET_ADDRESS } from "../config.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
@@ -402,9 +402,11 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
   const book = readBook();
   const allTrades = [...book.trades, ...extraTrades];
   const pos = positions(book.flows, allTrades, balances, prices).positions;
+  // Only what the desk bought is ever sold: an airdrop in the wallet is not a position and is never touched.
+  const bought = boughtSymbols(allTrades);
   for (const a of Object.values(dyn)) {
     const held = balances[a.symbol] ?? 0;
-    if (!isHolding(held) || !a.candidate) continue;
+    if (!bought.has(a.symbol) || !isHolding(held) || !a.candidate) continue;
     const p = pos.find((x) => x.asset === a.symbol);
     const hourly = feed.hourly[a.candidate.poolId.toLowerCase()] ?? [];
     const buys = allTrades.filter((t) => t.to.asset === a.symbol && (t.status === "settled" || t.status === "pending"));

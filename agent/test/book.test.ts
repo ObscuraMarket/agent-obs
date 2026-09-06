@@ -1,6 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy } from "../src/desk/book.ts";
+import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols } from "../src/desk/book.ts";
+
+test("only what the desk bought is a holding: an airdrop in the wallet is never counted, watched or sold", () => {
+  const rows: Trade[] = [
+    { at: 1, id: "a", status: "settled", from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "ZZZ", amount: 3214, usd: null }, partner: "pool" },
+    { at: 2, id: "b", status: "pending", from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "SHARD", amount: 506137, usd: null }, partner: "pool" },
+    { at: 3, id: "c", status: "cancelled", from: { asset: "ETH", amount: 0.002, usd: 5 }, to: { asset: "KET", amount: 0, usd: null }, partner: null },
+    { at: 4, id: "d", status: "failed", from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "MEME", amount: 0, usd: null }, partner: "pool" },
+  ];
+  const bought = boughtSymbols(rows);
+  assert.deepEqual([...bought].sort(), ["SHARD", "ZZZ"]);
+  assert.equal(bought.has("KET"), false, "a withdrawn proposal bought nothing");
+  assert.equal(bought.has("MEME"), false, "a failed swap bought nothing");
+  assert.equal(bought.has("AIRDROP"), false, "a token that simply appears in the wallet was never bought");
+});
 
 const flows: CapitalFlow[] = [
   { at: 1, kind: "deposit", asset: "ETH", amount: 1, usd: 2500 },

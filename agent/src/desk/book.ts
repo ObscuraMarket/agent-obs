@@ -74,6 +74,13 @@ export type Prices = Record<string, number | null>;
 const STABLES = new Set(["USDG", "USDC", "USDT", "DAI", "USDE"]);
 const EPS = 1e-12;
 
+/** PURE: the symbols the desk itself bought (a settled or in-flight swap into them). A balance in anything else, an airdrop or dust sent to the wallet, is never a holding: never counted, never watched, never sold. */
+export function boughtSymbols(rows: Trade[]): Set<string> {
+  const out = new Set<string>();
+  for (const t of latestTrades(rows)) if ((t.status === "settled" || t.status === "pending") && t.to?.asset) out.add(t.to.asset);
+  return out;
+}
+
 /** PURE: the latest row per trade id (the ledger is append-only, updates re-append). */
 export function latestTrades(rows: Trade[]): Trade[] {
   const byId = new Map<string, Trade>();
