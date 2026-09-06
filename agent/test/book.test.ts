@@ -1,6 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols } from "../src/desk/book.ts";
+import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, series, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding } from "../src/desk/book.ts";
+
+test("a mark a thousand times the capital is a price read gone wrong, never the book: not shown, not recorded", () => {
+  // SHARD dust after the full sell, priced off the drained pool: equity 1.08e41 on $948.82 of capital.
+  const bad = { at: 2, holdings: { ETH: 0.4176, SHARD: 3.18e-10 }, equityUsd: 1.0833582409281056e41, inFlightUsd: 0, netCapitalUsd: 948.82, pnlUsd: 1e41, pnlPct: 1e38, unpriced: [] };
+  const good = { at: 1, holdings: { ETH: 0.4176 }, equityUsd: 1047.05, inFlightUsd: 0, netCapitalUsd: 948.82, pnlUsd: 98.23, pnlPct: 0.1035, unpriced: [] };
+  assert.equal(saneMark(bad), false);
+  assert.equal(saneMark(good), true);
+  assert.equal(latestSaneMark([good, bad])?.at, 1, "the latest mark shown is the latest sane one");
+  assert.equal(markIsTrustworthy(bad, good, []), false, "and it is never recorded");
+  assert.deepEqual(series([good, bad], 1e9, 3).map((s) => s.at), [1]);
+  // The dust itself is left out of positions and of the equity.
+  const pos = positions([], [], { ETH: 0.4176, SHARD: 3.18e-10 }, { ETH: 2500, SHARD: 3.4e50 });
+  assert.deepEqual(pos.positions.map((p) => p.asset), ["ETH"]);
+  assert.equal(isHolding(3.18e-10), false);
+});
 
 test("only what the desk bought is a holding: an airdrop in the wallet is never counted, watched or sold", () => {
   const rows: Trade[] = [

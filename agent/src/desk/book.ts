@@ -186,8 +186,21 @@ export function isFailedReadMark(prev: BookSnapshot | undefined, s: BookSnapshot
 }
 
 /** PURE: the PnL curve from stored snapshots, oldest first, within a window; failed-read marks are skipped. */
+/** PURE: a mark the page may show. An equity that is not a number, or a thousand times the capital, is a price read gone wrong (a drained pool printing dust at an absurd price), never the book. */
+export function saneMark(s: BookSnapshot | null | undefined): boolean {
+  if (!s) return false;
+  if (s.equityUsd == null) return true;
+  if (!Number.isFinite(s.equityUsd) || s.equityUsd < 0) return false;
+  return s.equityUsd <= 1000 * Math.max(1, s.netCapitalUsd ?? 1);
+}
+
+/** PURE: the latest mark worth showing. */
+export function latestSaneMark(snapshots: BookSnapshot[]): BookSnapshot | null {
+  return snapshots.filter(saneMark).reduce<BookSnapshot | null>((a, b) => (a == null || b.at > a.at ? b : a), null);
+}
+
 export function series(snapshots: BookSnapshot[], sinceMs: number, now: number): Array<{ at: number; equityUsd: number | null; pnlUsd: number | null }> {
-  const sorted = [...snapshots].sort((a, b) => a.at - b.at);
+  const sorted = [...snapshots].filter(saneMark).sort((a, b) => a.at - b.at);
   return sorted
     .filter((s, i) => s.at >= now - sinceMs && !isFailedReadMark(sorted[i - 1], s, sorted[i + 1]))
     .map((s) => ({ at: s.at, equityUsd: s.equityUsd, pnlUsd: s.pnlUsd }));
@@ -199,6 +212,7 @@ export function series(snapshots: BookSnapshot[], sinceMs: number, now: number):
  * the wallet answered nothing at all while the last mark held something.
  */
 export function markIsTrustworthy(mark: BookSnapshot, previous: BookSnapshot | null, unread: string[]): boolean {
+  if (!saneMark(mark)) return false;
   if (!previous) return true;
   const prevHeld = Object.entries(previous.holdings ?? {}).filter(([, q]) => q > 0).map(([s]) => s);
   if (!prevHeld.length) return true;

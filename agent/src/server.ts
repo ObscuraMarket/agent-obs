@@ -12,7 +12,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readLedger } from "./ledger.ts";
 import { liveReads, readsBlock, assetPrices, readMarketSamples, marketSeries, change24h, type Reads } from "./obscura/reads.ts";
-import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, type Trade, type BookSnapshot } from "./desk/book.ts";
+import { readBook, latestTrades, snapshot, snapshotFromChain, series, positions, latestSaneMark, type Trade, type BookSnapshot } from "./desk/book.ts";
 import { trackRecord, basisSignal, ratioStats, readPrices, usSession } from "./desk/analysis.ts";
 import { stockReference } from "./obscura/stockRef.ts";
 import { readFeed, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, readTokens, resolveAny } from "./desk/candidates.ts";
@@ -268,7 +268,7 @@ export function publicTrades(trades: Trade[], limit = 50): Trade[] {
 }
 const deskFromDisk = () => {
   const book = readBook();
-  const latest = book.snapshots.length ? book.snapshots.reduce((a, b) => (b.at > a.at ? b : a)) : null;
+  const latest = latestSaneMark(book.snapshots);
   const thoughts = readThoughts(1);
   return { book, desk: buildDesk(latest, book.trades, thoughts[0]?.at ?? null, tradingArmed()) };
 };
