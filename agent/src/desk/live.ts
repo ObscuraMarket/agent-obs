@@ -186,7 +186,7 @@ async function step(now: number): Promise<void> {
     const rows = tapes.get(spec.id as string) ?? [];
     const st = tapeStats(rows, symbol, now, 15);
     const er = entryRead(rows, symbol, now, entryRules, role !== "launch");
-    states.push({ symbol, role, entryState: er.state, entryOk: er.ok, trend: st.trend, offPeakPct: st.offPeakPct, buyPressurePct: st.buyPressurePct, swaps: st.swaps, lastSwapAgoMin: st.lastSwapAgoMin, why: er.why });
+    states.push({ symbol, role, entryState: er.state, entryOk: er.ok, trend: st.trend, offPeakPct: st.offPeakPct, buyPressurePct: st.buyPressurePct, swaps: st.swaps, lastSwapAgoMin: st.lastSwapAgoMin, why: er.why, lastPrice: rows.length ? rows[rows.length - 1].price : null, quote: spec.token0 === symbol ? spec.token1 : spec.token0 });
   }
   // The tape's entry state changing on a watched token is research worth a line: the state, and the two
   // figures that decide it, at most once every three minutes per token and state so a flapping read does not flood the log.

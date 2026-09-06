@@ -293,6 +293,12 @@ Additive fields (since September 3):
   `triggerKind` (since September 6) is `entry`, or `held` / `exit` when the
   trigger is a token the desk holds: a review on its cadence, or a break in
   its tape. Tag those as the holding they are, not as an entry.
+- The stream's `pnl` event (since September 6): the `/api/obs/pnl` answer
+  without `series`, pushed whenever a position moved, opened or closed, or
+  equity changed, checked every four seconds. Held launch tokens are priced
+  from the live watch's tape, which reads every pool in play every three
+  seconds, so the positions move in real time between wallet reads. Apply it
+  in place and keep the curve you have until the next full fetch.
   The `hello` frame carries the current one as `watch` when the watch is
   live. Draw it dim; it is context, not a decision.
 

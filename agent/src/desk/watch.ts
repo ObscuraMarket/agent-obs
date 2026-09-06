@@ -21,6 +21,9 @@ export interface WatchState {
   swaps: number;
   lastSwapAgoMin: number | null;
   why: string;
+  /** The last swap's price on the tape, in the quote per token, and the quote's symbol: the page prices a held token from it between wallet reads. */
+  lastPrice?: number | null;
+  quote?: string;
 }
 
 export interface WatchRules {

@@ -272,6 +272,85 @@ async function cachedPrices(symbols: string[], opts: { wait?: boolean } = {}): P
 function unpricedHeld(bySymbol: Record<string, number>): string[] {
   return Object.entries(bySymbol).filter(([s, q]) => isHolding(q) && !priceBook.has(s.toUpperCase())).map(([s]) => s);
 }
+
+/**
+ * PURE: prices for held launch tokens from the live watch's tape, which reads every pool in play every three seconds:
+ * the last swap's price in the quote, times the quote's dollar price. A wallet read comes once a minute; between
+ * reads this is how a position moves on the page in real time. Only tokens the watch follows and can price are
+ * overridden; a stale live file (older than 30 s) changes nothing.
+ */
+export function tapePrices(live: { at?: number; watching?: Array<{ symbol: string; lastPrice?: number | null; quote?: string }> } | null, prices: Record<string, number | null>, held: string[], now = Date.now()): Record<string, number | null> {
+  if (!live?.at || now - live.at > 30_000) return prices;
+  const out = { ...prices };
+  const want = new Set(held.map((s) => s.toUpperCase()));
+  for (const w of live.watching ?? []) {
+    const sym = w.symbol.toUpperCase();
+    if (!want.has(sym) || sym === "ETH" || sym === "NVDA" || !(Number(w.lastPrice) > 0) || !w.quote) continue;
+    const quote = w.quote.toUpperCase();
+    const quoteUsd = quote === "USDG" || quote === "USDC" || quote === "USDT" ? 1 : prices[quote];
+    if (quoteUsd == null || !(quoteUsd > 0)) continue;
+    out[sym] = (w.lastPrice as number) * quoteUsd;
+  }
+  return out;
+}
+function readLiveFile(): { at?: number; watching?: Array<{ symbol: string; lastPrice?: number | null; quote?: string }> } | null {
+  const p = dataPath("obs-live.json");
+  if (!existsSync(p)) return null;
+  try {
+    return JSON.parse(readFileSync(p, "utf8")) as { at?: number; watching?: Array<{ symbol: string; lastPrice?: number | null; quote?: string }> };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The PnL answer: the book from the chain when the reads are warm and current, the ledger otherwise, marked pending.
+ * Positions are priced from the live watch's tape between wallet reads. `withSeries` false leaves the curve out, for
+ * the stream, which pushes this whenever it changes.
+ */
+async function pnlPayload(hours: number, now: number, withSeries = true): Promise<Record<string, unknown>> {
+  const { book } = deskFromDisk();
+  const windowMs = (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 90) : 168) * 3600e3;
+  const counts = (ts: Trade[]) => ({ settled: ts.filter((x) => x.status === "settled").length, pending: ts.filter((x) => x.status === "pending").length, proposed: ts.filter((x) => x.status === "proposed").length, failed: ts.filter((x) => x.status === "failed" || x.status === "cancelled").length });
+  const capital = (netUsd: number) => ({ netUsd, deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length });
+  // The chain is the truth once a wallet exists; the ledgers are the fallback. A cold read is never waited for:
+  // the ledger's last snapshot answers at once, marked pending, and the next request gets the chain.
+  const warm = warmReads();
+  if (!warm) {
+    const last = book.snapshots[book.snapshots.length - 1] ?? snapshot(book.flows, book.trades, {}, now);
+    return { pending: true, snapshot: last, prices: {}, positions: [], realizedUsd: 0, inFlight: [], track: null, ...(withSeries ? { series: series(book.snapshots, windowMs, now) } : {}), capital: capital(last.netCapitalUsd), trades: counts(latestTrades(book.trades)), canExecute: tradingArmed(), at: now };
+  }
+  // A read that began before the last swap settled is not the truth for the minute until the next one: the ledger
+  // stands in, marked pending, so the page never anchors its curve to a wallet priced a position short.
+  const behind = readsBehindBook(book.trades);
+  const chain = !behind && warm.wallet ? walletBalances(warm.wallet) : null;
+  const held = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, book.trades, {}, now).holdings);
+  const prices = tapePrices(readLiveFile(), await cachedPrices(held), held, now);
+  // A held token whose price has never been read (a new position, or the first request after a restart) would
+  // mark the wallet short by that position; the cycle's last mark stands in, pending, until its price lands.
+  const unpriced = chain ? unpricedHeld(chain.bySymbol).filter((s) => prices[s.toUpperCase()] == null) : [];
+  const standIn = unpriced.length ? latestSaneMark(book.snapshots) : null;
+  const live = standIn ?? (chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now));
+  const pos = positions(book.flows, book.trades, live.holdings, prices);
+  return {
+    ...(behind || standIn ? { pending: true } : {}),
+    snapshot: live,
+    prices,
+    positions: pos.positions,
+    realizedUsd: pos.realizedUsd,
+    inFlight: pos.inFlight,
+    track: trackRecord(pos.events, now),
+    ...(withSeries ? { series: series(book.snapshots, windowMs, now) } : {}),
+    capital: capital(live.netCapitalUsd),
+    trades: counts(latestTrades(book.trades)),
+    canExecute: tradingArmed(),
+    at: now,
+  };
+}
+/** PURE: what the stream compares between looks: a position moved, was opened or closed, or equity changed. */
+export function pnlFingerprint(p: { snapshot?: { equityUsd?: number | null }; positions?: Array<{ asset: string; qty: number; valueUsd: number | null }> }): string {
+  return JSON.stringify({ e: p.snapshot?.equityUsd == null ? null : Math.round(p.snapshot.equityUsd * 100), p: (p.positions ?? []).map((x) => [x.asset, x.qty, x.valueUsd == null ? null : Math.round(x.valueUsd * 100)]) });
+}
 /** The reads when they are warm, else null at once: for endpoints that must never wait. */
 function warmReads(): Reads | null {
   void cachedReads().catch(() => undefined);
@@ -334,6 +413,8 @@ const DASHBOARD = join(ROOT_DIR, "..", "dashboard", "index.html");
 // append-only files, so "new" is cheap to detect: the file grew. Two seconds
 // between looks; a keepalive comment every 25 so proxies keep the socket.
 const STREAM_POLL_MS = 2000;
+/** How often the stream re-prices the positions from the live watch's tape. */
+const PNL_EVERY_MS = 4000;
 const STREAM_PING_MS = 25_000;
 
 /** PURE: a sliding-window request budget per client. Exported for tests. */
@@ -397,6 +478,9 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
   const firstWatch = readWatch();
   let lastWatchAt = firstWatch ? Date.now() : 0;
   let lastWatchTrigger = firstWatch?.trigger ?? null;
+  let lastPnlAt = 0;
+  let lastPnlFingerprint = "";
+  let pnlInFlight = false;
   const researchHistory = readResearch(40).reverse();
   let lastResearchAt = researchHistory.length ? researchHistory[researchHistory.length - 1].at : 0;
   let researchSize = sizeOf("obs-research.jsonl");
@@ -418,6 +502,15 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
       lastWatchAt = Date.now();
       lastWatchTrigger = w.trigger;
       res.write(sseFrame("watch", w));
+    }
+    // The positions, in real time: the book re-priced from the live watch's tape every few seconds, pushed when it moved.
+    if (Date.now() - lastPnlAt >= PNL_EVERY_MS && !pnlInFlight) {
+      lastPnlAt = Date.now();
+      pnlInFlight = true;
+      pnlPayload(24, Date.now(), false)
+        .then((p) => { const f = pnlFingerprint(p as never); if (f !== lastPnlFingerprint) { lastPnlFingerprint = f; res.write(sseFrame("pnl", p)); } })
+        .catch(() => undefined)
+        .finally(() => { pnlInFlight = false; });
     }
     const ts = sizeOf("obs-thoughts.jsonl");
     if (ts !== thoughtsSize) {
@@ -599,46 +692,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   }
   if (path === "/api/obs/pnl") {
     const hours = Number(url.searchParams.get("hours") ?? 168);
-    const { book } = deskFromDisk();
-    // The chain is the truth once a wallet exists; the ledgers are the fallback. A cold read is never waited for:
-    // the ledger's last snapshot answers at once, marked pending, and the next request gets the chain.
-    const warm = warmReads();
-    if (!warm) {
-      const t0 = latestTrades(book.trades);
-      const last = book.snapshots[book.snapshots.length - 1] ?? snapshot(book.flows, book.trades, {}, now);
-      json(res, 200, { pending: true, snapshot: last, prices: {}, positions: [], realizedUsd: 0, inFlight: [], track: null, series: series(book.snapshots, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 90) : 168) * 3600e3, now), capital: { netUsd: last.netCapitalUsd, deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length }, trades: { settled: t0.filter((x) => x.status === "settled").length, pending: t0.filter((x) => x.status === "pending").length, proposed: t0.filter((x) => x.status === "proposed").length, failed: t0.filter((x) => x.status === "failed").length }, canExecute: tradingArmed(), at: now });
-      return;
-    }
-    // A read that began before the last swap settled is not the truth for the minute until the next one: the ledger
-    // stands in, marked pending, so the page never anchors its curve to a wallet priced a position short.
-    const behind = readsBehindBook(book.trades);
-    Promise.resolve(warm)
-      .then(async (r) => {
-        const chain = !behind && r.wallet ? walletBalances(r.wallet) : null;
-        const held = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, book.trades, {}, now).holdings);
-        const prices = await cachedPrices(held);
-        // A held token whose price has never been read (a new position, or the first request after a restart) would
-        // mark the wallet short by that position; the cycle's last mark stands in, pending, until its price lands.
-        const unpriced = chain ? unpricedHeld(chain.bySymbol) : [];
-        const standIn = unpriced.length ? latestSaneMark(book.snapshots) : null;
-        const live = standIn ?? (chain ? snapshotFromChain(book.flows, book.trades, chain.bySymbol, prices, now) : snapshot(book.flows, book.trades, prices, now));
-        const t = latestTrades(book.trades);
-        const pos = positions(book.flows, book.trades, live.holdings, prices);
-        json(res, 200, {
-          ...(behind || standIn ? { pending: true } : {}),
-          snapshot: live,
-          prices,
-          positions: pos.positions,
-          realizedUsd: pos.realizedUsd,
-          inFlight: pos.inFlight,
-          track: trackRecord(pos.events, now),
-          series: series(book.snapshots, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 90) : 168) * 3600e3, now),
-          capital: { netUsd: live.netCapitalUsd, deposits: book.flows.filter((f) => f.kind === "deposit").length, withdrawals: book.flows.filter((f) => f.kind === "withdraw").length },
-          trades: { settled: t.filter((x) => x.status === "settled").length, pending: t.filter((x) => x.status === "pending").length, proposed: t.filter((x) => x.status === "proposed").length, failed: t.filter((x) => x.status === "failed" || x.status === "cancelled").length },
-          canExecute: tradingArmed(),
-          at: now,
-        });
-      })
+    pnlPayload(hours, now)
+      .then((p) => json(res, 200, p))
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "pnl unavailable" }));
     return;
   }

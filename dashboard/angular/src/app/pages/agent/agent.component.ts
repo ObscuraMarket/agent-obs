@@ -174,7 +174,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnInit(): void {
     this.refresh();
-    this.poll = interval(60_000).subscribe(() => this.refresh());
+    this.poll = interval(15_000).subscribe(() => this.refresh());
     this.startMarquee();
     // The stream and the typewriter run outside Angular: a 9ms typing tick
     // must not drive change detection. Bound state re-enters via zone.run.
@@ -920,6 +920,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     es.addEventListener('watch', (ev) => { alive(); this.onWatch(JSON.parse((ev as MessageEvent).data) as ObsWatchEvent); });
     es.addEventListener('research', (ev) => { alive(); this.onResearch(JSON.parse((ev as MessageEvent).data) as ObsResearchEvent); });
     es.addEventListener('trade', (ev) => { alive(); this.onTrade(JSON.parse((ev as MessageEvent).data) as ObsTrade); });
+    // The positions in real time: the API re-prices the book from the live watch's tape every few seconds and pushes it when it moved.
+    es.addEventListener('pnl', (ev) => { alive(); this.zone.run(() => this.onPnl(JSON.parse((ev as MessageEvent).data) as Partial<ObsPnl>)); });
     es.onerror = () => {
       // A redeploy answers 502 for a minute and the browser then stops retrying for good; the page keeps the terminal
       // moving on polls and reopens the stream itself, backing off to half a minute.
@@ -1224,6 +1226,15 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     }
     items.push(this.line('watch', w.at, 'watch', w.line, false));
     this.push(items);
+  }
+
+  /** A `pnl` event carries everything but the curve; the curve it has stays until the next full refresh. */
+  private onPnl(p: Partial<ObsPnl>): void {
+    const merged = { ...(this.pnl ?? {}), ...p, series: this.pnl?.series ?? [] } as ObsPnl;
+    this.pnl = merged;
+    this.buildPortfolio(merged);
+    this.buildPositions(merged);
+    this.updateChart();
   }
 
   private onTrade(x: ObsTrade): void {

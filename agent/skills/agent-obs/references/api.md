@@ -141,6 +141,9 @@ data: {"at":1788632975808,"block":55262326,"lookMs":812,"line":"watching JOHN br
 
 `triggerKind` is `entry` (a watched token's tape gave an entry), `held` (a
 token the desk holds, reviewed on its cadence) or `exit` (its tape broke).
+A `pnl` event carries the `/api/obs/pnl` answer without `series`, pushed
+whenever a position or equity moved (checked every four seconds); held
+launch tokens are priced from the live watch's tape between wallet reads.
 
 A `: ping` comment every 25 seconds keeps the connection open. If the
 stream cannot be opened, poll `/api/obs/thoughts` and `/api/obs/live`.

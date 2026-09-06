@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter } from "../src/server.ts";
+import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter, tapePrices, pnlFingerprint } from "../src/server.ts";
 import { originAllowed } from "../src/server.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
@@ -75,4 +75,24 @@ test("the origin allowlist matches exactly, or one wildcard subdomain label", ()
   assert.equal(originAllowed("https://vercel.app", list), false, "the label must exist");
   assert.equal(originAllowed("", list), false);
   assert.equal(originAllowed("https://anything.example", ["*"]), true);
+});
+
+test("held launch tokens are priced from the live watch's tape between wallet reads, in dollars via the quote", () => {
+  const now = 1_800_000_000_000;
+  const live = { at: now - 3000, watching: [{ symbol: "NSDX", lastPrice: 0.0000268, quote: "ETH" }, { symbol: "WHLR", lastPrice: 0.0021, quote: "USDG" }, { symbol: "RWAPACT", lastPrice: 0.001, quote: "ETH" }] };
+  const prices = { ETH: 2500, NSDX: 0.00005, WHLR: 0.0019 };
+  const out = tapePrices(live, prices, ["ETH", "NSDX", "WHLR"], now);
+  assert.ok(Math.abs((out.NSDX as number) - 0.067) < 1e-9, "quote per token times the quote's dollars");
+  assert.equal(out.WHLR, 0.0021, "a USDG quote is dollars already");
+  assert.equal(out.ETH, 2500, "ETH keeps the book's price");
+  assert.equal(out.RWAPACT, undefined, "not held: not priced here");
+  assert.deepEqual(tapePrices({ ...live, at: now - 60_000 }, prices, ["NSDX"], now), prices, "a stale live file changes nothing");
+  assert.deepEqual(tapePrices(null, prices, ["NSDX"], now), prices);
+});
+
+test("the stream pushes the positions only when something moved", () => {
+  const a = { snapshot: { equityUsd: 10153.191 }, positions: [{ asset: "NSDX", qty: 1_720_174, valueUsd: 103.004 }] };
+  assert.equal(pnlFingerprint(a), pnlFingerprint({ snapshot: { equityUsd: 10153.194 }, positions: [{ asset: "NSDX", qty: 1_720_174, valueUsd: 103.001 }] }), "a change under a cent is no change");
+  assert.notEqual(pnlFingerprint(a), pnlFingerprint({ ...a, positions: [{ asset: "NSDX", qty: 1_720_174, valueUsd: 104 }] }));
+  assert.notEqual(pnlFingerprint(a), pnlFingerprint({ ...a, positions: [] }), "a position closed");
 });
