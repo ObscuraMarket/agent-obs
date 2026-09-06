@@ -75,7 +75,7 @@ console.log(`entries allowed on ${hits.length} minutes-of-first-signal across ${
 console.log("time   symbol      state      age    +5m   +15m   +30m   +60m   max60  min60   probe  exit");
 for (const h of hits) console.log(`${new Date(h.at).toISOString().slice(11, 16)}Z ${h.symbol.padEnd(11)} ${h.state.padEnd(10)} ${String(Math.round(h.ageMin)).padStart(4)}m ${f1(h.r5)} ${f1(h.r15)} ${f1(h.r30)} ${f1(h.r60)} ${f1(h.max60)} ${f1(h.min60)} ${f1(h.probe)}  ${h.probeExit}`);
 const med = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
-for (const state of ["spike", "pullback", "base", "reignition"]) {
+for (const state of ["spike", "pullback", "base", "reignition", "dip"]) {
   const g = hits.filter((h) => h.state === state);
   if (!g.length) continue;
   const r30 = g.map((h) => h.r30).filter((x): x is number => x != null);

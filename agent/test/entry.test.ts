@@ -78,6 +78,28 @@ test("the re-ignition: a spike, a shakeout of half, then a reclaim on a burst of
   assert.equal(R.reignition, false, "off by default");
 });
 
+test("the dip: a pump inside three hours, the price well off it, the low holding, and no buyers needed", () => {
+  // TRIBUTE, 2026-09-06: +125% over an hour, then a quiet retrace to 45% off the peak on one or two swaps a minute.
+  const rows: SwapRow[] = [];
+  const push = (min: number, side: "buy" | "sell", quote: number, price: number) => rows.push(row(min, side, quote, price));
+  for (let m = 170; m > 120; m -= 2) push(m, "buy", 40, 1.0 + (170 - m) * 0.05);          // the run to a peak of 3.5 at minute 120
+  for (let m = 118; m > 20; m -= 4) push(m, "sell", 8, 3.5 - (118 - m) * 0.0155);       // the quiet retrace to about 1.98
+  for (let m = 18; m >= 0; m -= 3) push(m, m % 2 ? "sell" : "buy", 5, 1.98 + (m % 3) * 0.01); // the low holding for 18 min, two swaps a minute at most
+  const off = entryRead(rows, "TOK", now, { ...R, breakdownPct: 5 }, true);
+  assert.equal(off.ok, false, "without the dip read a quiet retrace is never an entry");
+  const on = entryRead(rows, "TOK", now, { ...R, breakdownPct: 5, dip: true }, true);
+  assert.equal(on.state, "dip");
+  assert.equal(on.ok, true);
+  assert.match(on.why, /dip: ran \+2\d\d% to a peak 1[12]\d min ago, now 4\d% off it and the dip's low has held 15 min/);
+  // Too little off the peak, or the low still falling, is not the dip.
+  const shallow = rows.map((x) => (x.at >= now - 20 * 60e3 ? { ...x, price: 3.1 } : x));
+  assert.notEqual(entryRead(shallow, "TOK", now, { ...R, breakdownPct: 5, dip: true }, true).state, "dip", "11% off the peak is not a dip");
+  const falling = rows.map((x) => (x.at >= now - 6 * 60e3 ? { ...x, price: 1.7 } : x));
+  assert.notEqual(entryRead(falling, "TOK", now, { ...R, breakdownPct: 5, dip: true }, true).state, "dip", "a low still being made is not held");
+  assert.equal(entryRulesFromEnv({ OBS_ENTRY_DIP: "on" } as unknown as NodeJS.ProcessEnv).dip, true);
+  assert.equal(R.dip, false, "off by default");
+});
+
 test("with pullbacks switched off the same tape is read as a pullback and refused: the desk buys bases only", () => {
   const rows = [quietStart, row(9, "buy", 100, 1.2), row(7, "buy", 300, 1.5), row(6, "buy", 400, 1.6), row(3, "sell", 200, 1.35), row(1, "buy", 250, 1.42)];
   const e = entryRead(rows, "TOK", now, { ...R, allowPullback: false });

@@ -174,7 +174,8 @@ async function step(now: number): Promise<void> {
   watchingNow.clear();
   for (const sy of nowWatching) watchingNow.add(sy);
   // One read for every watched pool: the blocks since the last look, kept in memory.
-  const { tapes, headBlock: block } = await updateTapes(items, now, 35, tapeCache);
+  // Three hours of tape by default (OBS_LIVE_TAPE_MIN): the dip read looks that far back for the pump it buys under.
+  const { tapes, headBlock: block } = await updateTapes(items, now, Number(process.env.OBS_LIVE_TAPE_MIN ?? 180), tapeCache);
   const states: WatchState[] = [];
   for (const { symbol, role, spec } of items) {
     const rows = tapes.get(spec.id as string) ?? [];

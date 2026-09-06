@@ -33,6 +33,8 @@ const ENTRY: Record<string, (sym: string, note: string) => string> = {
   breakdown: (s) => `${s}'s tape: back below where the window started. No entry.`,
   waiting: (s) => `${s}'s tape: volume is up but the price has given no entry yet. Waiting.`,
   quiet: (s, n) => `${s}'s tape: quiet, ${n || "no volume pickup"}.`,
+  dip: (s, n) => `${s}'s tape: a dip under a pump, the low holding${n ? ` (${n})` : ""}. Buying before the volume, entry allowed.`,
+  reignition: (s, n) => `${s}'s tape: a re-ignition after a shakeout${n ? ` (${n})` : ""}. Entry allowed, thinking.`,
 };
 
 /** PURE: the sentence for an event. */

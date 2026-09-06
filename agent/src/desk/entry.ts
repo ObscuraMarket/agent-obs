@@ -45,6 +45,19 @@ export interface EntryRules {
   reignitionReclaimPct: number;
   reignitionVolumeRatio: number;
   reignitionMin: number;
+  /**
+   * The dip (OBS_ENTRY_DIP): buying before the buyers come back. Over the last dipWindowMin the token ran dipRunPct
+   * or more to a peak, sits dipMinPct to dipMaxPct off it, and the dip's low has held for dipHoldMin minutes. No
+   * volume pickup and no buy pressure is asked for; the floor and the time stop bound the wait. The operator's call
+   * of 2026-09-06: "we want to be buying dips before the volume appears even if we have to hold longer".
+   */
+  dip: boolean;
+  dipWindowMin: number;
+  dipRunPct: number;
+  dipMinPct: number;
+  dipMaxPct: number;
+  dipHoldMin: number;
+  dipMinSwaps: number;
 }
 
 export function entryRulesFromEnv(env: NodeJS.ProcessEnv = process.env): EntryRules {
@@ -69,10 +82,17 @@ export function entryRulesFromEnv(env: NodeJS.ProcessEnv = process.env): EntryRu
     reignitionReclaimPct: n("OBS_ENTRY_REIGNITION_RECLAIM_PCT", 50),
     reignitionVolumeRatio: n("OBS_ENTRY_REIGNITION_VOLUME_RATIO", 3),
     reignitionMin: n("OBS_ENTRY_REIGNITION_MIN", 3),
+    dip: (env.OBS_ENTRY_DIP ?? "off") === "on",
+    dipWindowMin: n("OBS_ENTRY_DIP_WINDOW_MIN", 180),
+    dipRunPct: n("OBS_ENTRY_DIP_RUN_PCT", 50),
+    dipMinPct: n("OBS_ENTRY_DIP_MIN_PCT", 30),
+    dipMaxPct: n("OBS_ENTRY_DIP_MAX_PCT", 60),
+    dipHoldMin: n("OBS_ENTRY_DIP_HOLD_MIN", 15),
+    dipMinSwaps: n("OBS_ENTRY_DIP_MIN_SWAPS", 20),
   };
 }
 
-export type EntryState = "quiet" | "spike" | "pullback" | "base" | "breakdown" | "waiting" | "reignition";
+export type EntryState = "quiet" | "spike" | "pullback" | "base" | "breakdown" | "waiting" | "reignition" | "dip";
 
 export interface EntryRead {
   symbol: string;
@@ -120,6 +140,29 @@ export function entryRead(rows: SwapRow[], symbol: string, now: number, r: Entry
   const pickupRatio = earlierMean > 0 ? recent / earlierMean : null;
   const pickup = volumeKnown || (pickupRatio != null ? pickupRatio >= r.pickupRatio : recent > 0);
   const base: EntryRead = { symbol, windowMin: r.windowMin, swaps: w.length, pickup, volumeKnown, pickupRatio, runPct: null, offPeakPct: null, higherLow: null, bouncePct: null, recentBuyPressurePct: null, rangePct: null, state: "quiet", ok: false, why: "" };
+  // The dip: over a longer window the token ran to a peak, sits well off it, and the dip's low has held. Read before
+  // the short window's gates, since a dip is quiet by definition: no pickup, no buyers yet, and few prints.
+  if (r.dip) {
+    const L = rows.filter((x) => x.at >= now - r.dipWindowMin * 60e3 && x.at <= now && x.price > 0).sort((a, b) => a.at - b.at);
+    if (L.length >= r.dipMinSwaps) {
+      let pk = 0;
+      for (let i = 1; i < L.length; i++) if (L[i].price > L[pk].price) pk = i;
+      const first = L[0].price, peak = L[pk].price, last = L[L.length - 1].price;
+      const post = L.slice(pk);
+      const runPct = ((peak - first) / first) * 100;
+      const offPct = ((peak - last) / peak) * 100;
+      const peakAgeMin = (now - L[pk].at) / 60e3;
+      // The dip's low is the low after the peak and before the hold window; the hold window may not go under it.
+      const before = post.filter((x) => x.at < now - r.dipHoldMin * 60e3);
+      const trough = before.length ? Math.min(...before.map((x) => x.price)) : null;
+      const recent = L.filter((x) => x.at >= now - r.dipHoldMin * 60e3);
+      const recentLow = recent.length ? Math.min(...recent.map((x) => x.price)) : null;
+      const held = r.dipHoldMin <= 0 || (trough != null && recentLow != null && recentLow >= trough * 0.95 && peakAgeMin >= r.dipHoldMin);
+      if (runPct >= r.dipRunPct && offPct >= r.dipMinPct && offPct <= r.dipMaxPct && held) {
+        return { ...base, runPct, offPeakPct: offPct, state: "dip", ok: true, why: `dip: ran ${pct(runPct)} to a peak ${peakAgeMin.toFixed(0)} min ago, now ${offPct.toFixed(0)}% off it and the dip's low has held ${r.dipHoldMin} min (${L.length} swaps in ${r.dipWindowMin} min): buying the dip before the volume, entry allowed` };
+      }
+    }
+  }
   if (w.length < r.minSwaps) return { ...base, why: `${w.length} swaps in ${r.windowMin} min, too few to read` };
   if (!pickup) return { ...base, why: `no volume pickup (the last 10 min ran ${pickupRatio == null ? "flat" : `${pickupRatio.toFixed(1)}x`} the earlier tape, ${r.pickupRatio}x needed)` };
   // Price action.
