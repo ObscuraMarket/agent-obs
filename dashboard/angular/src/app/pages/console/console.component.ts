@@ -464,6 +464,26 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
   // ---- the wallet is the account ---------------------------------------------------
 
   /** The wallet the site connected when it has one, else whatever the browser injected. */
+  /**
+   * No wallet in this browser. On a phone that is the normal case: the page has to be opened inside the wallet
+   * app's own browser, so the line carries one-tap links that do exactly that for Phantom and MetaMask.
+   */
+  private noWalletLine(): CliLine {
+    const mobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+    if (!mobile || typeof location === 'undefined') {
+      return { kind: 'error', text: 'No wallet found in this browser. Install MetaMask, Rabby or Phantom, or on a phone open this page inside your wallet app\'s own browser.' };
+    }
+    const here = location.href;
+    return {
+      kind: 'error',
+      text: 'No wallet in this browser. On a phone the console has to open inside your wallet app: tap your wallet below and it opens this page there, then sign in.',
+      links: [
+        { label: 'Open in Phantom', url: 'https://phantom.app/ul/browse/' + encodeURIComponent(here) + '?ref=' + encodeURIComponent(location.origin) },
+        { label: 'Open in MetaMask', url: 'https://metamask.app.link/dapp/' + location.host + location.pathname + location.search },
+      ],
+    };
+  }
+
   private provider(): any {
     if (this.siteWallet?.provider) { return this.siteWallet.provider; }
     if (typeof window === 'undefined') { return null; }
@@ -565,14 +585,14 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
    * the wallet the header connected is used; when several are installed, /connect <name> picks one.
    */
   private async signIn(which = ''): Promise<void> {
-    const noWallet = 'No wallet found in this browser. Install MetaMask, Rabby or Phantom, or on a phone open this page inside your wallet app\'s own browser.';
+    const noWallet = this.noWalletLine();
     let p: any;
     let wallet: string | null;
     if (this.siteWallet) {
       const w = this.siteWallet;
       if (!w.address) {
         const opts = w.list();
-        if (!opts.length) { this.print([{ kind: 'error', text: noWallet }]); return; }
+        if (!opts.length) { this.print([noWallet]); return; }
         const want = which.trim().toLowerCase();
         const pick = want ? opts.find((o) => o.name.toLowerCase().startsWith(want) || o.rdns.toLowerCase().includes(want)) : opts.length === 1 ? opts[0] : null;
         if (!pick) {
@@ -587,7 +607,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
       p = w.provider;
     } else {
       p = this.provider();
-      if (!p) { this.print([{ kind: 'error', text: noWallet }]); return; }
+      if (!p) { this.print([noWallet]); return; }
       const accs: string[] = await p.request({ method: 'eth_requestAccounts' });
       wallet = accs?.[0] ?? null;
       if (!wallet) { this.print([{ kind: 'error', text: 'The wallet didn\'t give an account.' }]); return; }
