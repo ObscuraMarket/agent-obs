@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { observationLines, parseThoughtReply, guardThoughts, buildThoughtPrompt } from "../src/desk/thoughts.ts";
+import { observationLines, parseThoughtReply, guardThoughts, buildThoughtPrompt, decisionUnread, decisionLineOf } from "../src/desk/thoughts.ts";
 import { snapshot } from "../src/desk/book.ts";
 
 const reads = {
@@ -100,4 +100,15 @@ test("a swap decision whose amount carries thousands separators is a swap, not a
   const plain = parseThoughtReply(["DECISION: swap 0.04 ETH@robinhood -> WHLR@robinhood"].join("\n"));
   assert.equal((plain.decision as { amount: number }).amount, 0.04, "an amount without separators still parses");
   assert.equal(parseThoughtReply("DECISION: swap , ETH -> USDG").decision.kind, "hold", "no digits is no swap");
+});
+
+test("a reply that meant a swap but parsed as hold is caught, and the model's own hold is not", () => {
+  const meant = ["THOUGHT: the tape broke", "THESIS: swap 2,823,944 ONLY@robinhood -> ETH@robinhood", "DECISION: swap 2,823,944 ONLY@robinhood -> ETH@robinhood", "REASON: exiting a breakdown"].join("\n");
+  const bad = { kind: "hold" as const, reason: "exiting a breakdown" };
+  assert.equal(decisionUnread(meant, bad), "DECISION: swap 2,823,944 ONLY@robinhood -> ETH@robinhood");
+  assert.equal(decisionUnread(meant, { kind: "propose-swap", amount: 2823944, from: "ONLY@robinhood", to: "ETH@robinhood", reason: "" }), null, "read correctly: nothing to flag");
+  assert.equal(decisionUnread(["THOUGHT: quiet", "THESIS: none", "DECISION: hold", "REASON: nothing clears the gates"].join("\n"), { kind: "hold", reason: "nothing clears the gates" }), null, "the model's own hold");
+  assert.equal(decisionUnread(["THESIS: swap 0.04 ETH@robinhood -> WHLR@robinhood", "DECISION: hold"].join("\n"), { kind: "hold", reason: "" }), "THESIS: swap 0.04 ETH@robinhood -> WHLR@robinhood", "a swap thesis beside a hold is flagged too");
+  assert.equal(decisionLineOf(meant), "swap 2,823,944 ONLY@robinhood -> ETH@robinhood");
+  assert.equal(decisionLineOf("THOUGHT: only"), null);
 });

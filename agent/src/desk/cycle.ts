@@ -11,7 +11,7 @@ import { AGENT_ID, DRY, dataPath } from "../config.ts";
 import { liveReads, assetPrices, walletBalances } from "../obscura/reads.ts";
 import { quoteWatchlist, parseWatchlist, DEFAULT_WATCHLIST } from "../obscura/orders.ts";
 import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, boughtSymbols, type Trade, markIsTrustworthy } from "./book.ts";
-import { observationLines, buildThoughtPrompt, parseThoughtReply, guardThoughts, readThoughts, recordThought, type QuoteRead, type Thought } from "./thoughts.ts";
+import { observationLines, buildThoughtPrompt, parseThoughtReply, guardThoughts, readThoughts, recordThought, decisionUnread, decisionLineOf, type QuoteRead, type Thought } from "./thoughts.ts";
 import { recallForPrompt, remember } from "../journal.ts";
 import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity, entryStats, baseLeg } from "./rails.ts";
 import { assetKey, type Asset } from "./assets.ts";
@@ -407,6 +407,13 @@ if (gwError || resp.text == null) {
   process.exit(1);
 }
 const parsed = parseThoughtReply(resp.text ?? "");
+// The failure that must never be silent: the model meant a swap and the desk is about to hold because the line
+// could not be read. It is printed, and it goes on the terminal in red with the line itself.
+const unreadDecision = decisionUnread(resp.text ?? "", parsed.decision);
+if (unreadDecision) {
+  console.error(`[desk] DECISION NOT UNDERSTOOD, holding instead: ${unreadDecision}`);
+  if (!DRY) recordResearch({ kind: "decision", symbol: "", ok: false, note: `the desk could not read its own decision and held instead. ${unreadDecision.slice(0, 140)}` });
+}
 const thoughts = guardThoughts(parsed.thoughts);
 if (!thoughts.length) {
   console.error("[desk] every thought line was blocked or empty; nothing recorded");
@@ -539,7 +546,8 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
   }
 }
 
-const entry: Thought = { at: now, observation, thoughts, decision, ...(PAPER ? { paper: true } : {}), ...(parsed.analysis ? { analysis: parsed.analysis } : {}) };
+const decisionLine = decisionLineOf(resp.text ?? "");
+const entry: Thought = { at: now, observation, thoughts, decision, ...(PAPER ? { paper: true } : {}), ...(parsed.analysis ? { analysis: parsed.analysis } : {}), ...(decisionLine ? { decisionLine } : {}) };
 console.log(`[desk] thoughts:\n${thoughts.map((t) => "  " + t).join("\n")}\n[desk] decision: ${decision.kind}${decision.reason ? ` (${decision.reason})` : ""}`);
 if (parsed.analysis) console.log(`[desk] analysis: thesis ${parsed.analysis.thesis || "none"}; evidence ${parsed.analysis.evidence.length} lines; invalidation ${parsed.analysis.invalidation || "none"}; conviction ${parsed.analysis.conviction ?? "none"}`);
 if (parsed.note) console.log(`  note to self: ${parsed.note}`);

@@ -35,6 +35,33 @@ export interface Thought {
   paper?: boolean;
   /** The argument behind the decision: thesis, evidence lines, invalidation, conviction 1 to 5. */
   analysis?: Analysis;
+  /** The DECISION line exactly as the model wrote it, so a line the parser misread can be replayed in a test. Never the note. */
+  decisionLine?: string;
+}
+
+/** PURE: the DECISION line of a reply as written, or null when there is none. */
+export function decisionLineOf(raw: string): string | null {
+  for (const line of raw.split(/\r?\n/)) {
+    const m = line.match(/^DECISION\s*:\s*(.*)$/i);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
+/**
+ * PURE: the line the parser could not read, when the model plainly meant a swap and the desk is about to hold: a
+ * DECISION line that is neither hold nor a swap the parser accepted, or a THESIS that opens with "swap" beside a
+ * hold. Null when the hold is the model's own. Until 2026-09-07 such a reply became a silent hold for hours.
+ */
+export function decisionUnread(raw: string, decision: Decision): string | null {
+  if (decision.kind !== "hold") return null;
+  const d = decisionLineOf(raw);
+  if (d && !/^(hold|none|no trade|nothing)\b/i.test(d)) return `DECISION: ${d}`;
+  for (const line of raw.split(/\r?\n/)) {
+    const m = line.match(/^THESIS\s*:\s*(swap\b.*)$/i);
+    if (m) return `THESIS: ${m[1].trim()}`;
+  }
+  return null;
 }
 
 export interface QuoteRead {
