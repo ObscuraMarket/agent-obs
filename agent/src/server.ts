@@ -1011,6 +1011,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           if ("error" in cleaned) { json(res, 200, { ok: false, lines: [cleaned.error], effect: "settings" }); return; }
           const settings = updateSettings(address as string, cleaned.settings);
           void refreshPersona(address as string);
+          // A model in the patch (a reset to the default included) reaches the gateway now, not at the next ensure.
+          if ("model" in cleaned.settings) void refreshModel(address as string).catch((e) => console.error(`[my-agent] model for ${address}: ${e instanceof Error ? e.message : String(e)}`));
           json(res, 200, { ok: true, lines: describeSettings(settings), effect: "settings", settings });
           return;
         }
@@ -1054,6 +1056,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       if ("error" in cleaned) { json(res, 400, { ok: false, error: cleaned.error }); return; }
       const settings = updateSettings(address, cleaned.settings);
       void refreshPersona(address);
+      if ("model" in cleaned.settings) void refreshModel(address).catch((e) => console.error(`[my-agent] model for ${address}: ${e instanceof Error ? e.message : String(e)}`));
       json(res, 200, { ok: true, settings, name: agentDisplayName(address) });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;
