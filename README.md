@@ -129,7 +129,10 @@ docs/                the banner
 
 To run your own Agent OBS, start with [QUICKSTART.md](QUICKSTART.md): five
 minutes from a fresh clone to a running page, then paper, then live.
-
+Everything answers to one command, `obs`: `obs status`, `obs quote 0.05
+ETH USDG`, `obs wallet create`, `obs run live`. The console at
+[obscura.market/console](https://obscura.market/console) speaks the same
+commands from a browser wallet.
 
 The desk is one container: `docker compose up -d --build`. See
 [DEPLOY.md](DEPLOY.md) for the hosted path and [RUNBOOK.md](RUNBOOK.md) for

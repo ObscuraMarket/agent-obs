@@ -1,0 +1,30 @@
+<!-- The OBS console: the desk's command line for a person with their own wallet. The same commands as the obs CLI in
+     the repo; reads come from the public API, quotes from the desk's router, swaps are signed by the visitor's wallet
+     and count toward running their own agent. -->
+<div class="obs-console" (click)="focusInput()">
+  <header class="bar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">&gt;_</span>
+      <h1>OBS console</h1>
+      <span class="sub">the desk's command line</span>
+    </div>
+    <div class="right">
+      <span class="pill elig" [class.on]="elig?.eligible" title="Verified swaps from your wallet against the bar that unlocks your own agent">{{ elig ? elig.swaps : 0 }} of {{ elig?.required || 3 }} swaps<ng-container *ngIf="elig?.eligible"> · eligible</ng-container></span>
+      <button type="button" class="pill wallet" [class.on]="wallet && chainId === 4663" [class.warn]="wallet && chainId !== 4663" (click)="onWalletPill($event)">
+        <i aria-hidden="true"></i>{{ wallet ? short(wallet) + (chainId === 4663 ? '' : ' · wrong chain') : 'connect wallet' }}
+      </button>
+      <a class="pill link" href="/agent">the desk</a>
+    </div>
+  </header>
+
+  <div class="screen" #screen aria-live="polite">
+    <div class="line" *ngFor="let l of lines" [ngClass]="l.cls">{{ l.text }}</div>
+    <div class="line dim" *ngIf="busy">…</div>
+  </div>
+
+  <form class="input" (submit)="submit($event)">
+    <label class="prompt" for="obs-cmd">obs&gt;</label>
+    <input #cmd id="obs-cmd" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="help" (keydown)="onKey($event)" [disabled]="busy" aria-label="Command">
+    <button type="submit" [disabled]="busy">{{ busy ? 'working' : 'run' }}</button>
+  </form>
+</div>

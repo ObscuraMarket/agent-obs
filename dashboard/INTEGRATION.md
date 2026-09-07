@@ -477,6 +477,12 @@ inside the same transaction.
   eligibility }` or `409 { ok: false, reason }`. This is the one write on the
   API, and it writes only what the chain confirms.
 
+The console page (`src/app/pages/console/`, route `console`) is the desk's
+command line on the site: the same commands as the `obs` CLI in the
+agent-obs repo (`status`, `positions`, `thoughts`, `research`, `watch`,
+`reads`, `quote`, `swap`, `eligible`). It reads through the endpoints above
+and signs swaps with the visitor's own wallet.
+
 ## 2b. The skill, for other agents
 
 The same contract packaged for a model to load: `GET /skill` returns

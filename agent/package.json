@@ -8,6 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "obs": "tsx src/cli.ts",
     "post": "tsx src/autopilot.ts",
     "post:dry": "DRY_RUN=1 tsx src/autopilot.ts",
     "engage": "tsx src/engage.ts",
@@ -38,6 +39,9 @@
     "replay:entries": "tsx scripts/replayEntries.ts",
     "replay:ignition": "tsx scripts/replayIgnition.ts",
     "book:withdraw": "tsx scripts/withdrawProposals.ts"
+  },
+  "bin": {
+    "obs": "bin/obs.mjs"
   },
   "dependencies": {
     "@openhermit/sdk": "^0.7.0",

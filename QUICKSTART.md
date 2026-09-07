@@ -31,6 +31,11 @@ npm run reads                  # live numbers from the chain, no keys, no model
 npm run dashboard              # the API and the page on http://localhost:4671
 ```
 
+Everything above also answers to one command, `npm run obs -- <command>`
+(`npx obs` once installed): `obs status`, `obs thoughts`, `obs quote 0.05 ETH
+USDG`, `obs wallet create`, `obs model check`, `obs run live`. `obs help`
+lists them; the console at obscura.market/console speaks the same ones.
+
 In `.env`, the values that matter on day one:
 
 ```

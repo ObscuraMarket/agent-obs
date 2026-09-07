@@ -1,0 +1,30 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { parseCli, HELP } from "../src/cli/commands.ts";
+
+test("obs reads its arguments as commands, the same grammar the web console speaks", () => {
+  assert.deepEqual(parseCli([]), { kind: "help" });
+  assert.deepEqual(parseCli(["--help"]), { kind: "help" });
+  assert.deepEqual(parseCli(["status"]), { kind: "status" });
+  assert.deepEqual(parseCli(["book"]), { kind: "positions" });
+  assert.deepEqual(parseCli(["thoughts"]), { kind: "thoughts", n: 3 });
+  assert.deepEqual(parseCli(["thoughts", "7"]), { kind: "thoughts", n: 7 });
+  assert.deepEqual(parseCli(["research", "20"]), { kind: "research", n: 20 });
+  assert.deepEqual(parseCli(["live"]), { kind: "watch" });
+  assert.deepEqual(parseCli(["reads"]), { kind: "reads" });
+  assert.deepEqual(parseCli(["quote", "0.05", "ETH", "USDG"]), { kind: "quote", amount: 0.05, from: "ETH", to: "USDG" });
+  assert.deepEqual(parseCli(["swap", "1,000", "usdg", "->", "nvda"]), { kind: "swap", amount: 1000, from: "USDG", to: "NVDA" });
+  assert.deepEqual(parseCli(["swap", "0", "ETH", "USDG"]), { kind: "unknown", text: "swap 0 ETH USDG" });
+  assert.deepEqual(parseCli(["eligible"]), { kind: "eligible", address: null });
+  assert.deepEqual(parseCli(["eligible", "0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38"]), { kind: "eligible", address: "0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38" });
+  assert.deepEqual(parseCli(["eligible", "nope"]), { kind: "eligible", address: null });
+  assert.deepEqual(parseCli(["wallet", "create"]), { kind: "wallet", args: ["create"] });
+  assert.deepEqual(parseCli(["capital", "deposit", "ETH", "0.1"]), { kind: "capital", args: ["deposit", "ETH", "0.1"] });
+  assert.deepEqual(parseCli(["model", "check"]), { kind: "model", args: ["check"] });
+  assert.deepEqual(parseCli(["verify", "swaps", "--order"]), { kind: "verify", args: ["swaps", "--order"] });
+  assert.deepEqual(parseCli(["run", "live"]), { kind: "run", what: "live" });
+  assert.deepEqual(parseCli(["run", "dance"]), { kind: "run", what: "" });
+  assert.deepEqual(parseCli(["dance"]), { kind: "unknown", text: "dance" });
+  assert.ok(HELP.length >= 12);
+  for (const [k] of HELP) assert.match(k, /^obs /);
+});
