@@ -22,7 +22,7 @@ import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
 import { readTape, tapeStats } from "./tape.ts";
-import { readEntries, recordClose, positionSpans, closeFromSpan, entryForSpan, closeRow, ethUsdAt, type TradeClose } from "./trade-memory.ts";
+import { readEntries, recordClose, positionSpans, openSpanStart, closeFromSpan, entryForSpan, closeRow, ethUsdAt, type TradeClose } from "./trade-memory.ts";
 import { positions } from "./book.ts";
 import type { QuoteRead } from "./thoughts.ts";
 
@@ -441,12 +441,14 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
     const p = pos.find((x) => x.asset === a.symbol);
     const hourly = feed.hourly[a.candidate.poolId.toLowerCase()] ?? [];
     const buys = allTrades.filter((t) => t.to.asset === a.symbol && (t.status === "settled" || t.status === "pending"));
-    const firstBuy = buys.map((t) => t.at).sort()[0] ?? a.candidate.seenAt;
+    // The position held now, not a round trip closed earlier today: its peak, its age and its take-profit memory
+    // start at this span's first buy. A pending buy that has not settled yet still opens the clock.
+    const firstBuy = openSpanStart(allTrades, a.symbol) ?? buys.map((t) => t.at).sort().pop() ?? a.candidate.seenAt;
     // The peak since entry, from the desk's own price samples, against the position's average cost.
     const avgCost = p?.avgCostUsd ?? null;
     const peakPx = readPrices().filter((s) => s.symbol === a.symbol && s.at >= firstBuy).reduce((m, s) => Math.max(m, s.priceUsd), prices[a.symbol] ?? 0);
     const peakPnlPct = avgCost != null && avgCost > 0 && peakPx > 0 ? ((peakPx - avgCost) / avgCost) * 100 : null;
-    const tookProfit = allTrades.some((t) => t.from.asset === a.symbol && t.exit && /take profit|buyers are thinning/.test(t.note ?? ""));
+    const tookProfit = allTrades.some((t) => t.from.asset === a.symbol && t.exit && t.at >= firstBuy && /take profit|buyers are thinning/.test(t.note ?? ""));
     const tape = a.candidate ? tapeStats(readTape(a.candidate.poolId), a.symbol, now, 15) : null;
     const v = exitVerdict({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly, peakPnlPct, tookProfit, tapeTrend: tape?.trend ?? null, tapeBuyPressurePct: tape?.buyPressurePct ?? null }, ctx.rails);
     if (!v) continue;

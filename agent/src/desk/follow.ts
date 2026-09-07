@@ -199,9 +199,11 @@ export function followLines(b: FollowBook, now: number): string[] {
   const pos = b.positions.positions;
   if (pos.length) {
     for (const p of pos) lines.push(`  holding ${p.asset} ${p.valueUsd != null ? usd(p.valueUsd) : "unpriced"}${p.unrealizedPct != null ? ` (${pct(p.unrealizedPct)})` : ""}`);
-  } else if (s.on) {
+  } else if (s.on && !b.trades.length) {
     const mins = Math.max(0, Math.round((now - (s.since as number)) / 60000));
     lines.push(`  no position yet: the desk has made no entry in the ${mins} min since you started. Its next one is yours too.`);
+  } else if (s.on) {
+    lines.push("  no open position right now. The desk's next entry is yours too.");
   }
   const exits = b.trades.filter((t) => t.exit).length;
   if (b.trades.length) lines.push(`  ${b.trades.length - exits} entr${b.trades.length - exits === 1 ? "y" : "ies"}, ${exits} exit${exits === 1 ? "" : "s"}, realized ${usd(b.positions.realizedUsd)} since you started.`);

@@ -1,4 +1,17 @@
 import { test } from "node:test";
+import { openSpanStart } from "../src/desk/trade-memory.ts";
+
+test("the open position's clock starts at its own first buy, never at a round trip closed earlier", async () => {
+  const T = 1_788_800_000_000;
+  const rows = [
+    { at: T, id: "b1", status: "settled" as const, from: { asset: "ETH", amount: 0.08, usd: 200 }, to: { asset: "PENGUIN", amount: 1000, usd: 200 }, partner: null },
+    { at: T + 3_600_000, id: "s1", status: "settled" as const, exit: true, from: { asset: "PENGUIN", amount: 1000, usd: 296 }, to: { asset: "ETH", amount: 0.12, usd: 296 }, partner: null },
+    { at: T + 7_200_000, id: "b2", status: "settled" as const, from: { asset: "ETH", amount: 0.08, usd: 200 }, to: { asset: "PENGUIN", amount: 900, usd: 200 }, partner: null },
+  ];
+  assert.equal(openSpanStart(rows, "PENGUIN"), T + 7_200_000, "the re-entry, not the morning's buy");
+  assert.equal(openSpanStart(rows.slice(0, 2), "PENGUIN"), null, "sold out: nothing open");
+  assert.equal(openSpanStart(rows, "OTHER"), null);
+});
 import assert from "node:assert/strict";
 import { positionSpans, closeFromSpan, ethUsdAt, entryForSpan, closeRow, reconcileCloses, dedupeCloses, closeKey, type TradeClose, type TradeEntry } from "../src/desk/trade-memory.ts";
 import { legUsd } from "../src/desk/onchain.ts";

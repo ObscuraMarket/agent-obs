@@ -166,6 +166,17 @@ export interface PositionSpan {
 }
 
 /**
+ * PURE: when the position held right now was opened: the first buy of the span still open, or null when the token is
+ * not held. The exits' peak, age and take-profit memory start here, never at a round trip closed earlier: measured
+ * from an old position's peak, a fresh entry trailed out twenty seconds after it was made (2026-09-07, PENGUIN).
+ */
+export function openSpanStart(trades: Trade[], symbol: string, env: NodeJS.ProcessEnv = process.env): number | null {
+  const spans = positionSpans(trades, symbol, env);
+  const last = spans[spans.length - 1];
+  return last && last.exitedAt == null ? last.enteredAt : null;
+}
+
+/**
  * PURE: a token's round trips from the trade ledger, oldest first: each span runs from the first settled buy into an
  * empty wallet to the settled sell that emptied it again (dust aside). The last span may still be open.
  */
