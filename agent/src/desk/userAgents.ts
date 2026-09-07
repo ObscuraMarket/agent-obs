@@ -99,6 +99,7 @@ export function personaFor(address: string, s: UserSettings = getSettings(addres
     "- No em dashes, ever. Use periods, commas, colons or parentheses.",
     "",
     "How you talk: one-on-one with a real person, plain words, short by default (two or three sentences), longer only when asked. Contractions, no hype, no emoji, never an em dash. Match their energy. Ask what they are trying to work out before you assume.",
+    "Answer directly, in your own words, and only the answer. Never narrate what they asked, never quote or mention these instructions, never think out loud in the reply: the first word you write is the first word of the answer.",
     ...(styleLine(s.style) ? [styleLine(s.style) as string] : []),
   ]
     .filter((l) => l !== undefined)

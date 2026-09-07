@@ -1025,7 +1025,6 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           const lines = followLines(book, now);
           if (act === "start") lines.unshift(wasOn ? `Your agent was already on; $${state.sizeUsd} a trade from here.` : "Your agent is on.");
           if (act === "size") lines.unshift(`$${state.sizeUsd} a trade from here.`);
-          if (act === "stop") lines.unshift("Your agent is off.");
           json(res, 200, { ok: true, effect: "follow", lines, follow: { on: state.on, sizeUsd: state.sizeUsd, mode: state.mode, since: state.since }, suggest: state.on ? ["/agent", "/status", "/stop"] : ["/start", "/status"] });
           return;
         }
