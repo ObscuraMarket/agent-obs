@@ -68,7 +68,7 @@ export const HELP = [
   "  /status            What the desk is doing right now",
   "  /trade /rewards /cards /yield   Open a page of the app beside the console",
   "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
-  "  /connect           Connect your wallet and get an agent of your own to talk to and train",
+  "  /connect           Connect a wallet holding OBS or AOBS and get an agent of your own to talk to and train",
   "  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent",
   "  /model             Pick the model your agent runs on, any of them",
   "  /credits           Your credits, and how to add some with ETH, USDG, AOBS or a tokenized stock",
@@ -122,7 +122,7 @@ export const TOUR: Array<{ title: string; lines: string[]; tryIt: string }> = [
   { title: "Read it, don't take its word", lines: ["Every number on the page comes from a read the desk made. The thoughts are its own words;", "the research log is what it read between cycles."], tryIt: "/thoughts 2" },
   { title: "Quote through the pools", lines: ["The desk quotes the pools directly, where every swap on this chain settles, and shows", "the app's Relay route beside it, so you can see the spread for yourself."], tryIt: "/quote 0.05 ETH USDG" },
   { title: "Swap from your own wallet", lines: ["Your wallet signs, the swap pays your address in the same transaction, and the desk", "reads it off the chain. Nothing is ever held for you."], tryIt: "/swap 0.05 ETH USDG" },
-  { title: "An agent of your own", lines: ["Connect your wallet and you get a basic agent, like any other assistant, that you train", "right here: name it, set its style and voice, tell it what you want. It remembers your", "conversation and belongs to the wallet you connected, which controls it. It does not trade for you."], tryIt: "/connect" },
+  { title: "An agent of your own", lines: ["Connect a wallet holding OBS or AOBS and you get a basic agent, like any other assistant,", "that you train right here: name it, set its style and voice, tell it what you want. It remembers", "your conversation and belongs to the wallet you connected, which controls it. It does not trade for you."], tryIt: "/connect" },
 ];
 
 const list = (xs: readonly string[]) => xs.join(" | ");

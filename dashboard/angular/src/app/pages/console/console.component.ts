@@ -544,7 +544,8 @@ export class ConsoleComponent implements AfterViewInit {
       const c = await this.get<{ ok: boolean; message: string; nonce: string }>(this.obs.accountChallenge(this.wallet));
       this.print([{ kind: 'system', text: 'Sign the message in your wallet. It proves the wallet is yours and authorizes nothing. This wallet is the one that will control your agent.' }]);
       const signature: string = await p.request({ method: 'personal_sign', params: [c.message, this.wallet] });
-      const l = await this.get<{ ok: boolean; error?: string; session?: ObsSession; standing?: ObsStanding }>(this.obs.accountLink(this.wallet, c.nonce, signature));
+      const l = await this.get<{ ok: boolean; error?: string; code?: string; session?: ObsSession; standing?: ObsStanding }>(this.obs.accountLink(this.wallet, c.nonce, signature)).catch((e) => (e?.error && typeof e.error === 'object' ? e.error : { ok: false, error: this.reason(e) }));
+      if (l.code === 'not_holder') { this.status = 'connected'; this.print([{ kind: 'system', text: l.error || 'The console is for OBS and AOBS holders.', suggest: ['/trade', '/status'] }]); return; }
       if (!l.ok || !l.session) { throw new Error(l.error || 'sign-in refused'); }
       this.token = l.session.token;
       this.storeSession(l.session);
@@ -566,7 +567,8 @@ export class ConsoleComponent implements AfterViewInit {
     this.agentState = 'provisioning';
     this.agentError = null;
     try {
-      const ensured = await this.get<any>(this.obs.myAgentEnsure(this.token));
+      const ensured = await this.get<any>(this.obs.myAgentEnsure(this.token)).catch((e) => (e?.error && typeof e.error === 'object' ? e.error : { ok: false, error: this.reason(e) }));
+      if (ensured?.code === 'not_holder') { this.agentState = 'idle'; this.print([{ kind: 'system', text: ensured.error || 'The console is for OBS and AOBS holders.', suggest: ['/trade', '/status'] }]); return; }
       if (!ensured?.ok) { throw new Error(ensured?.error || 'could not reach your agent'); }
       this.settings = ensured.settings ?? {};
       this.agentName = ensured.name || 'OBS';
@@ -621,6 +623,7 @@ export class ConsoleComponent implements AfterViewInit {
       if (!res.ok || !res.body) {
         const j = await res.json().catch(() => null);
         if (res.status === 402) { aside({ kind: 'system', text: j?.error || 'You\'re out of credits.', suggest: ['/credits', '/models free'] }); this.credits = 0; return; }
+        if (res.status === 403 && j?.code === 'not_holder') { aside({ kind: 'system', text: j.error || 'The console is for OBS and AOBS holders.', suggest: ['/trade', '/status'] }); this.agentState = 'idle'; return; }
         throw new Error(j?.error || 'your agent could not respond');
       }
       const reader = res.body.getReader();

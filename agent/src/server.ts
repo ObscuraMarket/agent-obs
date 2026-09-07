@@ -53,6 +53,7 @@ import { refreshModel, modelFor, personaFor, approveTool, ensureUserAgent, strea
 import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
+import { holderGate, forgetHolder } from "./desk/gate.ts";
 import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL } from "./desk/models.ts";
 import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
 
@@ -848,7 +849,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           return;
         }
         return verifySwap(String(b.txHash ?? ""), String(b.address ?? ""), String(b.from ?? ""), String(b.to ?? ""), Number(b.amountIn)).then((r) =>
-          r.ok ? json(res, 200, { ok: true, already: r.already, swap: r.swap, standing: consoleStanding(r.swap.address) }) : json(res, 409, { ok: false, reason: r.reason }),
+          r.ok ? (forgetHolder(r.swap.address), json(res, 200, { ok: true, already: r.already, swap: r.swap, standing: consoleStanding(r.swap.address) })) : json(res, 409, { ok: false, reason: r.reason }),
         );
       })
       .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : "bad request" }));
@@ -875,6 +876,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
       const r = await linkAccount(b, now);
       if (!r.ok) { json(res, 401, { ok: false, error: r.error }); return; }
+      // The console is for holders: the signature proves the wallet, the chain says whether it holds OBS or AOBS.
+      const gate = await holderGate(r.session.address, now);
+      if (!gate.ok) { json(res, 403, { ok: false, code: "not_holder", error: gate.reason, obs: gate.obs, aobs: gate.aobs, minObs: gate.minObs, minAobs: gate.minAobs }); return; }
       json(res, 200, { ok: true, session: r.session, standing: consoleStanding(r.session.address) });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;
@@ -1017,8 +1021,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     res.setHeader("Cache-Control", "no-store");
     const address = requireWallet(req, res);
     if (!address) return;
-    ensureUserAgent(address)
-      .then((r) => {
+    // The door first (holders only), then the agent. One chain, one answer.
+    holderGate(address, now)
+      .then(async (gate) => {
+        if (!gate.ok) { json(res, 403, { ok: false, code: "not_holder", error: gate.reason, obs: gate.obs, aobs: gate.aobs }); return; }
+        const r = await ensureUserAgent(address);
         grantFree(address);
         if (appsOn()) void ensureApps(address).catch((e) => console.error(`[apps] attach for ${address}: ${e instanceof Error ? e.message : String(e)}`));
         json(res, 200, { ok: true, ...r, name: agentDisplayName(address), settings: getSettings(address) });
@@ -1098,6 +1105,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const msg = typeof b.text === "string" ? b.text.trim() : "";
       if (!msg) { json(res, 400, { ok: false, error: "empty message" }); return; }
       if (msg.length > 2000) { json(res, 400, { ok: false, error: "message too long (2000 characters at most)" }); return; }
+      const gate = await holderGate(address, now);
+      if (!gate.ok) { json(res, 403, { ok: false, code: "not_holder", error: gate.reason }); return; }
       const guard = chatGuard(address, now);
       if (guard) { json(res, guard.status, { ok: false, error: guard.error }); return; }
       // The turn's price: the wallet's model at OpenRouter's rates plus the margin. Out of credits is a refusal only

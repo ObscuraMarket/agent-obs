@@ -492,8 +492,13 @@ available yet.
 - `POST /api/obs/account/challenge` `{ address }` answers `{ message, nonce }`;
   the wallet signs the message (`personal_sign`), and
   `POST /api/obs/account/link` `{ address, nonce, signature }` answers
-  `{ session: { token, address, expiresAt }, standing }`. The bearer is
-  good for a week and proves control only; it authorizes no transaction.
+  `{ session: { token, address, expiresAt }, standing }`, or
+  `403 { code: "not_holder", error, obs, aobs, minObs, minAobs }` when the
+  wallet holds neither enough OBS nor enough AOBS: the console is for holders
+  (`OBS_CONSOLE_MIN_OBS`, `OBS_CONSOLE_MIN_AOBS`; `OBS_CONSOLE_GATE=off`
+  opens it), and `my-agent/ensure` and `my-agent/stream` answer the same 403
+  for a wallet that stopped holding. The bearer is good for a week and proves
+  control only; it authorizes no transaction.
 - `POST /api/obs/console/cli` `{ line }` (bearer optional): the desk routes
   the line and answers `{ ok, lines[], effect, suggest[] }`. `effect` is
   `none`, `clear`, `desk` (lines from the same payloads the page reads),
