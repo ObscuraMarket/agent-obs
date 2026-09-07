@@ -1,6 +1,6 @@
 #!/bin/bash
 # The relay's mapping, applied to one checkout of the site: our Agent and console pages onto the site's own paths,
-# the console route and declaration registered once, the site's header rewired so Trade, Rewards, Cards, Referral
+# the console route and declaration registered once, the site's header rewired so Trade, Rewards, Cards
 # and Yield are console views, the five components handed to the console, the docs and the assets. Called by
 # relay-dashboard.sh on a fresh clone, and runnable on any checkout to look at the result or build it:
 #   scripts/relay-apply.sh <site checkout> [source sha]
@@ -38,14 +38,14 @@ s = s.replace("    AgentComponent,\n", "    AgentComponent,\n    ConsoleComponen
 open(p, "w").write(s)
 PY
 fi
-# The console opens the site's own pages beside itself (/trade, /rewards, /cards, /referral, /yield): the module
+# The console opens the site's own pages beside itself (/trade, /rewards, /cards, /yield): the module
 # hands those five components to the console under CONSOLE_VIEWS. Added once, only when absent.
 if ! grep -q "CONSOLE_VIEWS" "$MODULE"; then
   python3 - "$MODULE" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p).read()
 s = s.replace("import { ConsoleComponent } from './pages/console/console.component';", "import { ConsoleComponent } from './pages/console/console.component';\nimport { CONSOLE_VIEWS } from './service/obs-desk.service';", 1)
-s = s.replace("  providers: [", "  providers: [\n    // The pages the console opens beside itself, by command: /trade, /rewards, /cards, /referral, /yield.\n    { provide: CONSOLE_VIEWS, useValue: { trade: SwapComponent, rewards: RewardsComponent, cards: CardsComponent, referral: ReferralComponent, yield: YieldComponent } },\n    ", 1)
+s = s.replace("  providers: [", "  providers: [\n    // The pages the console opens beside itself, by command: /trade, /rewards, /cards, /yield.\n    { provide: CONSOLE_VIEWS, useValue: { trade: SwapComponent, rewards: RewardsComponent, cards: CardsComponent, yield: YieldComponent } },\n    ", 1)
 open(p, "w").write(s)
 PY
 fi
@@ -62,9 +62,50 @@ s = s.replace("    { provide: CONSOLE_VIEWS, useValue:", "    // The wallet the 
 open(p, "w").write(s)
 PY
 fi
-# The header: Trade, Rewards, Cards, Referral and Yield are console views now, so it lists Console, Agent, Docs and
+# The header: Trade, Rewards, Cards and Yield are console views now, so it lists Console, Agent, Docs and
 # Roadmap; the five pages keep their routes for deep links. Applied while the old links are there; the header's
 # active-link map learns the console route; its spec is replaced by one that describes the header this makes.
+# The referral section is gone: its page, its route and its declaration leave the site. The ReferralService that
+# records a ?ref= visitor for the swap's attribution is not the section and stays. Applied while the page exists.
+if [ -d "$APP/pages/referral" ]; then
+  rm -rf "$APP/pages/referral"
+  python3 - "$ROUTING" "$MODULE" "$APP/app-routing.module.spec.ts" <<'PY'
+import sys, os, re
+routing, module, spec = sys.argv[1:4]
+s = open(routing).read()
+s = s.replace("import { ReferralComponent } from './pages/referral/referral.component';\n", "", 1)
+s = re.sub(r"const referralMeta = \{.*?\};\n\n", "", s, count=1, flags=re.S)
+s = s.replace("      // Live referral dashboard.\n", "", 1)
+s = re.sub(r"\n[ \t]*\{ path: 'referral', component: ReferralComponent[^\n]*\},", "", s, count=1)
+open(routing, "w").write(s)
+m = open(module).read()
+m = m.replace("import { ReferralComponent } from './pages/referral/referral.component';\n", "", 1)
+m = m.replace("    ReferralComponent,\n", "", 1)
+open(module, "w").write(m)
+if os.path.exists(spec):
+    t = open(spec).read()
+    t = t.replace("      'referral', 'rewards', 'reward-page-soon', 'agent'\n", "      'rewards', 'reward-page-soon', 'agent', 'console'\n", 1)
+    open(spec, "w").write(t)
+# The RWA page's spec borrowed the waitlist key from the referral page; it keeps the value on its own.
+rwa = os.path.join(os.path.dirname(routing), "pages", "rwa", "rwa.component.spec.ts")
+if os.path.exists(rwa):
+    t = open(rwa).read()
+    t = t.replace("import { REFERRAL_WAITLIST_KEY } from '../referral/referral.component';", "const REFERRAL_WAITLIST_KEY = 'obscura_referral_waitlist';", 1)
+    open(rwa, "w").write(t)
+# The docs still describe the referral boost; the words stay, the link to a page that no longer exists goes.
+docs = os.path.join(os.path.dirname(routing), "pages", "docs", "docs.component.html")
+if os.path.exists(docs):
+    t = open(docs).read()
+    t = t.replace('<a routerLink="/referral">referral link</a>', "referral link", 1)
+    open(docs, "w").write(t)
+# The roadmap's button to the referral waitlist goes with the page.
+road = os.path.join(os.path.dirname(routing), "pages", "roadmap", "roadmap.component.html")
+if os.path.exists(road):
+    t = open(road).read()
+    t = re.sub(r'\n[ \t]*<a class="outro-button" routerLink="/referral">[^<]*</a>', "", t, count=1)
+    open(road, "w").write(t)
+PY
+fi
 HEADER="$APP/dapp-layout/header/header.component.html"
 HEADER_TS="$APP/dapp-layout/header/header.component.ts"
 HEADER_SPEC="$APP/dapp-layout/header/header.component.spec.ts"

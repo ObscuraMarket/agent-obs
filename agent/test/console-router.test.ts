@@ -66,7 +66,8 @@ test("the app's pages are console views: one command opens each beside the conso
   assert.equal(routeConsole("/apps connect", ctx).error, true);
   assert.ok(VOCAB.includes("apps"));
   assert.deepEqual(routeConsole("/traed", ctx).suggest, ["/trade"]);
-  assert.ok(HELP_ALL.some((l) => l.includes("/referral")) && HELP_ALL.some((l) => l.includes("/close")));
+  assert.ok(HELP_ALL.some((l) => l.includes("/rewards")) && HELP_ALL.some((l) => l.includes("/close")));
+  assert.ok(!HELP_ALL.join(" ").includes("referral") && !VIEWS.includes("referral" as never), "the referral section is gone");
   for (const v of [...VIEWS, "close"]) assert.ok(VOCAB.includes(v), `${v} is in the vocabulary`);
 });
 

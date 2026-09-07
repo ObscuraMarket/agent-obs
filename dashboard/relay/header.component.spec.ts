@@ -7,9 +7,9 @@ import { TranslateModule } from '@ngx-translate/core';
 import { HeaderComponent } from './header.component';
 import { LanguageService } from '../../service/language.service';
 
-// Relayed from ObscuraMarket/agent-obs with the header change it describes: Trade, Rewards, Cards, Referral and
-// Yield are console views now (/trade, /rewards, /cards, /referral, /yield on the console page), so the header
-// lists Console, Agent, Docs and Roadmap. The five pages keep their routes for deep links.
+// Relayed from ObscuraMarket/agent-obs with the header change it describes: Trade, Rewards, Cards and Yield are
+// console views now (/trade, /rewards, /cards, /yield on the console page) and the referral section is gone, so the
+// header lists Console, Agent, Docs and Roadmap. The four pages keep their routes for deep links.
 describe('HeaderComponent', () => {
   let component: HeaderComponent;
   let fixture: ComponentFixture<HeaderComponent>;

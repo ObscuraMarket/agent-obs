@@ -408,7 +408,7 @@ export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; re
 export interface ObsHistoryTurn { role: string; content: string; ts: string; }
 
 /**
- * The site's own pages the console can open beside itself, by command name: trade, rewards, cards, referral,
+ * The site's own pages the console can open beside itself, by command name: trade, rewards, cards, yield (see below): cards, referral,
  * yield. The site's module provides the map from its components (the relay wires it); this repo's build provides
  * none, so a view command here says the view is not in this build.
  */

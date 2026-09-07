@@ -22,7 +22,7 @@
           </button>
           <button type="button" class="cli__card" (click)="runLine('/trade')" [disabled]="busy">
             <span class="cli__card-title">Trade</span>
-            <span class="cli__card-text">Swap through Obscura's routes. Rewards, Cards, Referral and Yield are one tap below.</span>
+            <span class="cli__card-text">Swap through Obscura's routes. Rewards, Cards and Yield are one tap below.</span>
           </button>
           <button type="button" class="cli__card" (click)="runLine('/connect')" [disabled]="busy || status === 'signing'">
             <span class="cli__card-title">{{ status === 'signed-in' ? 'Meet your agent' : 'Get your own agent' }}</span>

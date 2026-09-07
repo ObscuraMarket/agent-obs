@@ -499,8 +499,8 @@ available yet.
   `none`, `clear`, `desk` (lines from the same payloads the page reads),
   `read`, `settings` (with the merged `settings`), `chat` (with `text`: the
   page streams it), `wallet` (with `action` and the pair: the page's wallet
-  does it), or `view` (with `view`: `trade`, `rewards`, `cards`, `referral`,
-  `yield`, or null for `/close`; the page opens that page of the site beside
+  does it), or `view` (with `view`: `trade`, `rewards`, `cards`, `yield`, or
+  null for `/close`; the page opens that page of the site beside
   the console, from the components the site's module provides under
   `CONSOLE_VIEWS` in `obs-desk.service.ts`, which the relay wires up). Those
   five left the header on September 7: it lists Console, Agent, Docs and

@@ -10,14 +10,13 @@ import { STYLES, DEFAULT_NAME, type UserSettings } from "../desk/userSettings.ts
 export type DeskCommand = "status" | "positions" | "thoughts" | "research" | "watch" | "reads";
 
 /** The site's own pages the console opens beside itself, one command each. They left the header for this; their routes stay for deep links. */
-export type ConsoleView = "trade" | "rewards" | "cards" | "referral" | "yield";
-export const VIEWS: ConsoleView[] = ["trade", "rewards", "cards", "referral", "yield"];
-const VIEW_ALIAS: Record<string, ConsoleView> = { app: "trade", exchange: "trade", reward: "rewards", card: "cards", refer: "referral", referrals: "referral" };
+export type ConsoleView = "trade" | "rewards" | "cards" | "yield";
+export const VIEWS: ConsoleView[] = ["trade", "rewards", "cards", "yield"];
+const VIEW_ALIAS: Record<string, ConsoleView> = { app: "trade", exchange: "trade", reward: "rewards", card: "cards" };
 const VIEW_LINE: Record<ConsoleView, string> = {
   trade: "Trade is open beside the console: swap through Obscura's routes, with the same privacy as the Trade page. /close puts it away.",
   rewards: "Rewards is open beside the console: your cashback in tokenized stocks. /close puts it away.",
   cards: "Cards is open beside the console: the Obscura card. /close puts it away.",
-  referral: "Referral is open beside the console: the referral waitlist. /close puts it away.",
   yield: "Yield is coming soon, and its waitlist is open beside the console. /close puts it away.",
 };
 
@@ -67,7 +66,7 @@ export const HELP = [
   "",
   "  /explore           A short tour, one step at a time",
   "  /status            What the desk is doing right now",
-  "  /trade /rewards /cards /referral /yield   Open a page of the app beside the console",
+  "  /trade /rewards /cards /yield   Open a page of the app beside the console",
   "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
   "  /connect           Connect your wallet and get an agent of your own to talk to and train",
   "  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent",
@@ -99,8 +98,7 @@ export const HELP_ALL = [
   "    /trade             Swap through Obscura's routes",
   "    /rewards           Your cashback in tokenized stocks",
   "    /cards             The Obscura card",
-  "    /referral          The referral waitlist",
-  "    /yield             Coming soon, with its waitlist",
+    "    /yield             Coming soon, with its waitlist",
   "",
   "  The desk (live, read only)",
   "    /status /positions /thoughts [n] /research [n] /watch /reads",

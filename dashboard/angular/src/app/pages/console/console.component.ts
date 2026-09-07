@@ -16,7 +16,6 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'trade', what: 'Open Trade beside the console' },
   { cmd: 'rewards', what: 'Open Rewards: your cashback in tokenized stocks' },
   { cmd: 'cards', what: 'Open Cards' },
-  { cmd: 'referral', what: 'Open the referral waitlist' },
   { cmd: 'yield', what: 'Open Yield (coming soon)' },
   { cmd: 'connect', what: 'Connect your wallet and get your own agent' },
   { cmd: 'apps', what: 'Connect Slack, Linear, X, Gmail, Google Docs and more to your agent', usage: '/apps connect Slack' },
@@ -49,7 +48,7 @@ const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'd
 /** The buttons that stay under the transcript: the whole app and the desk, in plain words, no command to learn. */
 const QUICK: Array<{ label: string; line: string }> = [
   { label: 'Status', line: '/status' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
-  { label: 'Referral', line: '/referral' }, { label: 'Yield', line: '/yield' }, { label: 'Apps', line: '/apps' }, { label: 'Model', line: '/model' }, { label: 'Credits', line: '/credits' }, { label: 'Help', line: '/help' },
+  { label: 'Yield', line: '/yield' }, { label: 'Apps', line: '/apps' }, { label: 'Model', line: '/model' }, { label: 'Credits', line: '/credits' }, { label: 'Help', line: '/help' },
 ];
 const SESSION_KEY = 'obs-console-session';
 
@@ -79,7 +78,7 @@ export class ConsoleComponent implements AfterViewInit {
   standing: ObsStanding | null = null;
   settings: ObsUserSettings = {};
   busy = false;
-  /** The site page open beside the console (trade, rewards, cards, referral, yield), or none. */
+  /** The site page open beside the console (trade, rewards, cards, yield), or none. */
   view: string | null = null;
   /** The wallet's credits in dollars, once signed in; null until known. */
   credits: number | null = null;
