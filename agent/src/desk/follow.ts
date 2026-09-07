@@ -158,9 +158,13 @@ export function liveTrades(rows: FollowTradeRow[], address: string): Trade[] {
   return latestTrades(rows.filter((r) => r && r.address === a)).filter((t) => t.status === "settled" || t.status === "pending").sort((x, y) => x.at - y.at);
 }
 
-/** PURE: what this agent holds from its real settled trades, tokens only. */
+/**
+ * PURE: what this agent holds from its real trades, tokens only. A buy whose receipt had not landed when its row
+ * was written still counts: the token is on its way, and the desk's exit must find it, so the chain balance decides
+ * the amount and this only decides who is asked.
+ */
 export function liveHoldings(rows: FollowTradeRow[], address: string): Record<string, number> {
-  return mirrorHoldings(liveTrades(rows, address).filter((t) => t.status === "settled"));
+  return mirrorHoldings(liveTrades(rows, address));
 }
 
 /** PURE: the agent's live book at these prices: the desk's own accounting on the agent's real rows. */
