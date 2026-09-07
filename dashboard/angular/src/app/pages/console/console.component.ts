@@ -17,7 +17,7 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'cards', what: 'Open Cards' },
   { cmd: 'referral', what: 'Open the referral waitlist' },
   { cmd: 'yield', what: 'Open Yield (coming soon)' },
-  { cmd: 'connect', what: 'Sign in with your wallet' },
+  { cmd: 'connect', what: 'Connect your wallet and get your own agent' },
   { cmd: 'help', what: 'Every command, explained' },
   { cmd: 'explore', what: 'A short tour, one step at a time' },
   { cmd: 'positions', what: 'What the desk holds' },
@@ -33,7 +33,7 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'name', what: 'Give your agent a name', usage: '/name Ledger', args: true },
   { cmd: 'style', what: 'How much it says: concise, balanced or deep', usage: '/style concise', args: true },
   { cmd: 'voice', what: 'How it should sound', usage: '/voice dry and skeptical', args: true },
-  { cmd: 'goal', what: 'What you want it working toward', usage: '/goal find me survivors', args: true },
+  { cmd: 'goal', what: 'What you want from your agent', usage: '/goal help me learn the desk', args: true },
   { cmd: 'reset', what: 'Put a setting back to the default', usage: '/reset name', args: true },
   { cmd: 'close', what: 'Put the open page away' },
   { cmd: 'clear', what: 'Clear the screen' },
@@ -460,7 +460,7 @@ export class ConsoleComponent implements AfterViewInit {
     this.status = 'signing';
     try {
       const c = await this.get<{ ok: boolean; message: string; nonce: string }>(this.obs.accountChallenge(this.wallet));
-      this.print([{ kind: 'system', text: 'Sign the message in your wallet. It proves the wallet is yours and authorizes nothing.' }]);
+      this.print([{ kind: 'system', text: 'Sign the message in your wallet. It proves the wallet is yours and authorizes nothing. This wallet is the one that will control your agent.' }]);
       const signature: string = await p.request({ method: 'personal_sign', params: [c.message, this.wallet] });
       const l = await this.get<{ ok: boolean; error?: string; session?: ObsSession; standing?: ObsStanding }>(this.obs.accountLink(this.wallet, c.nonce, signature));
       if (!l.ok || !l.session) { throw new Error(l.error || 'sign-in refused'); }
@@ -495,7 +495,7 @@ export class ConsoleComponent implements AfterViewInit {
           ...prior.map((m) => ({ kind: (m.role === 'user' ? 'input' : 'agent') as LineKind, text: m.content })),
           prior.length
             ? { kind: 'system' as LineKind, text: this.agentName + ' is back, and remembers where you left off.', suggest: ['/help'] }
-            : { kind: 'system' as LineKind, text: 'Meet ' + this.agentName + ', your own agent. It reads the desk, remembers this conversation, and you can rename it with /name. Ask it anything.', suggest: ['What is the desk holding right now, and why?', '/explore', '/help'] },
+            : { kind: 'system' as LineKind, text: 'Meet ' + this.agentName + ', your own agent, tied to wallet ' + this.short(this.wallet) + ': that wallet controls it. Talk to it about anything, and train it here with /name, /style, /voice and /goal. It doesn\'t trade for you.', suggest: ['What can you help me with?', '/name', '/explore'] },
         ]);
       } else if (!quiet) {
         this.print([{ kind: 'system', text: this.agentName + ' is ready.', suggest: ['/help'] }]);
@@ -510,7 +510,7 @@ export class ConsoleComponent implements AfterViewInit {
   // ---- chat, streamed ---------------------------------------------------------------
 
   private async chat(text: string, alreadyPrinted = false): Promise<void> {
-    if (!this.token) { this.print([{ kind: 'system', text: 'Sign in with your wallet to talk to your agent. One signature, no transaction.', suggest: ['/connect'] }]); return; }
+    if (!this.token) { this.print([{ kind: 'system', text: 'Connect your wallet to talk to your agent. One signature, no transaction, and that wallet is the one that controls your agent.', suggest: ['/connect'] }]); return; }
     if (this.agentState !== 'ready') {
       this.print([{ kind: 'system', text: this.agentState === 'provisioning' ? 'Your agent is still being set up. Give it a moment.' : 'Your agent isn\'t reachable right now.', suggest: this.agentState === 'provisioning' ? [] : ['/connect'] }]);
       return;

@@ -63,7 +63,7 @@ export const HELP = [
   "  /status            What the desk is doing right now",
   "  /trade /rewards /cards /referral /yield   Open a page of the app beside the console",
   "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
-  "  /connect           Sign in with your wallet and meet your own agent",
+  "  /connect           Connect your wallet and get an agent of your own to talk to and train",
   "",
   "  /help all          Every command",
 ];
@@ -71,12 +71,12 @@ export const HELP = [
 export const HELP_ALL = [
   "Every command. Anything without a slash is a message to your agent.",
   "",
-  "  Your agent",
+  "  Your agent (it belongs to the wallet you connected; that wallet controls it. Train it here:)",
   "    /whoami            How it's set up right now",
   "    /name <name>       Give it a name",
   "    /style <style>     concise, balanced or deep",
   "    /voice <text>      How it should sound: dry, warm, blunt, your call",
-  "    /goal <text>       What you want it working toward",
+  "    /goal <text>       What you want from it",
   "    /reset <field>     Put one setting back to the default",
   "",
   "  The app (opens beside the console; /close puts it away)",
@@ -90,7 +90,7 @@ export const HELP_ALL = [
   "    /status /positions /thoughts [n] /research [n] /watch /reads",
   "",
   "  Your wallet",
-  "    /connect           Sign in with your wallet, on Robinhood Chain",
+  "    /connect           Connect your wallet: your account here, and the wallet that controls your agent",
   "    /balance           The ETH in it",
   "    /quote 0.05 ETH USDG   What the pools pay, with the app's Relay route beside it",
   "    /swap 0.05 ETH USDG    The same swap, signed by your wallet and paid to your address",
@@ -108,7 +108,7 @@ export const TOUR: Array<{ title: string; lines: string[]; tryIt: string }> = [
   { title: "Read it, don't take its word", lines: ["Every number on the page comes from a read the desk made. The thoughts are its own words;", "the research log is what it read between cycles."], tryIt: "/thoughts 2" },
   { title: "Quote through the pools", lines: ["The desk quotes the pools directly, where every swap on this chain settles, and shows", "the app's Relay route beside it, so you can see the spread for yourself."], tryIt: "/quote 0.05 ETH USDG" },
   { title: "Swap from your own wallet", lines: ["Your wallet signs, the swap pays your address in the same transaction, and the desk", "reads it off the chain. Nothing is ever held for you."], tryIt: "/swap 0.05 ETH USDG" },
-  { title: "An agent of your own", lines: ["Sign in with your wallet and you get your own agent. It reads the desk, remembers your", "conversation, and you can name it and shape how it talks."], tryIt: "/connect" },
+  { title: "An agent of your own", lines: ["Connect your wallet and you get a basic agent, like any other assistant, that you train", "right here: name it, set its style and voice, tell it what you want. It remembers your", "conversation and belongs to the wallet you connected, which controls it. It does not trade for you."], tryIt: "/connect" },
 ];
 
 const list = (xs: readonly string[]) => xs.join(" | ");
@@ -170,7 +170,7 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       if (!arg) return err(["Tell it how to sound: /voice <a few words>", `Right now: ${s.voice ?? "not set"}`, `  For example: /voice dry and skeptical, never enthusiastic`]);
       return ok([], { kind: "settings", patch: { voice: arg } });
     case "goal":
-      if (!arg) return err(["Tell it what you're working toward: /goal <a sentence>", `Right now: ${s.goal ?? "not set"}`]);
+      if (!arg) return err(["Tell it what you want from it: /goal <a sentence>", `Right now: ${s.goal ?? "not set"}`]);
       return ok([], { kind: "settings", patch: { goal: arg } });
     case "reset": {
       const f = arg.toLowerCase();

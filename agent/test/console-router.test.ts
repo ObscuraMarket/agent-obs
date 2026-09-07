@@ -91,7 +91,10 @@ test("the desk's lines come from the page's own payloads", () => {
 
 test("the personal agent's instruction carries the rules that are policy, and never an em dash", () => {
   const p = personaFor("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", { name: "Ledger", style: "concise", voice: "dry", goal: "learn the desk" });
-  assert.match(p, /^You are Ledger, Agent OBS/);
+  assert.match(p, /^You are Ledger, the personal agent of the wallet/);
+  assert.match(p, /What you are not: a trading agent/);
+  assert.match(p, /that wallet is the one that controls you/);
+  assert.ok(!/exact execution|discreet settlement|trading agent on Robinhood/.test(p), "the house desk's temperament does not leak into a personal agent");
   assert.match(p, /do not correct them back to "OBS"/);
   assert.match(p, /You do not hold or move this person's funds/);
   assert.match(p, /never sign anything/);

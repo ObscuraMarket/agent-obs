@@ -480,9 +480,14 @@ output to their address inside the same transaction.
 ### The console: `POST /api/obs/account/challenge`, `POST /api/obs/account/link`, `POST /api/obs/console/cli`, `/api/obs/my-agent/*`
 
 The console page (`src/app/pages/console/`, route `console`) is one surface
-for talking to your own agent and for shaping it, beside the desk's read-only
+for talking to your own agent and for training it, beside the desk's read-only
 commands and your wallet's swaps. A line is a message to the agent; a slash
-line is a command. The wallet is the account.
+line is a command. The wallet is the account, and the agent belongs to the
+wallet that connected: that wallet is the one that controls it. The agent is
+a basic assistant, like any capable model, trained through `/name`, `/style`,
+`/voice` and `/goal` and remembering its conversation. It is not a trading
+agent and there is nothing to switch on; trading from the console is not
+available yet.
 
 - `POST /api/obs/account/challenge` `{ address }` answers `{ message, nonce }`;
   the wallet signs the message (`personal_sign`), and

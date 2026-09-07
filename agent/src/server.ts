@@ -894,7 +894,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const base = { lines: routed.lines, suggest: routed.suggest };
       const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read";
       if (needsWallet && !address) {
-        json(res, 200, { ok: false, effect: "none", lines: ["Sign in with your wallet first. It's your account here: one signature, no transaction."], suggest: ["/connect"] });
+        json(res, 200, { ok: false, effect: "none", lines: ["Connect your wallet first. It's your account here and the wallet that controls your agent: one signature, no transaction."], suggest: ["/connect"] });
         return;
       }
       switch (routed.effect.kind) {
