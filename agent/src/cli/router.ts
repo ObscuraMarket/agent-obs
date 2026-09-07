@@ -39,7 +39,7 @@ export type ConsoleEffect =
   /** Credits: the balance, or a payment to sign. */
   | { kind: "credits"; action: "show" | "buy"; amount?: number; token?: string }
   /** The wallet's own trading agent, which follows the desk: turn it on (with a size), off, resize it, or show its book. */
-  | { kind: "follow"; action: "start" | "stop" | "size" | "show"; sizeUsd?: number }
+  | { kind: "follow"; action: "start" | "stop" | "size" | "show"; sizeUsd?: number; mode?: "paper" | "live" }
   /** The agent's own wallet: show it, fund it from the person's wallet (they sign), or send ETH back to their wallet. */
   | { kind: "agentWallet"; action: "show" | "fund" | "withdraw"; amount?: number; all?: boolean };
 
@@ -213,10 +213,15 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
     }
     case "start":
     case "on": {
-      if (!arg) return ok([], { kind: "follow", action: "start" });
-      const n = Number(arg.replace(/[$,]/g, ""));
+      // /start, /start 150, /start live, /start paper 100: the mode word is optional and so is the size.
+      const words = arg.split(/\s+/).filter(Boolean);
+      const mode = words.find((w) => /^(live|paper)$/i.test(w))?.toLowerCase() as "live" | "paper" | undefined;
+      const sizeWord = words.find((w) => !/^(live|paper)$/i.test(w));
+      if (words.length > (mode ? 1 : 0) + (sizeWord ? 1 : 0)) return err(["Say a size in dollars, and live or paper if you want to choose: /start 150, /start live, /start paper 100"], ["/start", "/start 100"]);
+      if (!sizeWord) return ok([], { kind: "follow", action: "start", ...(mode ? { mode } : {}) });
+      const n = Number(sizeWord.replace(/[$,]/g, ""));
       if (!Number.isFinite(n)) return err(["Say a size in dollars, or nothing for your current size: /start 100"], ["/start", "/start 100"]);
-      return ok([], { kind: "follow", action: "start", sizeUsd: n });
+      return ok([], { kind: "follow", action: "start", sizeUsd: n, ...(mode ? { mode } : {}) });
     }
     case "stop":
     case "off":

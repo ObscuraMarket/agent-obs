@@ -17,6 +17,7 @@ import { railsFromEnv, tradingArmed, resolveAsset, dayStartEquity, lastEntryAt, 
 import { assetKey, type Asset } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates, rememberClose } from "./onchain.ts";
+import { mirrorForFollowers } from "./mirror.ts";
 import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate, curveKey, isHolding } from "./candidates.ts";
 import { checkCandidate, clampToBalance } from "./rails.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute, PAPER_BOOK } from "./paper.ts";
@@ -110,7 +111,8 @@ if (ARMED && readTokens().length) {
     heldNow = heldNames;
     if (heldNames.length) {
       const exitPrices = await assetPrices([...heldNames, "ETH"], {});
-      const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0 }, undefined, now);
+      // Every real exit of the desk's is mirrored for the agents that hold the token, the same share each.
+      const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0 }, undefined, now, undefined, undefined, (i, row, held) => mirrorForFollowers(i, row, held, now));
       for (const t of exits) console.log(`[desk] forced exit ${t.id} ${t.status}: ${t.note}`);
       for (const t of exits) if (t.status === "settled" || t.status === "pending") soldThisCycle.add(t.from.asset);
     }
@@ -552,6 +554,8 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
         : VENUE === "obscura" && !from.candidate && !to.candidate ? await execute(intent, ctx, now) : await executeOnChain(intent, ctx, now);
       if (r.ok) {
         executed = r.trade;
+        // The desk's real trade is every live agent's trade: the same entry at their size, the same exit by share.
+        if (!PAPER && r.trade.venue === "pool") await mirrorForFollowers(intent, r.trade, isExit ? haveNow : null, now).catch((e) => console.error(`[follow] mirror: ${e instanceof Error ? e.message : String(e)}`));
         if (to.candidate && (r.trade.status === "settled" || r.trade.status === "pending")) {
           const e = early.find((x) => x.symbol === to.symbol);
           recordEntry({ at: now, symbol: to.symbol, token: to.contract ?? "", source: e?.source ?? feed.candidates.find((x) => x.symbol === to.symbol)?.source ?? "unknown", grade: graded.get(to.symbol)?.grade ?? null, tierPct: to.candidate.tierPct, ignitedAfterMin: e?.ignitedAfterMin ?? null, via: to.candidate.curve ? "curve" : "side pool", usd: intentUsd ?? 0, reason: parsed.analysis?.thesis || decision.reason || "", paper: PAPER });

@@ -14,11 +14,15 @@ const FILE = "obs-follow.jsonl";
 export const DEFAULT_SIZE_USD = 100;
 export const MIN_SIZE_USD = 10;
 
+export type FollowMode = "paper" | "live";
+
 export interface FollowRow {
   address: string;
   at: number;
   action: "start" | "stop" | "size";
   sizeUsd?: number;
+  /** On a start row: paper (the default) or live, real ETH from the agent's own wallet. */
+  mode?: FollowMode;
 }
 
 export interface FollowState {
@@ -28,17 +32,19 @@ export interface FollowState {
   since: number | null;
   /** When it was last turned off; no entries after it, but the exits of what it still holds keep mirroring. */
   stoppedAt: number | null;
-  /** How it trades today. */
-  mode: "paper";
+  /** How it trades: on paper, or live from its own wallet. Set when it is turned on. */
+  mode: FollowMode;
 }
 
-/** PURE: the wallet's agent as its rows leave it: on or off, its size, when it was turned on or off. */
+/** PURE: the wallet's agent as its rows leave it: on or off, its size, its mode, when it was turned on or off. */
 export function followState(rows: FollowRow[], address: string): FollowState {
   const a = address.toLowerCase();
   const s: FollowState = { on: false, sizeUsd: DEFAULT_SIZE_USD, since: null, stoppedAt: null, mode: "paper" };
   for (const r of rows.filter((x) => x && x.address === a).sort((x, y) => x.at - y.at)) {
     if (r.action === "start") {
-      if (!s.on) { s.on = true; s.since = r.at; s.stoppedAt = null; }
+      const mode: FollowMode = r.mode === "live" ? "live" : "paper";
+      // A start in the other mode is a fresh start: what a paper agent held is not what a live one holds.
+      if (!s.on || s.mode !== mode) { s.on = true; s.since = r.at; s.stoppedAt = null; s.mode = mode; }
       if (r.sizeUsd != null && r.sizeUsd >= MIN_SIZE_USD) s.sizeUsd = r.sizeUsd;
     } else if (r.action === "stop") {
       if (s.on) { s.on = false; s.stoppedAt = r.at; }
@@ -118,12 +124,51 @@ export interface FollowBook {
   state: FollowState;
   trades: Trade[];
   positions: Positions;
+  /** What the agent could not do, latest last: an entry skipped for want of ETH, a refused rail, a revert. Live only. */
+  notes?: string[];
+  /** The ETH the agent's own wallet holds, read on chain. Live only. */
+  walletEth?: number | null;
 }
 
-/** PURE: the agent's book at these prices: the desk's own accounting on the mirrored trades. */
+/** PURE: the agent's paper book at these prices: the desk's own accounting on the mirrored trades. */
 export function followBook(deskTrades: Trade[], state: FollowState, prices: Prices): FollowBook {
   const trades = mirrorTrades(deskTrades, state);
   return { state, trades, positions: positions([], trades, mirrorHoldings(trades), prices) };
+}
+
+// ---- Live: the agent's real rows, from its own wallet, one ledger for every agent. ----
+
+export interface FollowTradeRow extends Trade { address: string; deskId: string }
+export interface FollowNote { address: string; at: number; deskId: string; note: string }
+const TRADES_FILE = "obs-follow-trades.jsonl";
+const NOTES_FILE = "obs-follow-notes.jsonl";
+
+export const readFollowTrades = (): FollowTradeRow[] => readLedger<FollowTradeRow>(TRADES_FILE);
+export const readFollowNotes = (): FollowNote[] => readLedger<FollowNote>(NOTES_FILE);
+export function recordFollowTrade(address: string, deskId: string, t: Trade): void {
+  appendLedger(TRADES_FILE, { ...t, address: address.toLowerCase(), deskId } as unknown as Record<string, unknown>);
+}
+export function recordFollowNote(address: string, deskId: string, note: string, now = Date.now()): void {
+  appendLedger(NOTES_FILE, { address: address.toLowerCase(), at: now, deskId, note });
+}
+
+/** PURE: this agent's real trades, the latest row per id, settled or in flight, oldest first. */
+export function liveTrades(rows: FollowTradeRow[], address: string): Trade[] {
+  const a = address.toLowerCase();
+  return latestTrades(rows.filter((r) => r && r.address === a)).filter((t) => t.status === "settled" || t.status === "pending").sort((x, y) => x.at - y.at);
+}
+
+/** PURE: what this agent holds from its real settled trades, tokens only. */
+export function liveHoldings(rows: FollowTradeRow[], address: string): Record<string, number> {
+  return mirrorHoldings(liveTrades(rows, address).filter((t) => t.status === "settled"));
+}
+
+/** PURE: the agent's live book at these prices: the desk's own accounting on the agent's real rows. */
+export function liveBook(address: string, state: FollowState, rows: FollowTradeRow[], notes: FollowNote[], prices: Prices, walletEth: number | null): FollowBook {
+  const trades = liveTrades(rows, address);
+  const a = address.toLowerCase();
+  const mine = notes.filter((n) => n.address === a && (state.since == null || n.at >= state.since)).sort((x, y) => x.at - y.at).slice(-3).map((n) => n.note);
+  return { state, trades, positions: positions([], trades, liveHoldings(rows, address), prices), notes: mine, walletEth };
 }
 
 const usd = (v: number) => `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -139,10 +184,14 @@ export function followLines(b: FollowBook, now: number): string[] {
       `/start turns it on: from that moment it follows every trade Agent OBS makes, at your size ($${s.sizeUsd} a trade), on paper for now. /start 150 sets the size as it starts.`,
     ];
   }
+  const live = s.mode === "live";
   const head = s.on
-    ? `Your agent is on, paper, following Agent OBS since ${clock(s.since as number)}, $${s.sizeUsd} a trade.`
-    : `Your agent is off since ${clock(s.stoppedAt as number)}; it still sells what it holds when the desk does. $${s.sizeUsd} a trade when it is on.`;
+    ? (live
+      ? `Your agent is on, LIVE: real ETH from its own wallet, following Agent OBS since ${clock(s.since as number)}, $${s.sizeUsd} a trade.`
+      : `Your agent is on, paper, following Agent OBS since ${clock(s.since as number)}, $${s.sizeUsd} a trade.`)
+    : `Your agent is off since ${clock(s.stoppedAt as number)}; it still sells what it holds${live ? ", live," : ""} when the desk does. $${s.sizeUsd} a trade when it is on.`;
   const lines = [head];
+  if (live && b.walletEth != null) lines.push(`  its wallet holds ${b.walletEth.toFixed(5)} ETH. /wallet shows it; /fund adds to it; /withdraw takes it back.`);
   const pos = b.positions.positions;
   if (pos.length) {
     for (const p of pos) lines.push(`  holding ${p.asset} ${p.valueUsd != null ? usd(p.valueUsd) : "unpriced"}${p.unrealizedPct != null ? ` (${pct(p.unrealizedPct)})` : ""}`);
@@ -152,6 +201,7 @@ export function followLines(b: FollowBook, now: number): string[] {
   }
   const exits = b.trades.filter((t) => t.exit).length;
   if (b.trades.length) lines.push(`  ${b.trades.length - exits} entr${b.trades.length - exits === 1 ? "y" : "ies"}, ${exits} exit${exits === 1 ? "" : "s"}, realized ${usd(b.positions.realizedUsd)} since you started.`);
+  for (const n of b.notes ?? []) lines.push(`  note: ${n}`);
   lines.push(s.on ? "  /stop turns it off. /size changes what it trades. /status shows the desk it follows." : "  /start turns it back on.");
   return lines;
 }
@@ -160,7 +210,7 @@ export function readFollow(): FollowRow[] {
   return readLedger<FollowRow>(FILE);
 }
 
-export function recordFollow(address: string, action: FollowRow["action"], sizeUsd?: number, now = Date.now()): FollowState {
-  appendLedger(FILE, { address: address.toLowerCase(), at: now, action, ...(sizeUsd != null ? { sizeUsd } : {}) });
+export function recordFollow(address: string, action: FollowRow["action"], sizeUsd?: number, now = Date.now(), mode?: FollowMode): FollowState {
+  appendLedger(FILE, { address: address.toLowerCase(), at: now, action, ...(sizeUsd != null ? { sizeUsd } : {}), ...(mode ? { mode } : {}) });
   return followState(readFollow(), address);
 }

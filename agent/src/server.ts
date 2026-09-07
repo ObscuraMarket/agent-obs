@@ -54,7 +54,9 @@ import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 import { holderGate, forgetHolder, gateMode } from "./desk/gate.ts";
-import { followState, readFollow, recordFollow, checkSize, followBook, followLines } from "./desk/follow.ts";
+import { followState, readFollow, recordFollow, checkSize, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, type FollowMode } from "./desk/follow.ts";
+import { liveOn } from "./desk/mirror.ts";
+import { latestEthUsd } from "./desk/onchain.ts";
 import { walletsOn, agentWalletAddress, rememberWallet, fundTx, withdrawEth, agentBalanceEth, verifyFunding, walletLines, walletBook, readAgentCapital } from "./desk/agentWallet.ts";
 import type { Prices } from "./desk/book.ts";
 import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL } from "./desk/models.ts";
@@ -1038,18 +1040,37 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           let state = followState(readFollow(), a);
           const act = routed.effect.action;
           const wasOn = state.on;
+          let startedLive = false;
           if (act === "start" || act === "size") {
             const size = routed.effect.sizeUsd != null ? checkSize(routed.effect.sizeUsd, deskMax) : { sizeUsd: state.sizeUsd };
             if ("error" in size) { json(res, 200, { ok: false, lines: [size.error], effect: "follow", suggest: ["/agent"] }); return; }
-            state = recordFollow(a, act, size.sizeUsd, now);
+            let mode: FollowMode | undefined;
+            if (act === "start") {
+              // Live when the agent's own wallet can cover a trade and the person did not say paper; paper otherwise.
+              // Asked for live without the ETH for it, the answer says what to fund rather than starting anything.
+              const forced = routed.effect.mode;
+              mode = "paper";
+              if (forced !== "paper" && walletsOn() && liveOn()) {
+                const bal = await agentBalanceEth(a).catch(() => 0);
+                const px = (await cachedPrices(["ETH"]).catch(() => ({} as Record<string, number | null>))).ETH ?? latestEthUsd(now);
+                const need = px ? size.sizeUsd / px + railsFromEnv().gasReserveEth : null;
+                if (need != null && bal >= need) mode = "live";
+                else if (forced === "live") { json(res, 200, { ok: false, effect: "follow", lines: [`Your agent's wallet holds ${bal.toFixed(4)} ETH; $${size.sizeUsd} a trade needs about ${need != null ? need.toFixed(4) : "?"} ETH with the gas reserve. /fund it first, or /start paper.`], suggest: ["/wallet", "/fund 0.05 ETH", "/start paper"] }); return; }
+              } else if (forced === "live") { json(res, 200, { ok: false, effect: "follow", lines: ["Live trading isn't switched on here yet; /start paper runs it on paper."], suggest: ["/start paper", "/wallet"] }); return; }
+              startedLive = mode === "live";
+            }
+            state = recordFollow(a, act, size.sizeUsd, now, mode);
           } else if (act === "stop") {
             if (!wasOn) { json(res, 200, { ok: true, lines: ["Your agent is already off."], effect: "follow", suggest: ["/start", "/agent"] }); return; }
             state = recordFollow(a, "stop", undefined, now);
           }
           const p = await pnlPayload(1, now, false);
-          const book = followBook(deskFromDisk().book.trades, state, (p.prices as Prices | undefined) ?? {});
+          const prices = (p.prices as Prices | undefined) ?? {};
+          const book = state.mode === "live"
+            ? liveBook(a, state, readFollowTrades(), readFollowNotes(), prices, await agentBalanceEth(a).catch(() => null))
+            : followBook(deskFromDisk().book.trades, state, prices);
           const lines = followLines(book, now);
-          if (act === "start") lines.unshift(wasOn ? `Your agent was already on; $${state.sizeUsd} a trade from here.` : "Your agent is on.");
+          if (act === "start") lines.unshift(startedLive ? `Your agent is on, LIVE. It trades real ETH from its own wallet at $${state.sizeUsd} a trade, following Agent OBS.` : wasOn && state.mode === "paper" ? `Your agent was already on; $${state.sizeUsd} a trade from here.` : "Your agent is on, on paper. Fund its wallet and /start again to trade live.");
           if (act === "size") lines.unshift(`$${state.sizeUsd} a trade from here.`);
           json(res, 200, { ok: true, effect: "follow", lines, follow: { on: state.on, sizeUsd: state.sizeUsd, mode: state.mode, since: state.since }, suggest: state.on ? ["/agent", "/status", "/stop"] : ["/start", "/status"] });
           return;

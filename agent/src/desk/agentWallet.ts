@@ -13,7 +13,7 @@ import { createPublicClient, createWalletClient, formatEther, parseEther, type H
 import { privateKeyToAccount } from "viem/accounts";
 import { appendLedger, readLedger } from "../ledger.ts";
 import { ASSETS } from "./assets.ts";
-import { viemChain, transport, readNativeBalance } from "./signer.ts";
+import { viemChain, transport, readNativeBalance, type Wallet } from "./signer.ts";
 import { resolvePayToken, valueUsd } from "./credits.ts";
 import { EXPLORER_URL } from "../config.ts";
 
@@ -51,6 +51,12 @@ function agentAccount(address: string, env: NodeJS.ProcessEnv = process.env) {
 /** The agent wallet's address for this person: the same every time, and nothing secret about it. */
 export function agentWalletAddress(address: string, env: NodeJS.ProcessEnv = process.env): `0x${string}` {
   return agentAccount(address, env).address;
+}
+
+/** The agent wallet as a signer, for the lane: made at call time, held only for the trade. */
+export function agentWallet(address: string, env: NodeJS.ProcessEnv = process.env): Wallet {
+  const account = agentAccount(address, env);
+  return { address: account.address, account };
 }
 
 export interface WalletRow { address: string; wallet: string; at: number }

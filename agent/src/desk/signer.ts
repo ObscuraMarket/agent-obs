@@ -4,7 +4,16 @@
 // must match OBS_WALLET_ADDRESS, or nothing is sent.
 import { readFileSync } from "node:fs";
 import { createPublicClient, createWalletClient, defineChain, encodeFunctionData, erc20Abi, http, parseAbi, parseUnits, type Hex } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
+
+/**
+ * A wallet that can sign: the desk's own (loaded from its file at call time) or a person's agent wallet (derived
+ * at call time). The lane's send and simulate take one; without one they are the desk's, exactly as before.
+ */
+export interface Wallet {
+  address: `0x${string}`;
+  account: PrivateKeyAccount;
+}
 import { WALLET_ADDRESS } from "../config.ts";
 import { walletFile } from "./rails.ts";
 import { chainOf, type Asset } from "./assets.ts";
@@ -85,12 +94,12 @@ const shortError = (e: unknown): string => {
   return m.split("\n")[0].slice(0, 220);
 };
 
-/** eth_call of the exact transaction, from the desk's address, with its value. No key involved. */
-export async function simulateFromWallet(asset: Asset, tx: RawTx): Promise<{ ok: true } | { ok: false; reason: string }> {
-  if (!WALLET_ADDRESS) return { ok: false, reason: "no wallet address configured" };
+/** eth_call of the exact transaction, from the desk's address (or the wallet named), with its value. No key involved. */
+export async function simulateFromWallet(asset: Asset, tx: RawTx, from: string = WALLET_ADDRESS): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!from) return { ok: false, reason: "no wallet address configured" };
   try {
     const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
-    await pub.call({ account: WALLET_ADDRESS as `0x${string}`, to: tx.to, data: tx.data, value: tx.value });
+    await pub.call({ account: from as `0x${string}`, to: tx.to, data: tx.data, value: tx.value });
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: shortError(e) };
@@ -123,11 +132,11 @@ export function approvePermit2Data(token: `0x${string}`, spender: `0x${string}`,
   return encodeFunctionData({ abi: PERMIT2_ABI, functionName: "approve", args: [token, spender, 2n ** 160n - 1n, expiration] });
 }
 
-/** Sign and send one raw transaction from the desk's wallet; the hash, immediately. */
-export async function sendTx(asset: Asset, tx: RawTx): Promise<`0x${string}`> {
-  const account = loadAccount();
-  const wallet = createWalletClient({ account, chain: viemChain(asset), transport: transport(asset) });
-  return wallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value });
+/** Sign and send one raw transaction from the desk's wallet, or from the wallet named; the hash, immediately. */
+export async function sendTx(asset: Asset, tx: RawTx, wallet?: Wallet): Promise<`0x${string}`> {
+  const account = wallet?.account ?? loadAccount();
+  const client = createWalletClient({ account, chain: viemChain(asset), transport: transport(asset) });
+  return client.sendTransaction({ to: tx.to, data: tx.data, value: tx.value });
 }
 
 /** The receipt, or null if it has not landed within the timeout. */

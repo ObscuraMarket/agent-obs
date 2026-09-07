@@ -17,7 +17,7 @@ import { chainMemory, poolRead, type PoolSpec, type PoolRead } from "../obscura/
 import { ASSETS, assetKey, chainOf, type Asset } from "./assets.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { recordTrade, readBook, latestTrades, boughtSymbols, type Trade } from "./book.ts";
-import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx } from "./signer.ts";
+import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet } from "./signer.ts";
 import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
@@ -232,23 +232,24 @@ export function encodeSwap(route: Route, amountIn: bigint, minOut: bigint, recip
 }
 
 /** The two one-time approvals an ERC-20 from-leg needs: token to Permit2, Permit2 to the router. Sends only what is missing. */
-export async function ensureAllowances(from: Asset, amountRaw: bigint, now = Date.now()): Promise<string[]> {
+export async function ensureAllowances(from: Asset, amountRaw: bigint, now = Date.now(), wallet?: Wallet): Promise<string[]> {
   if (from.kind !== "erc20") return [];
   const c = chainMemory().contracts.uniswapV4;
   const token = from.contract as `0x${string}`;
   const permit2 = c.permit2 as `0x${string}`;
   const router = c.universalRouter as `0x${string}`;
+  const owner = wallet?.address ?? (WALLET_ADDRESS as `0x${string}`);
   const sent: string[] = [];
-  if ((await readErc20Allowance(from, token, permit2)) < amountRaw) {
-    const hash = await sendTx(from, { to: token, data: approveErc20Data(permit2), value: 0n });
+  if ((await readErc20Allowance(from, token, permit2, owner)) < amountRaw) {
+    const hash = await sendTx(from, { to: token, data: approveErc20Data(permit2), value: 0n }, wallet);
     const r = await waitReceipt(from, hash);
     if (!r || r.status !== "success") throw new Error(`token approval ${hash} did not land`);
     sent.push(hash);
   }
-  const p = await readPermit2Allowance(from, permit2, token, router);
+  const p = await readPermit2Allowance(from, permit2, token, router, owner);
   const nowSec = Math.floor(now / 1000);
   if (p.amount < amountRaw || p.expiration <= nowSec) {
-    const hash = await sendTx(from, { to: permit2, data: approvePermit2Data(token, router, nowSec + 365 * 86400), value: 0n });
+    const hash = await sendTx(from, { to: permit2, data: approvePermit2Data(token, router, nowSec + 365 * 86400), value: 0n }, wallet);
     const r = await waitReceipt(from, hash);
     if (!r || r.status !== "success") throw new Error(`Permit2 approval ${hash} did not land`);
     sent.push(hash);
@@ -277,7 +278,16 @@ export function costFloorPct(i: Intent, minFillRatio: number): number {
 
 export type OnChainResult = { ok: true; trade: Trade } | { ok: false; reason: string; trade?: Trade };
 
-const balanceOf = (a: Asset): Promise<bigint> => (a.kind === "native" ? readNativeBalance(a) : readTokenBalance(a, a.contract as `0x${string}`));
+const balanceOf = (a: Asset, holder: string = WALLET_ADDRESS): Promise<bigint> => (a.kind === "native" ? readNativeBalance(a, holder) : readTokenBalance(a, a.contract as `0x${string}`, holder));
+
+/**
+ * Whose lane this is: the desk's own (the default: its wallet, its book, its sell proof), or a person's agent
+ * wallet, whose rows go to that agent's own ledger and whose tokens the desk has already proven sellable.
+ */
+export interface RunAs {
+  wallet: Wallet;
+  record: (t: Trade) => void;
+}
 
 /** The lane: rails, route, quote, floor, encode, simulate, approvals, send, receipt, the row. */
 /** The desk's latest ETH price from its own samples, within three hours: for a leg the route cannot price, an ETH leg on a route that never passes the ETH/USDG pool. */
@@ -293,7 +303,9 @@ export function legUsd(asset: Asset, amount: number, routePriceUsd: number | nul
   return null;
 }
 
-export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()): Promise<OnChainResult> {
+export async function executeOnChain(i: Intent, c: RailContext, now = Date.now(), runAs?: RunAs): Promise<OnChainResult> {
+  const address = runAs?.wallet.address ?? (WALLET_ADDRESS as `0x${string}`);
+  const record = runAs?.record ?? recordTrade;
   // The last check before anything is signed, independent of the rails object handed in: a never-trade contract on
   // either leg is refused here even if a caller built its own rails.
   for (const leg of [i.from, i.to]) if (leg.contract && NEVER_TRADE.has(leg.contract.toLowerCase())) return { ok: false, reason: `${leg.symbol} is on the never-trade list; not quoted, not approved, not sent` };
@@ -310,21 +322,21 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   let amountInRaw = q.amountInRaw;
   if (i.from.kind === "erc20" && i.from.contract) {
     try {
-      amountInRaw = clampToBalanceRaw(q.amountInRaw, await readTokenBalance(i.from, i.from.contract as `0x${string}`));
+      amountInRaw = clampToBalanceRaw(q.amountInRaw, await readTokenBalance(i.from, i.from.contract as `0x${string}`, address));
     } catch { /* the quote's amount stands; the simulation says if it is too much */ }
     if (amountInRaw <= 0n) return { ok: false, reason: `the wallet holds no ${i.from.symbol} to send` };
   }
   const amountIn = amountInRaw === q.amountInRaw ? i.amount : fromRaw(amountInRaw, i.from.decimals);
-  const tx = encodeSwap(q.route, amountInRaw, q.minOutRaw, WALLET_ADDRESS as `0x${string}`, deadline);
+  const tx = encodeSwap(q.route, amountInRaw, q.minOutRaw, address, deadline);
   let approvals: string[] = [];
   try {
-    approvals = await ensureAllowances(i.from, amountInRaw, now);
+    approvals = await ensureAllowances(i.from, amountInRaw, now, runAs?.wallet);
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
-  const sim = await simulateFromWallet(i.from, tx);
+  const sim = await simulateFromWallet(i.from, tx, address);
   if (!sim.ok) return { ok: false, reason: `the swap would revert: ${sim.reason}` };
-  const before = await balanceOf(i.to);
+  const before = await balanceOf(i.to, address);
   const base: Trade = {
     at: now,
     id: `pool-${now}`,
@@ -338,25 +350,25 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   };
   let hash: `0x${string}`;
   try {
-    hash = await sendTx(i.from, tx);
+    hash = await sendTx(i.from, tx, runAs?.wallet);
   } catch (err) {
     const failed: Trade = { ...base, status: "failed", note: `not sent: ${err instanceof Error ? err.message : String(err)}` };
-    recordTrade(failed);
+    record(failed);
     return { ok: false, reason: failed.note ?? "send failed", trade: failed };
   }
   const explorerUrl = chainOf(i.from).explorerTx(hash);
   const receipt = await waitReceipt(i.from, hash);
   if (!receipt) {
     const pending: Trade = { ...base, settlementTx: hash, explorerUrl, note: `${base.note}; sent, awaiting the receipt` };
-    recordTrade(pending);
+    record(pending);
     return { ok: true, trade: pending };
   }
   if (receipt.status !== "success") {
     const failed: Trade = { ...base, status: "failed", updatedAt: Date.now(), settlementTx: hash, explorerUrl, note: `reverted on chain` };
-    recordTrade(failed);
+    record(failed);
     return { ok: false, reason: `swap ${hash} reverted`, trade: failed };
   }
-  const after = await balanceOf(i.to);
+  const after = await balanceOf(i.to, address);
   let gotRaw = after - before;
   if (i.to.kind === "native") gotRaw += receipt.gasCostWei;
   const got = gotRaw > 0n ? fromRaw(gotRaw, i.to.decimals) : q.amountOut;
@@ -369,8 +381,9 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     to: { ...base.to, amount: got, usd: legUsd(i.to, got, q.priceOutUsd, ethUsd) },
     note: `${base.note}; received ${got} ${i.to.symbol}`,
   };
-  recordTrade(settled);
-  if (i.to.candidate && got > 0) {
+  record(settled);
+  // The sell proof is the desk's probe on its own first buy; a follower's token was proven by the desk already.
+  if (!runAs && i.to.candidate && got > 0) {
     const proof = await proveSellable(i.to, gotRaw > 0n ? gotRaw : q.amountOutRaw, now);
     const withProof: Trade = { ...settled, note: `${settled.note}; ${proof}` };
     recordTrade(withProof);
@@ -412,7 +425,7 @@ export async function proveSellable(token: Asset, amountRaw: bigint, now = Date.
  * checked against the time stop, the floor and the volume roll-over, and sold
  * back to ETH when one trips. Exits skip the caps; they are never blocked.
  */
-export async function exitCandidates(balances: Record<string, number>, prices: Record<string, number | null>, ctx: RailContext, feed: FeedSnapshot = readFeed(), now = Date.now(), exec: (i: Intent, c: RailContext, now: number) => Promise<OnChainResult> = executeOnChain, extraTrades: Trade[] = []): Promise<Trade[]> {
+export async function exitCandidates(balances: Record<string, number>, prices: Record<string, number | null>, ctx: RailContext, feed: FeedSnapshot = readFeed(), now = Date.now(), exec: (i: Intent, c: RailContext, now: number) => Promise<OnChainResult> = executeOnChain, extraTrades: Trade[] = [], after?: (i: Intent, row: Trade, heldBefore: number) => Promise<void>): Promise<Trade[]> {
   const out: Trade[] = [];
   const eth = ASSETS["ETH@robinhood"];
   const dyn = dynamicAssets(feed);
@@ -439,12 +452,15 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
     if (!v) continue;
     const amount = v.share >= 1 ? held : Number((held * v.share).toPrecision(8));
     const usd = prices[a.symbol] != null ? amount * (prices[a.symbol] as number) : null;
-    const r = await exec({ from: a, to: eth, amount, usd, exit: true }, ctx, now);
+    const exitIntent: Intent = { from: a, to: eth, amount, usd, exit: true };
+    const r = await exec(exitIntent, ctx, now);
     if (r.ok) {
       // The ETH that came back is priced so the close is recorded as what it was: the exit prices carry ETH for this.
       const toUsd = r.trade.to.usd ?? (prices.ETH != null && r.trade.to.amount != null ? r.trade.to.amount * prices.ETH : null);
       const row: Trade = { ...r.trade, to: { ...r.trade.to, usd: toUsd }, note: `exit (${v.kind}), ${v.reason}; ${r.trade.note ?? ""}` };
       if (exec === executeOnChain) recordTrade(row);
+      // The desk's real exit is every follower's exit too: what was sold, of what was held, so each sells the same share.
+      if (exec === executeOnChain && after) await after(exitIntent, row, held).catch((e) => console.error(`[follow] exit mirror of ${a.symbol}: ${e instanceof Error ? e.message : String(e)}`));
       out.push(row);
       if (v.share >= 1) rememberClose(a.symbol, a.contract ?? "", [...allTrades, row], ethUsdAt(readPrices(), prices.ETH ?? null), peakPnlPct, v.kind, exec !== executeOnChain, now);
     } else if ("trade" in r && r.trade) out.push(r.trade);
