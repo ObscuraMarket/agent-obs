@@ -7,11 +7,14 @@ same boundaries. Nothing in the image can arm execution.
 
 ## What you need
 
-1. **An OpenHermit gateway** the container can reach, with an admin token.
-   On the same host, the default `http://host.docker.internal:4000` works;
-   anywhere else, set `OPENHERMIT_GATEWAY_URL` in the shell before
-   `docker compose up`. The runner provisions the two personas on it at
-   boot (`scripts/ohsetup.mjs`, idempotent).
+1. **A model.** An Anthropic key (`ANTHROPIC_API_KEY`) or an OpenAI-shape
+   endpoint (`OBS_MODEL_URL`, `OBS_MODEL`) in `agent/.env` is enough for the
+   desk. The voice needs an OpenHermit gateway the container can reach, with
+   its admin token: on the same host the default
+   `http://host.docker.internal:4000` works; anywhere else, set
+   `OPENHERMIT_GATEWAY_URL` in the shell before `docker compose up`. The
+   runner provisions the two personas on it at boot (`scripts/ohsetup.mjs`,
+   idempotent) when the token is set.
 2. **`agent/.env`**, from `agent/.env.example`. The values that matter here:
    `GATEWAY_ADMIN_TOKEN`, `OBS_WALLET_ADDRESS` (the public address only),
    `ROBINHOOD_RPC_URL` (a provider endpoint; the public RPC throttles),

@@ -11,9 +11,13 @@ in the repo can arm execution; that is the switch in step 8, yours alone.
   a hostname pointing at it. `obs-api.<ip>.sslip.io` works with no domain.
 - Access to this repo, and to the private memory repo (or your own: any
   private git repo the box can push to).
-- A model provider key. The desk thinks through the OpenHermit gateway, an
-  open-source project ([github.com/HCF-STUDIOS/openhermit](https://github.com/HCF-STUDIOS/openhermit)),
-  which calls the provider named in its own `.env` (`OPENROUTER_API_KEY`).
+- A model. The desk thinks through whichever `agent/.env` names: an
+  Anthropic key (`ANTHROPIC_API_KEY`), an OpenAI-shape endpoint
+  (`OBS_MODEL_URL`, `OBS_MODEL`), or the OpenHermit gateway, an open-source
+  project ([github.com/HCF-STUDIOS/openhermit](https://github.com/HCF-STUDIOS/openhermit))
+  that calls the provider named in its own `.env` (`OPENROUTER_API_KEY`).
+  This runbook installs the gateway, which the voice needs; the desk alone
+  needs only a key.
 - A Robinhood Chain RPC endpoint from a provider. The public RPC works but
   throttles; `ROBINHOOD_RPC_URL` in `agent/.env`.
 - For the voice only: the X account's OAuth 1.0a credentials.

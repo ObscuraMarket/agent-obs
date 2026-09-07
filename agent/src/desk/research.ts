@@ -71,7 +71,7 @@ export function researchLine(e: ResearchInput): string {
       return `Holding ${s}: ${what}${n ? ` (${n})` : ""}. Checking the exits now.`;
     }
     case "decision":
-      return `Decided: ${e.note}`;
+      return e.ok === false ? `Held: ${e.note}` : `Decided: ${e.note}`;
     case "scout":
       return `Scout: ${e.note}`;
   }

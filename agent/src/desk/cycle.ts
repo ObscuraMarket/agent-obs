@@ -5,7 +5,7 @@
 // through Obscura from the desk's own wallet; otherwise it is recorded as a
 // proposal. Meant to run on a timer (launchd, see scripts/). DRY_RUN=1 runs
 // the model call and writes nothing, and never executes.
-import { GatewayClient } from "@openhermit/sdk";
+import { modelFromEnv, noModelWhy } from "./model.ts";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { AGENT_ID, DRY, dataPath } from "../config.ts";
 import { liveReads, assetPrices, walletBalances } from "../obscura/reads.ts";
@@ -77,13 +77,12 @@ const VENUE: "pool" | "obscura" = (process.env.OBS_VENUE ?? "pool").toLowerCase(
 // The basis on the tokenized stock is a side trade, off unless the operator turns it on. Tokens are the job.
 const BASIS_ON = (process.env.OBS_BASIS ?? "off") === "on";
 
-const baseUrl = process.env.OPENHERMIT_GATEWAY_URL;
-const token = process.env.GATEWAY_ADMIN_TOKEN;
-if (!baseUrl || !token) {
-  console.error("[desk] gateway not configured (OPENHERMIT_GATEWAY_URL / GATEWAY_ADMIN_TOKEN)");
+// The model: the gateway, an Anthropic key, or an OpenAI-shape endpoint, whichever the environment names.
+const model = modelFromEnv();
+if (!model) {
+  console.error(`[desk] no model configured: ${noModelWhy()}`);
   process.exit(1);
 }
-const gw = new GatewayClient({ baseUrl, token });
 const now = Date.now();
 
 // Settle first, so the book the persona sees is current. Skipped in DRY_RUN
@@ -398,12 +397,13 @@ console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  -
 
 // The persona thinks.
 const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED || PAPER, [...railsFromEnv().allowedAssets], VENUE, [...candidates.map((cnd) => `${cnd.symbol}@robinhood`), ...early.filter((e) => e.tradable).map((e) => `${e.symbol}@robinhood`)], PAPER, BASIS_ON);
-const sessionId = "desk-cycle";
-await gw.agent(AGENT_ID).openSession({ sessionId, source: { kind: "api", interactive: true, type: "direct" } }).catch(() => {});
-const resp = await gw.agent(AGENT_ID).postMessageSync(sessionId, { text: prompt }, { timeout: 90_000 });
-const gwError = (resp as { error?: string }).error;
-if (gwError || resp.text == null) {
-  console.error(`[desk] OBS could not think this cycle: ${gwError ?? "gateway returned no text"}`);
+const resp = await model.think(prompt);
+if (resp.error || resp.text == null) {
+  const why = resp.error ?? "the model returned no text";
+  console.error(`[desk] OBS could not think this cycle: ${why}`);
+  // On the terminal in red, like a decision the parser could not read: a model outage that only reached the log
+  // was a silent hold for as long as it lasted. The exits above ran before the model was asked.
+  if (!DRY) recordResearch({ kind: "decision", symbol: "", ok: false, note: `the desk could not think this cycle (${why.slice(0, 120)}); the exits ran, the next entry waits for the model.` });
   process.exit(1);
 }
 const parsed = parseThoughtReply(resp.text ?? "");

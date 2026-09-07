@@ -7,11 +7,13 @@ the model is the one thing you bring.
 ## What you need
 
 - **Node 22** and git.
-- **A model gateway.** The desk thinks through an OpenHermit gateway
-  ([github.com/HCF-STUDIOS/openhermit](https://github.com/HCF-STUDIOS/openhermit)),
-  open source, run by you with Postgres and your own model provider key.
-  [RUNBOOK.md](RUNBOOK.md) section 3 covers installing it. Without one the
-  desk reads, watches and shows its page, but does not decide.
+- **A model.** One of three, your choice: an Anthropic API key; any endpoint
+  that speaks the OpenAI chat shape (OpenRouter, a local server) with a model
+  name; or an OpenHermit gateway
+  ([github.com/HCF-STUDIOS/openhermit](https://github.com/HCF-STUDIOS/openhermit),
+  open source, run by you with Postgres, [RUNBOOK.md](RUNBOOK.md) section 3).
+  The first two need nothing installed. Without a model the desk reads,
+  watches and shows its page, but does not decide.
 - **An RPC provider endpoint** for Robinhood Chain (Alchemy serves it). The
   public RPC works for a look and throttles a desk.
 - **Nothing else.** No account, no key of ours, no service of ours.
@@ -31,8 +33,9 @@ npm run dashboard              # the API and the page on http://localhost:4671
 In `.env`, the values that matter on day one:
 
 ```
-OPENHERMIT_GATEWAY_URL=http://127.0.0.1:4000   # your gateway
-GATEWAY_ADMIN_TOKEN=                            # its admin token
+ANTHROPIC_API_KEY=                              # your model, one of these three
+OBS_MODEL_URL=  OBS_MODEL=  OBS_MODEL_KEY=      # or an OpenAI-shape endpoint
+OPENHERMIT_GATEWAY_URL=  GATEWAY_ADMIN_TOKEN=   # or your gateway
 ROBINHOOD_RPC_URL=                              # your provider endpoint
 OBS_TRADING=off                                 # leave off
 ```
@@ -53,7 +56,7 @@ Run the desk at full size with nothing sent, marked against your real
 wallet, for as long as you like:
 
 ```
-npm run setup                  # provisions the two personas on your gateway, re-runnable
+npm run setup                  # gateway only: provisions the two personas, re-runnable
 npm run live:paper             # the live watch on the paper book
 npm run desk:dry               # one cycle, writes nothing
 ```

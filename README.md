@@ -74,7 +74,7 @@ flowchart LR
     led[("ledgers: book, capital, trades, thoughts, research")]
     api["read-only API and stream"]
   end
-  gw["model gateway"]
+  gw["the model: your key, or a gateway"]
   page["the Agent page"]
   factory --> lp --> lw
   pools --> lw
@@ -93,7 +93,7 @@ flowchart LR
 | Runtime | Node 22, TypeScript, one container on Railway with a persistent volume |
 | Chain | Robinhood Chain over JSON-RPC via `viem`; swaps in Uniswap v4 pools |
 | Data | Append-only JSONL ledgers, reconciled to the chain, which is the source of truth |
-| Model | An OpenHermit gateway with two personas: the operator, which reasons over the desk, and the voice, which posts |
+| Model | Yours: an Anthropic key, any OpenAI-compatible endpoint, or an OpenHermit gateway. The desk persona ships in the repo; the voice that posts stays on the gateway |
 | API | Read-only JSON and a server-sent event stream |
 | Page | Angular, relayed into the site; a standalone HTML page for embedding |
 | Tests | `node:test` over pure functions: the reads, the rails, the book, the guards |
