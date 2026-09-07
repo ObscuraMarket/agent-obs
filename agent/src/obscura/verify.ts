@@ -43,6 +43,16 @@ export interface PairCheck {
   appRoute: AppRoute;
 }
 
+/**
+ * PURE: what the partner behind the backend's "cex pool" lists on Robinhood Chain that the backend does not offer.
+ * The partner's list is the ceiling of what the backend could route there; every code missing from the backend's
+ * own list is a pair the backend answers with a crash instead of a quote.
+ */
+export function missingFromBackend(partnerCodes: Iterable<string>, backendCodes: Iterable<string>): string[] {
+  const have = new Set([...backendCodes].map((c) => c.toLowerCase()));
+  return [...new Set([...partnerCodes].map((c) => c.toLowerCase()))].filter((c) => !have.has(c)).sort();
+}
+
 /** PURE: percent by which x differs from the reference; null when either is missing. */
 export function spreadPct(x: number | null, ref: number | null): number | null {
   if (x == null || ref == null || !(ref > 0)) return null;

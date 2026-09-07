@@ -11,7 +11,7 @@ import { relayQuote } from "../src/obscura/relay.ts";
 import { quoteOnChain } from "../src/desk/onchain.ts";
 import { resolveAsset, type Asset } from "../src/desk/assets.ts";
 import { depositAddressLooksRight } from "../src/desk/rails.ts";
-import { appRouteFor, tableLines, verdicts, type PairCheck } from "../src/obscura/verify.ts";
+import { appRouteFor, tableLines, verdicts, missingFromBackend, type PairCheck } from "../src/obscura/verify.ts";
 
 const wantOrder = process.argv.includes("--order");
 const PAIRS: Array<[string, string, number]> = [
@@ -34,6 +34,16 @@ const list = await currencies();
 const rh = list.filter((c) => c.network === "robinhood");
 console.log(`  currencies: ${list.length} listed, on Robinhood Chain: ${rh.map((c) => c.code).join(", ") || "none"}`);
 console.log(`  ETH and USDG on Robinhood Chain are ${rh.some((c) => c.code === "eth") ? "listed" : "not listed"}: the app adds them itself and routes them through Relay.`);
+// The partner behind "cex pool" on Robinhood Chain publishes its own list; the backend can offer at most that.
+try {
+  const res = await fetch("https://api.changenow.io/v2/exchange/currencies?active=true&flow=standard", { signal: AbortSignal.timeout(20_000) });
+  const all = (await res.json()) as Array<{ ticker: string; network: string; name: string }>;
+  const hood = all.filter((c) => c.network === "hood").map((c) => c.ticker);
+  const missing = missingFromBackend(hood, rh.map((c) => c.code));
+  console.log(`  the partner behind cex pool lists ${hood.length} assets on Robinhood Chain (${hood.join(", ")}); the backend offers ${hood.length - missing.length} of them${missing.length ? `, missing ${missing.join(", ")}` : ""}.`);
+} catch (e) {
+  console.log(`  the partner's own list could not be read (${e instanceof Error ? e.message : String(e)})`);
+}
 
 const checks: PairCheck[] = [];
 for (const [f, t, amount] of PAIRS) {

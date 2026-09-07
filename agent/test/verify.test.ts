@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spreadPct, backendState, appRouteFor, tableLines, verdicts, type PairCheck } from "../src/obscura/verify.ts";
+import { spreadPct, backendState, appRouteFor, tableLines, verdicts, missingFromBackend, type PairCheck } from "../src/obscura/verify.ts";
 
 const check = (over: Partial<PairCheck>): PairCheck => ({
   pair: "ETH@robinhood -> USDG@robinhood",
@@ -23,6 +23,11 @@ test("the spread is against the pool, and the backend's state is read from its s
   assert.equal(backendState({ status: 200, count: 1, partner: "cex pool", toAmount: 1, min: null, max: null, error: null }), "quoted");
   assert.equal(backendState({ status: 0, count: 0, partner: null, toAmount: null, min: null, max: null, error: "fetch failed" }), "unreachable");
   assert.equal(backendState({ status: 422, count: 0, partner: null, toAmount: null, min: null, max: null, error: "HTTP 422" }), "client error");
+});
+
+test("what the partner lists on Robinhood Chain that the backend does not offer", () => {
+  assert.deepEqual(missingFromBackend(["eth", "usdg", "nvda", "cashcat", "spy", "aapl", "nvda"], ["cashcat", "NVDA", "pipedog"]), ["aapl", "eth", "spy", "usdg"]);
+  assert.deepEqual(missingFromBackend(["nvda"], ["nvda"]), []);
 });
 
 test("the app's door: Relay for ETH and USDG on Robinhood Chain, the backend for a token a partner lists there, the backend off the chain", () => {
