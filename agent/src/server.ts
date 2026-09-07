@@ -894,10 +894,12 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       let b: Record<string, unknown> = {};
       try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
       const r = await linkAccount(b, now);
-      if (!r.ok) { json(res, 401, { ok: false, error: r.error }); return; }
+      // Every attempt at the door is logged with its outcome, so "I can't get in" can be read off the log by wallet.
+      if (!r.ok) { console.log(`[account] link refused for ${typeof b.address === "string" ? b.address : "?"}: ${r.error}`); json(res, 401, { ok: false, error: r.error }); return; }
       // The console is for holders: the signature proves the wallet, the chain says whether it holds OBS or AOBS.
       const gate = await holderGate(r.session.address, now);
-      if (!gate.ok) { json(res, 403, { ok: false, code: "not_holder", error: gate.reason, obs: gate.obs, aobs: gate.aobs, minObs: gate.minObs, minAobs: gate.minAobs }); return; }
+      if (!gate.ok) { console.log(`[account] door closed for ${r.session.address}: ${gate.reason}`); json(res, 403, { ok: false, code: "not_holder", error: gate.reason, obs: gate.obs, aobs: gate.aobs, minObs: gate.minObs, minAobs: gate.minAobs }); return; }
+      console.log(`[account] signed in ${r.session.address}${gate.invited ? " (invited)" : ""}`);
       json(res, 200, { ok: true, session: r.session, standing: consoleStanding(r.session.address) });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;
