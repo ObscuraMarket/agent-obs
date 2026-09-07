@@ -210,6 +210,52 @@ export function followLines(b: FollowBook, now: number): string[] {
   return lines;
 }
 
+// ---- The agent speaking: what it did and why, in the console, as it happens. ----
+
+export interface FollowEvent { at: number; kind: "entry" | "exit" | "note"; text: string }
+
+/** PURE: the desk's reason for a row of its own: an entry's thesis from the entry ledger, an exit's rule from its note. */
+export function deskReason(deskTrade: Trade | undefined, entries: Array<{ at: number; symbol: string; reason: string }>): string | null {
+  if (!deskTrade) return null;
+  if (deskTrade.exit) {
+    const m = /^exit \(([^)]+)\), ([^;]+)/.exec(deskTrade.note ?? "");
+    return m ? m[2].trim() : null;
+  }
+  const sym = deskTrade.to.asset.toUpperCase();
+  const e = entries.filter((x) => x.symbol.toUpperCase() === sym && Math.abs(x.at - deskTrade.at) < 15 * 60_000).sort((x, y) => Math.abs(x.at - deskTrade.at) - Math.abs(y.at - deskTrade.at))[0];
+  return e?.reason?.trim() || null;
+}
+
+/**
+ * PURE: the agent's own account of itself since a moment: each trade it made (or mirrored on paper), each one it
+ * sat out or was refused, in the first person, with the desk's reason beside it when there is one. Newest last.
+ */
+export function followEvents(state: FollowState, trades: Trade[], notes: FollowNote[], deskById: (id: string) => Trade | undefined, entries: Array<{ at: number; symbol: string; reason: string }>, since: number): FollowEvent[] {
+  const live = state.mode === "live";
+  const out: FollowEvent[] = [];
+  const eth = (n: number | null | undefined) => (n == null ? "?" : n.toFixed(4));
+  const dollars = (n: number | null | undefined) => (n == null ? "" : ` ($${n.toFixed(2)})`);
+  for (const t of trades) {
+    const at = t.updatedAt ?? t.at;
+    if (at <= since) continue;
+    const deskId = (t as Partial<FollowTradeRow>).deskId ?? t.id.replace(/^f-/, "");
+    const why = deskReason(deskById(deskId), entries);
+    if (!t.exit) {
+      const how = live ? `${eth(t.from.amount)} ETH${dollars(t.from.usd)} from my wallet, ${t.status === "settled" ? "landed" : "sent, waiting for the chain"}` : `$${(t.from.usd ?? 0).toFixed(0)} on paper at the desk's price`;
+      out.push({ at, kind: "entry", text: `Followed Agent OBS into ${t.to.asset}: ${how}.${why ? ` The desk's reason: ${why}` : ""}` });
+    } else {
+      const how = live ? `${eth(t.to.amount)} ETH${dollars(t.to.usd)} back to my wallet, ${t.status === "settled" ? "landed" : "sent"}` : `$${(t.to.usd ?? 0).toFixed(2)} back on paper`;
+      out.push({ at, kind: "exit", text: `Sold my ${t.from.asset} with the desk: ${how}.${why ? ` The desk's reason: ${why}` : ""}` });
+    }
+  }
+  for (const n of notes) {
+    if (n.at <= since) continue;
+    const skipped = /skipped/.test(n.note);
+    out.push({ at: n.at, kind: "note", text: skipped ? `Sat this one out. ${n.note.replace(/^entry of (\S+) skipped: /, (_, s) => `The desk entered ${s}; `)}` : `Couldn't follow the desk: ${n.note}` });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
 export function readFollow(): FollowRow[] {
   return readLedger<FollowRow>(FILE);
 }

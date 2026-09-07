@@ -54,7 +54,8 @@ import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 import { holderGate, forgetHolder, gateMode } from "./desk/gate.ts";
-import { followState, readFollow, recordFollow, checkSize, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, type FollowMode } from "./desk/follow.ts";
+import { followState, readFollow, recordFollow, checkSize, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, mirrorTrades, followEvents, type FollowMode } from "./desk/follow.ts";
+import { readEntries } from "./desk/trade-memory.ts";
 import { liveOn } from "./desk/mirror.ts";
 import { latestEthUsd } from "./desk/onchain.ts";
 import { walletsOn, agentWalletAddress, rememberWallet, fundTx, withdrawEth, agentBalanceEth, verifyFunding, walletLines, walletBook, readAgentCapital } from "./desk/agentWallet.ts";
@@ -1155,6 +1156,20 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       if (!r.ok) { json(res, 409, { ok: false, reason: r.reason }); return; }
       json(res, 200, { ok: true, already: r.already, credits: toCredits(r.row.usd), usd: r.row.usd, token: r.row.token, amount: r.row.amount, balance: toCredits(balanceUsd(address, readCredits())) });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
+    return;
+  }
+  if (path === "/api/obs/my-agent/events") {
+    // The agent's own account of what it did since a moment, for the console to print as it happens.
+    res.setHeader("Cache-Control", "no-store");
+    const address = requireWallet(req, res);
+    if (!address) return;
+    const since = Number(url.searchParams.get("since") ?? 0) || 0;
+    const state = followState(readFollow(), address);
+    const desk = deskFromDisk().book.trades;
+    const byId = new Map(latestTrades(desk).map((t) => [t.id, t] as const));
+    const trades = state.mode === "live" ? liveTrades(readFollowTrades(), address) : mirrorTrades(desk, state);
+    const events = followEvents(state, trades, state.mode === "live" ? readFollowNotes().filter((n) => n.address === address.toLowerCase()) : [], (id) => byId.get(id), readEntries(), since);
+    json(res, 200, { ok: true, events: events.slice(-20), on: state.on, mode: state.mode, at: now });
     return;
   }
   if (path === "/api/obs/my-agent/wallet/verify") {

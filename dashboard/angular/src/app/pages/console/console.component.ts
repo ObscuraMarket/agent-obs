@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, Inject, NgZone, Type, ViewChild, ViewContainerRef } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, Inject, NgZone, OnDestroy, Type, ViewChild, ViewContainerRef } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
 import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, ObsPayment, ObsCredits, CONSOLE_VIEWS, CONSOLE_WALLET, ConsoleWallet } from '../../service/obs-desk.service';
 
@@ -67,7 +67,7 @@ const SESSION_KEY = 'obs-console-session';
  * streams the agent's reply token by token, and never holds a key.
  */
 @Component({ selector: 'app-console', templateUrl: './console.component.html', styleUrls: ['./console.component.css'] })
-export class ConsoleComponent implements AfterViewInit {
+export class ConsoleComponent implements AfterViewInit, OnDestroy {
   @ViewChild('screen') screen?: ElementRef<HTMLDivElement>;
   @ViewChild('cmd') cmd?: ElementRef<HTMLInputElement>;
   /** Where a view command renders one of the site's own pages, beside the console. */
@@ -121,7 +121,34 @@ export class ConsoleComponent implements AfterViewInit {
     if (this.siteWallet) { this.watchSiteWallet(); } else { void this.silentReconnect(); }
     // What the desk offers today, so the page does not show a door or a button that is not there yet.
     this.obs.status().subscribe({ next: (s) => { const c = s.console; if (c) { this.appsOn = c.apps !== false; this.gate = c.gate ?? 'on'; } }, error: () => undefined });
+    // The trading agent speaks for itself: every trade it makes or sits out arrives in the transcript as it happens.
+    this.eventsTimer = setInterval(() => void this.pollEvents(), 20_000);
     setTimeout(() => this.focusInput(), 0);
+  }
+
+  ngOnDestroy(): void {
+    if (this.eventsTimer) { clearInterval(this.eventsTimer); }
+  }
+
+  private eventsTimer?: ReturnType<typeof setInterval>;
+  /** Only what happens from now on is news: nothing older than the page is replayed. */
+  private eventsSince = Date.now();
+  private eventsBusy = false;
+
+  /** The trading agent's own account of what it did since the last look, printed as the agent speaking. */
+  private async pollEvents(): Promise<void> {
+    if (!this.token || this.status !== 'signed-in' || this.eventsBusy || this.agentState === 'thinking') { return; }
+    this.eventsBusy = true;
+    try {
+      const r = await this.get<{ ok: boolean; events: Array<{ at: number; kind: string; text: string }>; at: number }>(this.obs.myAgentEvents(this.token, this.eventsSince));
+      if (!r?.ok) { return; }
+      const fresh = (r.events || []).filter((e) => e.at > this.eventsSince);
+      if (fresh.length) {
+        this.started = true;
+        this.print(fresh.map((e) => ({ kind: 'agent' as LineKind, text: e.text })));
+        this.eventsSince = Math.max(...fresh.map((e) => e.at));
+      }
+    } catch { /* the next look will tell */ } finally { this.eventsBusy = false; }
   }
 
   // ---- view helpers --------------------------------------------------------

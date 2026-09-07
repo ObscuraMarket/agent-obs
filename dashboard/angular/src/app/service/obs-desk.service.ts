@@ -513,6 +513,11 @@ export class ObsDeskService {
     return this.http.post<ObsEnsureReply>(`${this.base}/api/obs/my-agent/ensure`, {}, this.bearer(token));
   }
 
+  /** `/api/obs/my-agent/events`: what the wallet's trading agent did since a moment, in its own words, newest last. */
+  myAgentEvents(token: string, since: number): Observable<{ ok: boolean; events: Array<{ at: number; kind: string; text: string }>; on: boolean; mode: string; at: number }> {
+    return this.http.get<{ ok: boolean; events: Array<{ at: number; kind: string; text: string }>; on: boolean; mode: string; at: number }>(`${this.base}/api/obs/my-agent/events`, { ...this.bearer(token), params: { since: String(since) } });
+  }
+
   myAgentHistory(token: string): Observable<{ ok: boolean; turns: ObsHistoryTurn[] }> {
     return this.http.get<{ ok: boolean; turns: ObsHistoryTurn[] }>(`${this.base}/api/obs/my-agent/history`, this.bearer(token));
   }

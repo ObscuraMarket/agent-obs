@@ -1,7 +1,32 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { entryAmountEth, exitShare, followersFor, liveOn } from "../src/desk/mirror.ts";
-import { followState, liveHoldings, liveTrades, liveBook, followLines, type FollowRow, type FollowTradeRow } from "../src/desk/follow.ts";
+import { followState, liveHoldings, liveTrades, liveBook, followLines, followEvents, deskReason, type FollowRow, type FollowTradeRow } from "../src/desk/follow.ts";
+
+test("the agent tells the console what it did, in the first person, with the desk's reason beside it", () => {
+  const T = 1_788_800_000_000;
+  const desk: Record<string, ReturnType<typeof liveTrades>[number]> = {
+    d1: { at: T, id: "d1", status: "settled", from: { asset: "ETH", amount: 0.08, usd: 200 }, to: { asset: "PENGUIN", amount: 1000, usd: 200 }, partner: null },
+    d2: { at: T + 60_000, id: "d2", status: "settled", exit: true, from: { asset: "PENGUIN", amount: 600, usd: 180 }, to: { asset: "ETH", amount: 0.072, usd: 180 }, partner: null, note: "exit (trail), trailing stop: peaked at +40%, gave back 25% from the peak; pool then pool on chain" },
+  };
+  const entries = [{ at: T + 5_000, symbol: "PENGUIN", reason: "quiet base with buyers stepping in" }];
+  assert.equal(deskReason(desk.d1, entries), "quiet base with buyers stepping in");
+  assert.equal(deskReason(desk.d2, entries), "trailing stop: peaked at +40%, gave back 25% from the peak");
+  assert.equal(deskReason(undefined, entries), null);
+  const live = followState([{ address: "0x1111111111111111111111111111111111111111", at: T - 1, action: "start", sizeUsd: 10, mode: "live" }], "0x1111111111111111111111111111111111111111");
+  const mine: FollowTradeRow[] = [
+    { address: "0x1111111111111111111111111111111111111111", deskId: "d1", at: T + 10_000, id: "pool-1", status: "settled", from: { asset: "ETH", amount: 0.004, usd: 10 }, to: { asset: "PENGUIN", amount: 50, usd: 10 }, partner: "pool", venue: "pool" },
+    { address: "0x1111111111111111111111111111111111111111", deskId: "d2", at: T + 70_000, id: "pool-2", status: "settled", exit: true, from: { asset: "PENGUIN", amount: 30, usd: 9 }, to: { asset: "ETH", amount: 0.0036, usd: 9 }, partner: "pool", venue: "pool" },
+  ];
+  const notes = [{ address: "0x1111111111111111111111111111111111111111", at: T + 80_000, deskId: "d3", note: "entry of DOHJ skipped: the agent's wallet holds 0.0100 ETH; $10 at $2500 an ETH needs 0.0040 ETH plus the 0.002 ETH gas reserve" }];
+  const ev = followEvents(live, liveTrades(mine, "0x1111111111111111111111111111111111111111"), notes, (id) => desk[id], entries, T);
+  assert.equal(ev.length, 3);
+  assert.match(ev[0].text, /^Followed Agent OBS into PENGUIN: 0\.0040 ETH \(\$10\.00\) from my wallet, landed\. The desk's reason: quiet base with buyers stepping in$/);
+  assert.match(ev[1].text, /^Sold my PENGUIN with the desk: 0\.0036 ETH \(\$9\.00\) back to my wallet, landed\. The desk's reason: trailing stop/);
+  assert.match(ev[2].text, /^Sat this one out\. The desk entered DOHJ; the agent's wallet holds/);
+  assert.equal(followEvents(live, liveTrades(mine, "0x1111111111111111111111111111111111111111"), notes, (id) => desk[id], entries, T + 75_000).length, 1, "only what is newer than the moment asked");
+  for (const e of ev) assert.ok(!e.text.includes("—"));
+});
 
 const A = "0x1111111111111111111111111111111111111111";
 const B = "0x2222222222222222222222222222222222222222";
