@@ -153,9 +153,13 @@ function gatewayModel(gw: GatewayClient, agentId: string, name: string, env: Env
   };
 }
 
-/** PURE: the persona a fast tick thinks through, on a cheaper model, or null when the operator switched it off. */
+/**
+ * PURE: the persona a fast tick thinks through, on a cheaper model, or null when the operator switched it off. The
+ * default is a model that writes without reasoning first: on a desk-sized prompt a reasoning model (DeepSeek V4 flash,
+ * 2026-09-07) spent its whole budget thinking, wrote nothing, and overran the gateway's 90 s on four ticks in six.
+ */
 export function tickChoice(env: Env = process.env): { agentId: string; model: string } | null {
-  const model = (env.OBS_TICK_MODEL ?? "deepseek/deepseek-v4-flash-0731").trim();
+  const model = (env.OBS_TICK_MODEL ?? "google/gemini-2.5-flash").trim();
   if (!model || model.toLowerCase() === "off") return null;
   return { agentId: env.OBS_TICK_AGENT_ID || `${AGENT_ID}-fast`, model };
 }

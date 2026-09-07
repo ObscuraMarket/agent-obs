@@ -5,7 +5,7 @@
 // through Obscura from the desk's own wallet; otherwise it is recorded as a
 // proposal. Meant to run on a timer (launchd, see scripts/). DRY_RUN=1 runs
 // the model call and writes nothing, and never executes.
-import { modelFromEnv, noModelWhy, tickModelFromEnv } from "./model.ts";
+import { modelFromEnv, noModelWhy, tickModelFromEnv, type Model } from "./model.ts";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { AGENT_ID, DRY, dataPath } from "../config.ts";
 import { liveReads, assetPrices, walletBalances } from "../obscura/reads.ts";
@@ -200,9 +200,11 @@ if (last && !DRY && (now - last.at) / 60000 < MIN_GAP_MIN) {
 
 // An entry tick thinks through the fast persona when one is configured: the reads made the call, the write-up is
 // cheap. A held review, an exit and the 30-minute cycle keep the strong one.
+// The main persona stays at hand: a fast persona that cannot answer in time hands the think back rather than blinding the desk.
+let tickFallback: Model | null = null;
 if (fastEntryTick) {
   const tick = await tickModelFromEnv();
-  if (tick) { model = tick; console.log(`[desk] thinking through ${tick.name}`); }
+  if (tick) { tickFallback = model; model = tick; console.log(`[desk] thinking through ${tick.name}`); }
 }
 
 // The world, measured.
@@ -428,7 +430,13 @@ console.log(`[desk] observation (${mark.source}):\n${observation.map((l) => "  -
 
 // The persona thinks.
 const prompt = buildThoughtPrompt(observation, readThoughts(4), recallForPrompt(AGENT_ID, 6, now), new Date(now).toISOString(), ARMED || PAPER, [...railsFromEnv().allowedAssets], VENUE, [...candidates.map((cnd) => `${cnd.symbol}@robinhood`), ...early.filter((e) => e.tradable).map((e) => `${e.symbol}@robinhood`)], PAPER, BASIS_ON);
-const resp = await model.think(prompt);
+let resp = await model.think(prompt);
+if ((resp.error || resp.text == null) && tickFallback) {
+  // The fast persona failed (a slow model, a timeout): the same prompt goes to the main persona, once.
+  console.error(`[desk] ${model.name} could not think (${resp.error ?? "no text"}); thinking again through ${tickFallback.name}`);
+  model = tickFallback;
+  resp = await model.think(prompt);
+}
 if (resp.error || resp.text == null) {
   const why = resp.error ?? "the model returned no text";
   console.error(`[desk] OBS could not think this cycle: ${why}`);

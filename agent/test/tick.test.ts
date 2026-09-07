@@ -15,7 +15,7 @@ test("a fast tick asks the rails before it thinks: a full book, a fresh entry or
 });
 
 test("the fast persona is the desk's sibling on a cheaper model, and off is off", () => {
-  assert.deepEqual(tickChoice({} as NodeJS.ProcessEnv), { agentId: "obs-fast", model: "deepseek/deepseek-v4-flash-0731" });
+  assert.deepEqual(tickChoice({} as NodeJS.ProcessEnv), { agentId: "obs-fast", model: "google/gemini-2.5-flash" });
   assert.deepEqual(tickChoice({ OBS_TICK_MODEL: "google/gemini-3.8-flash", OBS_TICK_AGENT_ID: "obs-quick" } as NodeJS.ProcessEnv), { agentId: "obs-quick", model: "google/gemini-3.8-flash" });
   assert.equal(tickChoice({ OBS_TICK_MODEL: "off" } as NodeJS.ProcessEnv), null);
   assert.equal(tickChoice({ OBS_TICK_MODEL: "  " } as NodeJS.ProcessEnv), null);
