@@ -190,18 +190,19 @@ if (process.env.OBS_TICK === "fast" && !DRY) {
   console.log(`[desk] fast tick: ${probeable ? `${probeable} has an entry (${entryWhy})` : "a launch token is held"}, thinking`);
   fastEntryTick = !!probeable;
 }
-// An entry tick thinks through the fast persona when one is configured: the reads made the call, the write-up is
-// cheap. A held review, an exit and the 30-minute cycle keep the strong one.
-if (fastEntryTick) {
-  const tick = await tickModelFromEnv();
-  if (tick) { model = tick; console.log(`[desk] thinking through ${tick.name}`); }
-}
 
 // Cadence floor, before any model call.
 const last = readThoughts(1)[0];
 if (last && !DRY && (now - last.at) / 60000 < MIN_GAP_MIN) {
   console.log(`Holding: last thought was ${((now - last.at) / 60000).toFixed(0)}m ago, floor is ${MIN_GAP_MIN}m.`);
   process.exit(0);
+}
+
+// An entry tick thinks through the fast persona when one is configured: the reads made the call, the write-up is
+// cheap. A held review, an exit and the 30-minute cycle keep the strong one.
+if (fastEntryTick) {
+  const tick = await tickModelFromEnv();
+  if (tick) { model = tick; console.log(`[desk] thinking through ${tick.name}`); }
 }
 
 // The world, measured.
