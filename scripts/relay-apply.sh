@@ -122,6 +122,10 @@ s = re.sub(r'\n[ \t]*<li><a routerLink="/referral"[^>]*>.*?</a></li>', "", s, co
 s = re.sub(r'\n[ \t]*<a routerLink="/referral"[^>]*>.*?</a>', "", s, count=1, flags=re.S)
 s = s.replace("\n      <!-- Referral routes to the live waitlist page. -->", "", 1)
 # Console first, greyed out: the site's own Soon treatment without is-live is dimmed and takes no click.
+# Idempotent: every Console item already there (a relay before this one, or two of them) is stripped first, so the
+# header carries exactly one whatever main holds when the relay runs.
+s = re.sub(r'\n[ \t]*<li><a [^>]*data-testid="mobile-console"[^>]*>.*?</a></li>', "", s, flags=re.S)
+s = re.sub(r'\n[ \t]*<a [^>]*data-testid="nav-console"[^>]*>.*?</a>', "", s, flags=re.S)
 s = s.replace('      <a routerLink="/app" class="nav-link"', '      <a class="nav-link coming-soon" data-testid="nav-console" aria-disabled="true" title="The OBS console opens soon">\n        <span class="soon-tag">Soon</span>\n        Console\n      </a>\n      <a routerLink="/app" class="nav-link"', 1)
 s = s.replace('          <li><a routerLink="/app" class="nav-menu-link"', '          <li><a class="nav-menu-link coming-soon-mobile" data-testid="mobile-console" aria-disabled="true">\n            <span class="soon-tag-mobile">Soon</span>\n            Console\n          </a></li>\n          <li><a routerLink="/app" class="nav-menu-link"', 1)
 open(p, "w").write(s)
