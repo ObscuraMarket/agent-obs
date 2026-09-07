@@ -1,18 +1,36 @@
-<!-- The OBS console at /console: one surface for talking to your agent and for shaping it, next to the desk's
-     read-only commands and your own wallet's swaps. A line is a message to your agent; a slash line is a command.
-     The desk routes every command; the page streams the chat, signs nothing, and holds no key. -->
+<!-- The OBS console at /console: the path of least resistance. Buttons before commands, one obvious next step in
+     every state, and a menu that explains each command the moment a line starts with "/". A line is a message to
+     your agent; a slash line is a command the desk routes. The page streams the chat, signs nothing, holds no key. -->
 <div class="obs-console" [class.obs-console--split]="view">
   <div class="cli" (click)="focusInput()">
     <div class="cli__bar">
       <span class="cli__dot" [class.on]="agentState === 'ready' || agentState === 'thinking'" [class.warn]="agentState === 'provisioning' || agentState === 'error'" aria-hidden="true"></span>
-      <span class="cli__who">{{ agentName }}</span>
-      <span class="cli__addr">{{ wallet ? short(wallet) : 'Not signed in' }}</span>
-      <span class="cli__pill" [class.on]="agentState === 'ready'" title="Your own agent comes with signing in: nothing to earn first">{{ agentState === 'ready' || agentState === 'thinking' ? 'Your agent is ready' : agentState === 'provisioning' ? 'Setting up your agent…' : agentState === 'error' ? 'Your agent is not reachable' : status === 'signed-in' ? 'Signed in' : 'Guest' }}<ng-container *ngIf="standing?.swaps"> · {{ standing?.swaps }} swap{{ standing?.swaps === 1 ? '' : 's' }}</ng-container></span>
+      <span class="cli__who">OBS Console</span>
+      <span class="cli__status">{{ statusLine }}<ng-container *ngIf="wallet"> · {{ short(wallet) }}</ng-container></span>
       <button type="button" class="cli__signin" (click)="onSignInClick($event)" [disabled]="status === 'signing'">{{ status === 'signed-in' ? 'Signed in' : status === 'signing' ? 'Signing…' : 'Sign in with wallet' }}</button>
-      <a class="cli__link" href="/agent">The desk</a>
     </div>
 
     <div class="cli__scroll" #screen aria-live="polite">
+      <!-- The first screen: three things worth doing, each one tap. It steps aside as soon as anything runs. -->
+      <div class="cli__welcome" *ngIf="!started">
+        <h2 class="cli__title">What would you like to do?</h2>
+        <div class="cli__cards">
+          <button type="button" class="cli__card" (click)="runLine('/status')" [disabled]="busy">
+            <span class="cli__card-title">See what the desk is doing</span>
+            <span class="cli__card-text">Agent OBS trades in public. See what it holds right now, and why.</span>
+          </button>
+          <button type="button" class="cli__card" (click)="runLine('/trade')" [disabled]="busy">
+            <span class="cli__card-title">Trade</span>
+            <span class="cli__card-text">Swap through Obscura's routes. Rewards, Cards, Referral and Yield are one tap below.</span>
+          </button>
+          <button type="button" class="cli__card" (click)="runLine('/connect')" [disabled]="busy || status === 'signing'">
+            <span class="cli__card-title">{{ status === 'signed-in' ? 'Meet your agent' : 'Get your own agent' }}</span>
+            <span class="cli__card-text">Sign in with your wallet and get an agent that reads the desk and talks with you. It's free.</span>
+          </button>
+        </div>
+        <p class="cli__welcome-note">Or type a question below. Type / to see every command, explained.</p>
+      </div>
+
       <ng-container *ngFor="let g of groups; let i = index; let last = last">
         <p class="cli__cmd" *ngIf="g.kind === 'command'"><span class="cli__cmd-mark" aria-hidden="true">›</span>{{ g.lines[0].text }}</p>
         <div class="cli__row cli__row--me" *ngIf="g.kind === 'input'"><div class="cli__bubble cli__bubble--me">{{ g.lines[0].text }}</div></div>
@@ -22,35 +40,50 @@
         <div *ngIf="g.kind === 'system'">
           <p class="cli__note">{{ joined(g) }}</p>
           <div class="cli__suggest" *ngIf="suggestOf(g).length">
-            <button type="button" *ngFor="let one of suggestOf(g)" class="cli__chip" [class.cli__chip--cmd]="one.startsWith('/')" (click)="runLine(one)" [disabled]="busy || agentState === 'thinking'">{{ one }}</button>
+            <button type="button" *ngFor="let one of suggestOf(g)" class="cli__chip" [class.cli__chip--cmd]="one.startsWith('/')" (click)="runLine(one)" [disabled]="busy || agentState === 'thinking'" [title]="one">{{ chipLabel(one) }}</button>
           </div>
         </div>
         <div *ngIf="g.kind === 'output' || g.kind === 'error'">
           <pre class="cli__out" [class.cli__out--error]="g.kind === 'error'">{{ joinedLines(g) }}</pre>
           <div class="cli__suggest" *ngIf="suggestOf(g).length">
-            <button type="button" *ngFor="let one of suggestOf(g)" class="cli__chip" [class.cli__chip--cmd]="one.startsWith('/')" (click)="runLine(one)" [disabled]="busy || agentState === 'thinking'">{{ one }}</button>
+            <button type="button" *ngFor="let one of suggestOf(g)" class="cli__chip" [class.cli__chip--cmd]="one.startsWith('/')" (click)="runLine(one)" [disabled]="busy || agentState === 'thinking'" [title]="one">{{ chipLabel(one) }}</button>
           </div>
         </div>
       </ng-container>
       <pre class="cli__out cli__out--error" *ngIf="agentError">{{ agentError }}</pre>
     </div>
 
+    <!-- The command menu: what "/" can do, each in a few words. Arrow keys move, Enter picks, Escape closes. -->
+    <div class="cli__menu" *ngIf="menu.length" role="listbox" aria-label="Commands">
+      <button type="button" *ngFor="let m of menu; let i = index" class="cli__menu-item" [class.cli__menu-item--on]="i === menuAt" role="option" [attr.aria-selected]="i === menuAt" (mousedown)="$event.preventDefault()" (click)="pickMenu(m)">
+        <span class="cli__menu-cmd">/{{ m.cmd }}</span>
+        <span class="cli__menu-what">{{ m.what }}</span>
+        <span class="cli__menu-usage" *ngIf="m.usage">{{ m.usage }}</span>
+      </button>
+    </div>
+
     <div class="cli__hint" *ngIf="hint.length">
       <button type="button" *ngFor="let h of hint" class="cli__hint-item" (click)="pickHint(h)">{{ h }}</button>
     </div>
 
+    <!-- The whole app and the desk, always one tap away, in plain words. -->
+    <div class="cli__quick" aria-label="Quick actions">
+      <button type="button" *ngFor="let q of quick" class="cli__quick-btn" [class.cli__quick-btn--on]="view && q.line === '/' + view" (click)="runLine(q.line)" [disabled]="busy">{{ q.label }}</button>
+    </div>
+
     <form class="cli__input-row" (submit)="submit($event)">
       <span class="cli__prompt" aria-hidden="true">&gt;</span>
-      <input #cmd class="cli__input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" [placeholder]="placeholder" (keydown)="onKey($event)" (input)="hint = []" [disabled]="agentState === 'provisioning'" aria-label="OBS console input">
+      <input #cmd class="cli__input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" [placeholder]="placeholder" (keydown)="onKey($event)" (input)="onInput()" [disabled]="agentState === 'provisioning'" aria-label="OBS console input">
+      <button type="submit" class="cli__send" [disabled]="busy" aria-label="Send">Send</button>
     </form>
   </div>
 
-  <!-- One of the site's own pages, opened by a view command (/trade, /rewards, /cards, /referral, /yield) beside the
-       console; the site's module supplies the component, this page only hosts it. -->
-  <section class="cli__view" [class.cli__view--open]="view" [attr.aria-label]="view ? view + ' view' : null">
+  <!-- One of the site's own pages, opened by a button or a view command beside the console; the site's module
+       supplies the component, this page only hosts it. -->
+  <section class="cli__view" [class.cli__view--open]="view" [attr.aria-label]="view ? viewLabel + ' page' : null">
     <div class="cli__view-bar">
-      <span class="cli__view-title">/{{ view }}</span>
-      <button type="button" class="cli__chip cli__chip--cmd" (click)="runLine('/close')" [disabled]="busy">/close</button>
+      <span class="cli__view-title">{{ viewLabel }}</span>
+      <button type="button" class="cli__chip" (click)="runLine('/close')" [disabled]="busy">Close</button>
     </div>
     <div class="cli__view-body"><ng-container #viewHost></ng-container></div>
   </section>

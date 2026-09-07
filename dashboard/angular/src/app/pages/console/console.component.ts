@@ -8,9 +8,43 @@ interface Group { kind: LineKind; lines: CliLine[]; }
 type Status = 'guest' | 'connected' | 'signing' | 'signed-in';
 type AgentState = 'idle' | 'provisioning' | 'ready' | 'thinking' | 'error';
 
-/** Completion vocabulary, kept in step with the desk's router. */
-const COMMANDS = ['help', 'explore', 'clear', 'whoami', 'name', 'style', 'voice', 'goal', 'reset', 'swaps', 'connect', 'balance', 'quote', 'swap', 'trade', 'rewards', 'cards', 'referral', 'yield', 'close', 'status', 'positions', 'thoughts', 'research', 'watch', 'reads'];
+/** Every command the page knows, in plain words, for the menu that opens on "/": kept in step with the desk's router. */
+interface CommandHelp { cmd: string; what: string; usage?: string; args?: boolean; }
+const COMMAND_HELP: CommandHelp[] = [
+  { cmd: 'status', what: 'What the desk is doing right now' },
+  { cmd: 'trade', what: 'Open Trade beside the console' },
+  { cmd: 'rewards', what: 'Open Rewards: your cashback in tokenized stocks' },
+  { cmd: 'cards', what: 'Open Cards' },
+  { cmd: 'referral', what: 'Open the referral waitlist' },
+  { cmd: 'yield', what: 'Open Yield (coming soon)' },
+  { cmd: 'connect', what: 'Sign in with your wallet' },
+  { cmd: 'help', what: 'Every command, explained' },
+  { cmd: 'explore', what: 'A short tour, one step at a time' },
+  { cmd: 'positions', what: 'What the desk holds' },
+  { cmd: 'thoughts', what: 'The desk\'s latest thinking', usage: '/thoughts 3', args: true },
+  { cmd: 'research', what: 'What the desk read between cycles', usage: '/research 5', args: true },
+  { cmd: 'watch', what: 'The live watch: what it follows right now' },
+  { cmd: 'reads', what: 'Prices and the token' },
+  { cmd: 'quote', what: 'What the pools pay for a swap', usage: '/quote 0.05 ETH USDG', args: true },
+  { cmd: 'swap', what: 'Swap from your own wallet', usage: '/swap 0.05 ETH USDG', args: true },
+  { cmd: 'balance', what: 'The ETH in your wallet' },
+  { cmd: 'swaps', what: 'Your swaps through the console' },
+  { cmd: 'whoami', what: 'How your agent is set up' },
+  { cmd: 'name', what: 'Give your agent a name', usage: '/name Ledger', args: true },
+  { cmd: 'style', what: 'How much it says: concise, balanced or deep', usage: '/style concise', args: true },
+  { cmd: 'voice', what: 'How it should sound', usage: '/voice dry and skeptical', args: true },
+  { cmd: 'goal', what: 'What you want it working toward', usage: '/goal find me survivors', args: true },
+  { cmd: 'reset', what: 'Put a setting back to the default', usage: '/reset name', args: true },
+  { cmd: 'close', what: 'Put the open page away' },
+  { cmd: 'clear', what: 'Clear the screen' },
+];
+const COMMANDS = COMMAND_HELP.map((c) => c.cmd);
 const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['name', 'goal', 'voice', 'style'], help: ['all'] };
+/** The buttons that stay under the transcript: the whole app and the desk, in plain words, no command to learn. */
+const QUICK: Array<{ label: string; line: string }> = [
+  { label: 'Status', line: '/status' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
+  { label: 'Referral', line: '/referral' }, { label: 'Yield', line: '/yield' }, { label: 'Help', line: '/help' },
+];
 const SESSION_KEY = 'obs-console-session';
 
 /**
@@ -41,6 +75,12 @@ export class ConsoleComponent implements AfterViewInit {
   busy = false;
   /** The site page open beside the console (trade, rewards, cards, referral, yield), or none. */
   view: string | null = null;
+  /** False until the first line runs: the welcome card shows in its place. */
+  started = false;
+  /** The command menu that opens as soon as a line starts with "/". */
+  menu: CommandHelp[] = [];
+  menuAt = 0;
+  readonly quick = QUICK;
 
   private history: string[] = [];
   private histAt = -1;
@@ -56,7 +96,6 @@ export class ConsoleComponent implements AfterViewInit {
   }
 
   ngAfterViewInit(): void {
-    this.print([{ kind: 'system', text: 'Welcome to the OBS console. Ask the desk what it\'s doing, open any page of the app from here, or sign in with your wallet to get an agent of your own.', suggest: ['/status', '/connect', '/explore'] }]);
     if (this.siteWallet) { this.watchSiteWallet(); } else { void this.silentReconnect(); }
     setTimeout(() => this.focusInput(), 0);
   }
@@ -78,13 +117,27 @@ export class ConsoleComponent implements AfterViewInit {
     if (this.agentState === 'thinking') { return this.agentName + ' is thinking…'; }
     if (this.agentState === 'ready') { return 'Ask ' + this.agentName + ' anything, or type / for commands'; }
     if (this.agentState === 'provisioning') { return 'Setting up your agent…'; }
-    if (this.status === 'signed-in') { return 'Type / for commands'; }
-    return 'Try /status, or /connect to sign in with your wallet';
+    return 'Ask a question, or type / for commands';
   }
 
   joined(g: Group): string { return g.lines.map((l) => l.text).join(' '); }
   joinedLines(g: Group): string { return g.lines.map((l) => l.text).join('\n'); }
   suggestOf(g: Group): string[] { return g.lines[g.lines.length - 1]?.suggest ?? []; }
+  /** A one-tap chip reads as words, not a command: "/trade" is "Trade", "/quote 0.05 ETH USDG" stays as it is. */
+  chipLabel(one: string): string {
+    const m = /^\/([a-z]+)$/.exec(one);
+    const h = m ? COMMAND_HELP.find((c) => c.cmd === m[1]) : null;
+    return h ? h.cmd.charAt(0).toUpperCase() + h.cmd.slice(1) : one;
+  }
+  get viewLabel(): string { return this.view ? this.view.charAt(0).toUpperCase() + this.view.slice(1) : ''; }
+  get statusLine(): string {
+    if (this.agentState === 'ready' || this.agentState === 'thinking') { return this.agentName + ' is ready'; }
+    if (this.agentState === 'provisioning') { return 'Setting up your agent…'; }
+    if (this.agentState === 'error') { return 'Your agent is not reachable'; }
+    if (this.status === 'signed-in') { return 'Signed in'; }
+    if (this.wallet) { return 'Wallet connected, not signed in'; }
+    return 'Not signed in';
+  }
   short(address: string): string { return address.slice(0, 6) + '…' + address.slice(-4); }
 
   focusInput(): void {
@@ -116,9 +169,35 @@ export class ConsoleComponent implements AfterViewInit {
     void this.runLine(line);
   }
 
+  /** As a line is typed: a "/" opens the menu of commands, each explained, so nothing has to be remembered. */
+  onInput(): void {
+    const el = this.cmd?.nativeElement;
+    this.hint = [];
+    const v = el?.value ?? '';
+    if (!v.startsWith('/') || /\s/.test(v)) { this.menu = []; return; }
+    const stem = v.slice(1).toLowerCase();
+    this.menu = COMMAND_HELP.filter((c) => c.cmd.startsWith(stem)).slice(0, 8);
+    this.menuAt = 0;
+  }
+
+  /** A menu item chosen: a command that needs no words runs at once; one that does is filled in, ready for them. */
+  pickMenu(item: CommandHelp): void {
+    const el = this.cmd?.nativeElement;
+    this.menu = [];
+    if (item.args) { if (el) { el.value = '/' + item.cmd + ' '; el.focus(); } return; }
+    if (el) { el.value = ''; }
+    void this.runLine('/' + item.cmd);
+  }
+
   onKey(ev: KeyboardEvent): void {
     const el = this.cmd?.nativeElement;
     if (!el) { return; }
+    if (this.menu.length) {
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); this.menuAt = (this.menuAt + 1) % this.menu.length; return; }
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); this.menuAt = (this.menuAt - 1 + this.menu.length) % this.menu.length; return; }
+      if (ev.key === 'Enter' || ev.key === 'Tab') { ev.preventDefault(); this.pickMenu(this.menu[this.menuAt]); return; }
+      if (ev.key === 'Escape') { ev.preventDefault(); this.menu = []; return; }
+    }
     if (ev.key === 'Tab') { ev.preventDefault(); const c = this.complete(el.value); el.value = c.value; this.hint = c.options; return; }
     if (ev.key === 'l' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); this.lines = []; return; }
     if (ev.key === 'Escape' && this.view) { ev.preventDefault(); void this.runLine('/close'); return; }
@@ -186,6 +265,8 @@ export class ConsoleComponent implements AfterViewInit {
   async runLine(raw: string): Promise<void> {
     const line = raw.trim();
     if (!line || this.busy) { return; }
+    this.started = true;
+    this.menu = [];
     if (this.history[this.history.length - 1] !== line) { this.history.push(line); }
     this.histAt = -1;
     this.print([{ kind: 'input', text: line }]);
