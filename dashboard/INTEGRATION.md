@@ -447,32 +447,34 @@ new one as a `research` event and the `hello` frame carries the last forty
 as `research`; the reference page merges them into the terminal's timeline
 between the cycles.
 
-### The swap console: `GET /api/obs/console/quote`, `GET /api/obs/console/eligible`, `POST /api/obs/console/swap`
+### The swap console: `GET /api/obs/console/quote`, `GET /api/obs/console/swaps`, `POST /api/obs/console/swap`
 
-A person swaps from their own wallet on the page; three verified swaps
-(`OBS_CONSOLE_SWAPS_REQUIRED`) make their address eligible to run their own
-agent. The desk quotes, builds, verifies and counts. It never holds a key of
-theirs and never sends for them; the swap pays its output to their address
-inside the same transaction.
+A person swaps from their own wallet on the page. The desk quotes, builds,
+verifies and keeps the record, and shows that record back; nothing is gated
+on it (the three-swap bar for a personal agent was removed on September 7).
+It never holds a key of theirs and never sends for them; the swap pays its
+output to their address inside the same transaction.
 
 - `GET /api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...`:
   `{ from, to, amountIn, pool: { amountOut, minOut, costPct, feePct, route[],
   priceInUsd, priceOutUsd }, relay: { amountOut, feeUsd, error } | null,
-  steps: [{ id, to, data, value, chainId, note }], deadline, required }`.
+  steps: [{ id, to, data, value, chainId, note }], deadline }`.
   `pool` is the desk's own router through the pools on Robinhood Chain;
   `relay` is the app's Private route for the same pair, for comparison, only
   for ETH and USDG. `steps` are the transactions the wallet signs in order:
   `approve-token` and `approve-permit2` once for a token input, then `swap`
   (`value` is wei as a decimal string; `chainId` is 4663). A pair the desk
   cannot route answers 400 with `error`. Never cached.
-- `GET /api/obs/console/eligible?address=0x...`: `{ address, swaps, required,
-  eligible, recent: [{ at, txHash, from, to, amountIn, amountOut }] }`.
+- `GET /api/obs/console/swaps?address=0x...`: `{ address, swaps, recent: [{ at,
+  txHash, from, to, amountIn, amountOut }] }`, the wallet's swaps through the
+  console, newest first. `/api/obs/console/eligible` answers the same for
+  pages not yet redeployed.
 - `POST /api/obs/console/swap` with `{ address, txHash, from, to, amountIn }`:
   the page reports the swap it sent. The desk waits for the receipt, checks
   that the transaction came from `address`, went to the swap router and
   succeeded (and for ETH in, carried the ETH reported), reads what arrived
-  from the receipt, and counts it once. `200 { ok: true, already, swap,
-  eligibility }` or `409 { ok: false, reason }`. This is the one write on the
+  from the receipt, and records it once. `200 { ok: true, already, swap,
+  standing }` or `409 { ok: false, reason }`. This is the one write on the
   API, and it writes only what the chain confirms.
 
 ### The console: `POST /api/obs/account/challenge`, `POST /api/obs/account/link`, `POST /api/obs/console/cli`, `/api/obs/my-agent/*`
@@ -485,7 +487,7 @@ line is a command. The wallet is the account.
 - `POST /api/obs/account/challenge` `{ address }` answers `{ message, nonce }`;
   the wallet signs the message (`personal_sign`), and
   `POST /api/obs/account/link` `{ address, nonce, signature }` answers
-  `{ session: { token, address, expiresAt }, eligibility }`. The bearer is
+  `{ session: { token, address, expiresAt }, standing }`. The bearer is
   good for a week and proves control only; it authorizes no transaction.
 - `POST /api/obs/console/cli` `{ line }` (bearer optional): the desk routes
   the line and answers `{ ok, lines[], effect, suggest[] }`. `effect` is
@@ -498,12 +500,11 @@ line is a command. The wallet is the account.
   `CONSOLE_VIEWS` in `obs-desk.service.ts`, which the relay wires up). Those
   five left the header on September 7: it lists Console, Agent, Docs and
   Roadmap, and the pages keep their routes for deep links.
-  A guest may read the desk, take the tour and quote; shaping the
-  agent, standing and chat need the bearer. `suggest` entries are literal
-  lines to submit, rendered as one-tap chips.
+  A guest may read the desk, take the tour, open the app's pages and quote;
+  shaping the agent, `/swaps` and chat need the bearer. `suggest` entries are
+  literal lines to submit, rendered as one-tap chips.
 - `POST /api/obs/my-agent/ensure` (bearer): provisions the wallet's own agent
-  once the wallet is eligible (`OBS_CONSOLE_SWAPS_REQUIRED` verified swaps),
-  else `403 { code: "not_eligible", eligibility }`.
+  on first sign-in and keeps it configured after; there is no bar to clear.
   `GET /api/obs/my-agent/history` returns prior turns;
   `GET|POST /api/obs/my-agent/settings` reads and sets `name`, `style`,
   `voice`, `goal`; `POST /api/obs/my-agent/stream` `{ text }` streams the

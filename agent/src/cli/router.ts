@@ -14,11 +14,11 @@ export type ConsoleView = "trade" | "rewards" | "cards" | "referral" | "yield";
 export const VIEWS: ConsoleView[] = ["trade", "rewards", "cards", "referral", "yield"];
 const VIEW_ALIAS: Record<string, ConsoleView> = { app: "trade", exchange: "trade", reward: "rewards", card: "cards", refer: "referral", referrals: "referral" };
 const VIEW_LINE: Record<ConsoleView, string> = {
-  trade: "trade: Obscura's swap, beside the console. the same routes and the same privacy as the Trade page had; /close puts it away.",
-  rewards: "rewards: your cashback in tokenized stocks, beside the console. /close puts it away.",
-  cards: "cards: the Obscura card, beside the console. /close puts it away.",
-  referral: "referral: the referral waitlist, beside the console. /close puts it away.",
-  yield: "yield is coming soon. its waitlist is open beside the console; /close puts it away.",
+  trade: "Trade is open beside the console: swap through Obscura's routes, with the same privacy as the Trade page. /close puts it away.",
+  rewards: "Rewards is open beside the console: your cashback in tokenized stocks. /close puts it away.",
+  cards: "Cards is open beside the console: the Obscura card. /close puts it away.",
+  referral: "Referral is open beside the console: the referral waitlist. /close puts it away.",
+  yield: "Yield is coming soon, and its waitlist is open beside the console. /close puts it away.",
 };
 
 export type ConsoleEffect =
@@ -26,7 +26,7 @@ export type ConsoleEffect =
   | { kind: "clear" }
   | { kind: "chat"; text: string }
   | { kind: "desk"; command: DeskCommand; n?: number }
-  | { kind: "read"; what: "whoami" | "eligible" }
+  | { kind: "read"; what: "whoami" | "swaps" }
   | { kind: "settings"; patch: Record<string, unknown> }
   /** Client-side: the wallet does these. The route only echoes them back. */
   | { kind: "wallet"; action: "connect" | "balance" }
@@ -44,9 +44,10 @@ export interface ConsoleResult {
 
 export interface ConsoleContext {
   settings: UserSettings;
-  eligible: boolean;
+  /** Whether a wallet is signed in: the suggestions point at /connect until it is. */
+  signedIn: boolean;
+  /** Swaps this wallet has made through the console; shown, never a gate. */
   swaps: number;
-  required: number;
 }
 
 const ok = (lines: string[], effect: ConsoleEffect = { kind: "none" }, suggest?: string[]): ConsoleResult => (suggest?.length ? { lines, effect, suggest } : { lines, effect });
@@ -56,58 +57,58 @@ const DESK: DeskCommand[] = ["status", "positions", "thoughts", "research", "wat
 const DESK_ALIAS: Record<string, DeskCommand> = { book: "positions", thought: "thoughts", log: "research", live: "watch", read: "reads" };
 
 export const HELP = [
-  "type a message to talk to your agent. commands start with a slash.",
+  "Type a message to talk to your agent, or start a line with / for a command.",
   "",
-  "  /explore           a short guided tour, one thing at a time",
-  "  /status            what the desk is doing right now",
-  "  /trade /rewards /cards /referral /yield   the app, one view each, beside the console",
-  "  /swap 0.05 ETH USDG   a swap from your own wallet, through the pools",
-  "  /eligible          your swaps against the bar that unlocks your agent",
+  "  /explore           A short tour, one step at a time",
+  "  /status            What the desk is doing right now",
+  "  /trade /rewards /cards /referral /yield   Open a page of the app beside the console",
+  "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
+  "  /connect           Sign in with your wallet and meet your own agent",
   "",
-  "  /help all          every command",
+  "  /help all          Every command",
 ];
 
 export const HELP_ALL = [
-  "every command. anything without a slash is a message to your agent.",
+  "Every command. Anything without a slash is a message to your agent.",
   "",
-  "  your agent",
-  "    /whoami            how it is set right now",
-  "    /name <name>       rename it",
-  "    /style <style>     concise | balanced | deep",
-  "    /voice <text>      how it should sound: dry, warm, blunt, your call",
-  "    /goal <text>       what you want it working toward",
-  "    /reset <field>     clear one setting back to default",
+  "  Your agent",
+  "    /whoami            How it's set up right now",
+  "    /name <name>       Give it a name",
+  "    /style <style>     concise, balanced or deep",
+  "    /voice <text>      How it should sound: dry, warm, blunt, your call",
+  "    /goal <text>       What you want it working toward",
+  "    /reset <field>     Put one setting back to the default",
   "",
-  "  the app (opened beside the console; /close puts it away)",
-  "    /trade             swap through Obscura's routes",
-  "    /rewards           your cashback in tokenized stocks",
-  "    /cards             the Obscura card",
-  "    /referral          the referral waitlist",
-  "    /yield             coming soon; its waitlist",
+  "  The app (opens beside the console; /close puts it away)",
+  "    /trade             Swap through Obscura's routes",
+  "    /rewards           Your cashback in tokenized stocks",
+  "    /cards             The Obscura card",
+  "    /referral          The referral waitlist",
+  "    /yield             Coming soon, with its waitlist",
   "",
-  "  the desk (live, read only)",
+  "  The desk (live, read only)",
   "    /status /positions /thoughts [n] /research [n] /watch /reads",
   "",
-  "  your wallet",
-  "    /connect           your wallet, on Robinhood Chain",
-  "    /balance           ETH in it",
-  "    /quote 0.05 ETH USDG   what the pools pay, the app's Relay route beside it",
-  "    /swap 0.05 ETH USDG    the same, signed by your wallet, paid to your address",
-  "    /eligible          verified swaps against the bar",
+  "  Your wallet",
+  "    /connect           Sign in with your wallet, on Robinhood Chain",
+  "    /balance           The ETH in it",
+  "    /quote 0.05 ETH USDG   What the pools pay, with the app's Relay route beside it",
+  "    /swap 0.05 ETH USDG    The same swap, signed by your wallet and paid to your address",
+  "    /swaps             The swaps you've made through the console",
   "",
-  "  session",
+  "  Session",
   "    /explore /clear /help",
   "",
-  "  talking to your agent is free. so is every command.",
+  "  Talking to your agent is free, and so is every command.",
 ];
 
-/** The tour: what this is, is it telling the truth, can you check it, then the parts that need a wallet. */
+/** The tour: what this is, whether to take its word, how to check, then the parts that need a wallet. */
 export const TOUR: Array<{ title: string; lines: string[]; tryIt: string }> = [
-  { title: "this is a live desk", lines: ["Agent OBS trades from its own wallet on Robinhood Chain and reasons in public.", "every cycle it records what it read, what it thought and what it decided."], tryIt: "/status" },
-  { title: "read it rather than trust it", lines: ["every figure on the page traces to a read the desk made. the thoughts are its own words;", "the research log is what it read between cycles."], tryIt: "/thoughts 2" },
-  { title: "quote through the pools", lines: ["the desk's router quotes the pools directly, where every swap on this chain settles.", "the app's Relay route is shown beside it, so you can see the spread."], tryIt: "/quote 0.05 ETH USDG" },
-  { title: "swap from your own wallet", lines: ["your wallet signs, the swap pays your address in the same transaction, and the desk", "reads it off the chain. three verified swaps make your wallet eligible for its own agent."], tryIt: "/swap 0.05 ETH USDG" },
-  { title: "your agent is yours", lines: ["once eligible, an agent is provisioned to your wallet with its own memory. it reads the", "desk, remembers this conversation, and you can shape how it works."], tryIt: "/whoami" },
+  { title: "This is a live desk", lines: ["Agent OBS trades from its own wallet on Robinhood Chain and thinks out loud.", "Every cycle it records what it read, what it made of it, and what it decided."], tryIt: "/status" },
+  { title: "Read it, don't take its word", lines: ["Every number on the page comes from a read the desk made. The thoughts are its own words;", "the research log is what it read between cycles."], tryIt: "/thoughts 2" },
+  { title: "Quote through the pools", lines: ["The desk quotes the pools directly, where every swap on this chain settles, and shows", "the app's Relay route beside it, so you can see the spread for yourself."], tryIt: "/quote 0.05 ETH USDG" },
+  { title: "Swap from your own wallet", lines: ["Your wallet signs, the swap pays your address in the same transaction, and the desk", "reads it off the chain. Nothing is ever held for you."], tryIt: "/swap 0.05 ETH USDG" },
+  { title: "An agent of your own", lines: ["Sign in with your wallet and you get your own agent. It reads the desk, remembers your", "conversation, and you can name it and shape how it talks."], tryIt: "/connect" },
 ];
 
 const list = (xs: readonly string[]) => xs.join(" | ");
@@ -125,11 +126,11 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
 
   switch (cmd) {
     case "":
-      return err(["type /help to see what you can do."], ["/help"]);
+      return err(["Type /help to see what you can do."], ["/help"]);
     case "help":
     case "?":
       if (arg.toLowerCase() === "all") return ok(HELP_ALL);
-      return ok(HELP, { kind: "none" }, ["/explore", "/status", ctx.eligible ? "/whoami" : "/eligible"]);
+      return ok(HELP, { kind: "none" }, ["/explore", "/status", ctx.signedIn ? "/whoami" : "/connect"]);
     case "clear":
       return ok([], { kind: "clear" });
     case "explore":
@@ -137,14 +138,15 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       const step = Math.max(1, Math.min(TOUR.length, parseInt(arg, 10) || 1));
       const t = TOUR[step - 1];
       const last = step >= TOUR.length;
-      return ok([`(${step}/${TOUR.length}) ${t.title}`, ``, ...t.lines, ...(last ? [``, `that is the tour. /help has the full list whenever you want it.`] : [])], { kind: "none" }, last ? [t.tryIt] : [t.tryIt, `/explore ${step + 1}`]);
+      return ok([`(${step}/${TOUR.length}) ${t.title}`, ``, ...t.lines, ...(last ? [``, `That's the tour. /help has the full list whenever you want it.`] : [])], { kind: "none" }, last ? [t.tryIt] : [t.tryIt, `/explore ${step + 1}`]);
     }
     case "whoami":
     case "settings":
       return ok([], { kind: "read", what: "whoami" });
+    case "swaps":
     case "eligible":
     case "progress":
-      return ok([], { kind: "read", what: "eligible" });
+      return ok([], { kind: "read", what: "swaps" });
     case "connect":
     case "balance":
       return ok([], { kind: "wallet", action: cmd });
@@ -152,33 +154,33 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
     case "swap": {
       const m = arg.match(/^([\d,]*\d(?:\.\d+)?)\s+([A-Za-z0-9]+)\s*(?:->|to|for)?\s+([A-Za-z0-9]+)$/i);
       const amount = m ? Number(m[1].replace(/,/g, "")) : NaN;
-      if (!m || !(amount > 0)) return err([`usage: /${cmd} <amount> <FROM> <TO>`, `  eg  /${cmd} 0.05 ETH USDG`], [`/${cmd} 0.05 ETH USDG`]);
+      if (!m || !(amount > 0)) return err([`Say how much and which pair: /${cmd} <amount> <FROM> <TO>`, `  For example: /${cmd} 0.05 ETH USDG`], [`/${cmd} 0.05 ETH USDG`]);
       return ok([], { kind: "wallet", action: cmd, amount, from: m[2].toUpperCase(), to: m[3].toUpperCase() });
     }
     case "name":
-      if (!arg) return err(["usage: /name <name>", `currently: ${s.name ?? `${DEFAULT_NAME} (default)`}`]);
+      if (!arg) return err(["What should it be called? /name <name>", `Right now: ${s.name ?? `${DEFAULT_NAME} (the default)`}`]);
       return ok([], { kind: "settings", patch: { name: arg } });
     case "style": {
       const v = arg.toLowerCase();
-      if (!v) return err([`usage: /style <${list(STYLES)}>`, `currently: ${s.style ?? "balanced (default)"}`]);
-      if (!STYLES.includes(v as never)) return err([`"${arg}" is not a style. pick one of: ${list(STYLES)}`], STYLES.map((x) => `/style ${x}`));
+      if (!v) return err([`Pick a style: /style ${list(STYLES)}`, `Right now: ${s.style ?? "balanced (the default)"}`]);
+      if (!STYLES.includes(v as never)) return err([`"${arg}" isn't a style. Pick one of ${list(STYLES)}.`], STYLES.map((x) => `/style ${x}`));
       return ok([], { kind: "settings", patch: { style: v } });
     }
     case "voice":
-      if (!arg) return err(["usage: /voice <how it should sound>", `currently: ${s.voice ?? "not set"}`, `  eg  /voice dry and skeptical, never enthusiastic`]);
+      if (!arg) return err(["Tell it how to sound: /voice <a few words>", `Right now: ${s.voice ?? "not set"}`, `  For example: /voice dry and skeptical, never enthusiastic`]);
       return ok([], { kind: "settings", patch: { voice: arg } });
     case "goal":
-      if (!arg) return err(["usage: /goal <what you want it working toward>", `currently: ${s.goal ?? "not set"}`]);
+      if (!arg) return err(["Tell it what you're working toward: /goal <a sentence>", `Right now: ${s.goal ?? "not set"}`]);
       return ok([], { kind: "settings", patch: { goal: arg } });
     case "reset": {
       const f = arg.toLowerCase();
       const fields: Record<string, Record<string, unknown>> = { name: { name: "" }, goal: { goal: "" }, voice: { voice: "" }, style: { style: "balanced" } };
-      if (!f || !(f in fields)) return err([`usage: /reset <${Object.keys(fields).join(" | ")}>`]);
+      if (!f || !(f in fields)) return err([`Put a setting back to the default: /reset ${Object.keys(fields).join(", /reset ")}`]);
       return ok([], { kind: "settings", patch: fields[f] });
     }
     case "close":
     case "back":
-      return ok(["closed."], { kind: "view", view: null }, ["/trade", "/help"]);
+      return ok(["Closed."], { kind: "view", view: null }, ["/trade", "/help"]);
     default: {
       const view = VIEWS.includes(cmd as ConsoleView) ? (cmd as ConsoleView) : VIEW_ALIAS[cmd];
       if (view) return ok([VIEW_LINE[view]], { kind: "view", view }, [...VIEWS.filter((v) => v !== view).slice(0, 2).map((v) => `/${v}`), "/close"]);
@@ -188,12 +190,12 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
         return ok([], { kind: "desk", command: desk, ...(n != null ? { n } : {}) });
       }
       const near = suggest(cmd);
-      return err(near.length ? [`"/${cmd}" is not a command. did you mean ${near[0]}?`] : [`"/${cmd}" is not a command. /help lists them.`], near.length ? near : ["/help"]);
+      return err(near.length ? [`"/${cmd}" isn't a command. Did you mean ${near[0]}?`] : [`"/${cmd}" isn't a command. /help lists them.`], near.length ? near : ["/help"]);
     }
   }
 }
 
-export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "eligible", "connect", "balance", "quote", "swap", ...VIEWS, "close", ...DESK];
+export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "swaps", "connect", "balance", "quote", "swap", ...VIEWS, "close", ...DESK];
 
 /** PURE: one near miss for a typo, by edit distance, only when it is actually close. */
 export function suggest(cmd: string): string[] {

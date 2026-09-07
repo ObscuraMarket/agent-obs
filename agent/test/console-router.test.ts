@@ -2,10 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { routeConsole, suggest, HELP_ALL, TOUR, VOCAB, VIEWS } from "../src/cli/router.ts";
 import { sanitizeSettings, sanitizeName, getSettings, describeSettings } from "../src/desk/userSettings.ts";
-import { statusLines, positionsLines, thoughtsLines, eligibleLines } from "../src/desk/deskConsole.ts";
+import { statusLines, positionsLines, thoughtsLines, swapsLines } from "../src/desk/deskConsole.ts";
 import { personaFor, agentIdForWallet, deEmDash, isMissingSession } from "../src/desk/userAgents.ts";
 
-const ctx = { settings: {}, eligible: false, swaps: 1, required: 3 };
+const ctx = { settings: {}, signedIn: false, swaps: 1 };
 
 test("a line without a slash is a message to the agent; a slash is a command; a typo is one tap from fixed", () => {
   assert.deepEqual(routeConsole("what are you holding", ctx), { lines: [], effect: { kind: "chat", text: "what are you holding" } });
@@ -17,7 +17,8 @@ test("a line without a slash is a message to the agent; a slash is a command; a 
   assert.equal(routeConsole("/swap ETH USDG", ctx).error, true);
   assert.deepEqual(routeConsole("/connect", ctx).effect, { kind: "wallet", action: "connect" });
   assert.deepEqual(routeConsole("/whoami", ctx).effect, { kind: "read", what: "whoami" });
-  assert.deepEqual(routeConsole("/eligible", ctx).effect, { kind: "read", what: "eligible" });
+  assert.deepEqual(routeConsole("/swaps", ctx).effect, { kind: "read", what: "swaps" });
+  assert.deepEqual(routeConsole("/eligible", ctx).effect, { kind: "read", what: "swaps" }, "the old word still lands");
   assert.deepEqual(routeConsole("/clear", ctx).effect, { kind: "clear" });
   assert.deepEqual(routeConsole("/name Ledger", ctx).effect, { kind: "settings", patch: { name: "Ledger" } });
   assert.deepEqual(routeConsole("/style deep", ctx).effect, { kind: "settings", patch: { style: "deep" } });
@@ -27,8 +28,9 @@ test("a line without a slash is a message to the agent; a slash is a command; a 
   assert.equal(typo.error, true);
   assert.deepEqual(typo.suggest, ["/status"]);
   assert.deepEqual(suggest("zzzzzz"), []);
-  assert.deepEqual(routeConsole("/help", ctx).suggest, ["/explore", "/status", "/eligible"]);
-  assert.deepEqual(routeConsole("/help", { ...ctx, eligible: true }).suggest, ["/explore", "/status", "/whoami"]);
+  assert.deepEqual(routeConsole("/help", ctx).suggest, ["/explore", "/status", "/connect"]);
+  assert.deepEqual(routeConsole("/help", { ...ctx, signedIn: true }).suggest, ["/explore", "/status", "/whoami"]);
+  assert.ok(!HELP_ALL.join(" ").match(/eligib|unlock|bar/), "the help never mentions a bar to clear");
   assert.deepEqual(routeConsole("/help all", ctx).lines, HELP_ALL);
   const t1 = routeConsole("/explore", ctx);
   assert.match(t1.lines[0], /^\(1\/5\)/);
@@ -82,9 +84,9 @@ test("the desk's lines come from the page's own payloads", () => {
   assert.match(p[2], /CHART/);
   assert.match(p[4], /03:38Z  BITBANK/);
   assert.deepEqual(thoughtsLines([]), ["no thoughts recorded yet"]);
-  const e = eligibleLines({ swaps: 1, required: 3, eligible: false, recent: [] });
-  assert.match(e[0], /1 of 3 verified swaps\. 2 more unlock your own agent/);
-  assert.match(eligibleLines({ swaps: 3, required: 3, eligible: true, recent: [] })[0], /eligible/);
+  assert.match(swapsLines({ swaps: 1, recent: [] })[0], /^1 swap from this wallet through the console/);
+  assert.match(swapsLines({ swaps: 0, recent: [] })[0], /^No swaps from this wallet/);
+  assert.match(swapsLines({ swaps: 0, recent: [] })[1], /\/quote 0\.05 ETH USDG/);
 });
 
 test("the personal agent's instruction carries the rules that are policy, and never an em dash", () => {

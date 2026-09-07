@@ -1,8 +1,8 @@
 // The swap console. A person swaps from their own wallet on the Agent page: the desk quotes the pair through its
 // own router (the pools, where every Robinhood Chain swap settles), hands back the transactions their wallet has
-// to sign, and afterwards reads the swap off the chain and counts it toward their eligibility to run their own
-// agent. The desk never holds a key of theirs, never sends for them and never takes custody: the swap pays its
-// output to their address inside the same transaction. OBS_CONSOLE_SWAPS_REQUIRED (default 3) is the bar.
+// to sign, and afterwards reads the swap off the chain and records it as one of that wallet's swaps through the
+// console. The desk never holds a key of theirs, never sends for them and never takes custody: the swap pays its
+// output to their address inside the same transaction. Nothing is gated on the count: it is a record, shown back.
 import { createPublicClient, type Hex } from "viem";
 import { resolveAny } from "./candidates.ts";
 import { quoteOnChain, encodeSwap } from "./onchain.ts";
@@ -12,7 +12,6 @@ import { relayQuote, toSmallest } from "../obscura/relay.ts";
 import { appendLedger, readLedger } from "../ledger.ts";
 import type { Asset } from "./assets.ts";
 
-export const SWAPS_REQUIRED = Math.max(1, Number(process.env.OBS_CONSOLE_SWAPS_REQUIRED ?? 3) || 3);
 const LEDGER = "obs-console-swaps.jsonl";
 const DEADLINE_MIN = 20;
 const TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -84,7 +83,6 @@ export interface ConsoleQuote {
   steps: ConsoleStep[];
   /** Unix seconds after which the swap transaction is refused by the router. */
   deadline: number;
-  required: number;
 }
 
 /** The quote and the transactions for one swap from `user`'s wallet. Reads the chain; sends nothing. */
@@ -121,7 +119,6 @@ export async function consoleQuote(fromSpec: string, toSpec: string, amount: num
     relay: relay ? { amountOut: relay.quote?.amountOut ?? null, feeUsd: relay.quote?.feeUsd ?? null, error: relay.error } : null,
     steps,
     deadline,
-    required: SWAPS_REQUIRED,
   };
 }
 
@@ -190,16 +187,15 @@ export async function verifySwap(hash: string, address: string, fromSpec: string
   return { ok: true, swap, already: false };
 }
 
-export interface Eligibility {
+export interface ConsoleStanding {
   address: string;
+  /** Swaps this wallet made through the console that the desk read off the chain. A record, never a gate. */
   swaps: number;
-  required: number;
-  eligible: boolean;
   recent: Array<{ at: number; txHash: string; from: string; to: string; amountIn: number; amountOut: number | null }>;
 }
 
-/** PURE: where this address stands against the bar. */
-export function eligibility(address: string, swaps: ConsoleSwap[] = readSwaps(), required = SWAPS_REQUIRED): Eligibility {
+/** PURE: this wallet's swaps through the console, newest first. */
+export function consoleStanding(address: string, swaps: ConsoleSwap[] = readSwaps()): ConsoleStanding {
   const mine = swaps.filter((s) => s.address.toLowerCase() === address.toLowerCase()).sort((a, b) => b.at - a.at);
-  return { address: address.toLowerCase(), swaps: mine.length, required, eligible: mine.length >= required, recent: mine.slice(0, 10).map(({ at, txHash, from, to, amountIn, amountOut }) => ({ at, txHash, from, to, amountIn, amountOut })) };
+  return { address: address.toLowerCase(), swaps: mine.length, recent: mine.slice(0, 10).map(({ at, txHash, from, to, amountIn, amountOut }) => ({ at, txHash, from, to, amountIn, amountOut })) };
 }

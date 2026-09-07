@@ -119,15 +119,15 @@ async function swap(amount: number, fromSpec: string, toSpec: string): Promise<v
   if (!r || r.status !== "success") throw new Error(`the swap did not succeed (${r?.status ?? "not landed in two minutes"}): ${EXPLORER}/tx/${hash}`);
   console.log(`swap landed: ${EXPLORER}/tx/${hash}`);
   const reply = await api<any>("/api/obs/console/swap", { method: "POST", body: JSON.stringify({ address: WALLET_ADDRESS, txHash: hash, from: pair.from.symbol, to: pair.to.symbol, amountIn: amount }) }).catch((e: Error) => ({ ok: false, reason: e.message }));
-  if (reply.ok) console.log(`verified by the desk${reply.swap?.amountOut != null ? `, ${reply.swap.amountOut} ${pair.to.symbol} arrived` : ""}. ${reply.eligibility.swaps} of ${reply.eligibility.required} swaps${reply.eligibility.eligible ? ": eligible. Your agent is yours to run." : "."}`);
-  else console.log(`the desk could not verify it yet: ${reply.reason}. Run \`obs eligible\` in a minute.`);
+  if (reply.ok) console.log(`verified by the desk${reply.swap?.amountOut != null ? `, ${reply.swap.amountOut} ${pair.to.symbol} arrived` : ""}. ${reply.standing?.swaps ?? "?"} swap${reply.standing?.swaps === 1 ? "" : "s"} from this wallet through the console.`);
+  else console.log(`the desk could not verify it yet: ${reply.reason}. Run \`obs swaps\` in a minute.`);
 }
 
 async function eligible(address: string | null): Promise<void> {
   const a = address ?? WALLET_ADDRESS;
-  if (!a) throw new Error("which address? `obs eligible 0x...`, or set OBS_WALLET_ADDRESS in .env");
-  const e = await api<any>(`/api/obs/console/eligible?address=${a}`);
-  console.log(`${e.swaps} of ${e.required} verified swaps${e.eligible ? ": eligible. Your agent is yours to run: QUICKSTART.md" : ""}`);
+  if (!a) throw new Error("which address? `obs swaps 0x...`, or set OBS_WALLET_ADDRESS in .env");
+  const e = await api<any>(`/api/obs/console/swaps?address=${a}`);
+  console.log(e.swaps ? `${e.swaps} swap${e.swaps === 1 ? "" : "s"} from this wallet through the console` : "no swaps from this wallet through the console yet");
   for (const r of e.recent.slice(0, 5)) console.log(`  ${clock(r.at)}  ${r.amountIn} ${r.from} -> ${r.amountOut != null ? `${r.amountOut} ` : ""}${r.to}  ${r.txHash.slice(0, 10)}...`);
 }
 

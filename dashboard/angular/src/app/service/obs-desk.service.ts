@@ -375,27 +375,27 @@ export interface ObsConsoleQuote {
   from: string; to: string; amountIn: number;
   pool: { amountOut: number; minOut: number; costPct: number | null; feePct: number; route: string[]; priceInUsd: number | null; priceOutUsd: number | null };
   relay: { amountOut: number | null; feeUsd: number | null; error: string | null } | null;
-  steps: ObsConsoleStep[]; deadline: number; required: number;
+  steps: ObsConsoleStep[]; deadline: number;
 }
-/** `/api/obs/console/eligible`: where an address stands against the swaps that unlock its own agent. */
-export interface ObsEligibility {
-  address: string; swaps: number; required: number; eligible: boolean;
+/** `/api/obs/console/swaps`: the swaps a wallet made through the console, shown back to it; never a gate. */
+export interface ObsStanding {
+  address: string; swaps: number;
   recent: Array<{ at: number; txHash: string; from: string; to: string; amountIn: number; amountOut: number | null }>;
 }
-export interface ObsConsoleSwapReply { ok: boolean; already?: boolean; reason?: string; eligibility?: ObsEligibility; }
+export interface ObsConsoleSwapReply { ok: boolean; already?: boolean; reason?: string; standing?: ObsStanding; }
 /** `/api/obs/account/challenge` and `/link`: the wallet is the account; a signed challenge mints a week's bearer. */
 export interface ObsChallenge { ok: boolean; message: string; nonce: string; }
 export interface ObsSession { token: string; address: string; expiresAt: number; }
-export interface ObsLinkReply { ok: boolean; error?: string; session?: ObsSession; eligibility?: ObsEligibility; }
+export interface ObsLinkReply { ok: boolean; error?: string; session?: ObsSession; standing?: ObsStanding; }
 /** `/api/obs/console/cli`: one typed line in, lines out, plus the effect the page applies. */
 export interface ObsCliReply {
   ok: boolean; lines?: string[]; effect?: string; suggest?: string[]; text?: string;
-  action?: string; amount?: number; from?: string; to?: string; settings?: ObsUserSettings; eligibility?: ObsEligibility;
+  action?: string; amount?: number; from?: string; to?: string; settings?: ObsUserSettings; standing?: ObsStanding;
   /** A view effect: which of the site's pages to open beside the console, or null to close it. */
   view?: string | null;
 }
 export interface ObsUserSettings { name?: string; style?: 'concise' | 'balanced' | 'deep'; voice?: string; goal?: string; }
-export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; eligibility?: ObsEligibility; }
+export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; }
 export interface ObsHistoryTurn { role: string; content: string; ts: string; }
 
 /**
@@ -460,8 +460,8 @@ export class ObsDeskService {
     return this.http.get<ObsConsoleQuote>(`${this.base}/api/obs/console/quote`, { params: { from, to, amount, user } });
   }
 
-  consoleEligible(address: string): Observable<ObsEligibility> {
-    return this.http.get<ObsEligibility>(`${this.base}/api/obs/console/eligible`, { params: { address } });
+  consoleSwaps(address: string): Observable<ObsStanding> {
+    return this.http.get<ObsStanding>(`${this.base}/api/obs/console/swaps`, { params: { address } });
   }
 
   /** Sign in: the wallet is the account. A challenge to sign, then the signature for a bearer. */

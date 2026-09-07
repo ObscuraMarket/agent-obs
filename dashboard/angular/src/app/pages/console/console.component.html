@@ -4,12 +4,12 @@
 <div class="obs-console" [class.obs-console--split]="view">
   <div class="cli" (click)="focusInput()">
     <div class="cli__bar">
-      <span class="cli__dot" [class.on]="agentState === 'ready' || agentState === 'thinking'" [class.warn]="agentState === 'locked'" aria-hidden="true"></span>
+      <span class="cli__dot" [class.on]="agentState === 'ready' || agentState === 'thinking'" [class.warn]="agentState === 'provisioning' || agentState === 'error'" aria-hidden="true"></span>
       <span class="cli__who">{{ agentName }}</span>
-      <span class="cli__addr">{{ wallet ? short(wallet) : 'not signed in' }}</span>
-      <span class="cli__pill" [class.on]="elig?.eligible" title="Verified swaps from your wallet against the bar that unlocks your own agent">{{ elig ? elig.swaps : 0 }} of {{ elig?.required || 3 }} swaps<ng-container *ngIf="elig?.eligible"> · eligible</ng-container></span>
-      <button type="button" class="cli__signin" (click)="onSignInClick($event)" [disabled]="status === 'signing'">{{ status === 'signed-in' ? 'signed in' : status === 'signing' ? 'signing…' : 'sign in with wallet' }}</button>
-      <a class="cli__link" href="/agent">the desk</a>
+      <span class="cli__addr">{{ wallet ? short(wallet) : 'Not signed in' }}</span>
+      <span class="cli__pill" [class.on]="agentState === 'ready'" title="Your own agent comes with signing in: nothing to earn first">{{ agentState === 'ready' || agentState === 'thinking' ? 'Your agent is ready' : agentState === 'provisioning' ? 'Setting up your agent…' : agentState === 'error' ? 'Your agent is not reachable' : status === 'signed-in' ? 'Signed in' : 'Guest' }}<ng-container *ngIf="standing?.swaps"> · {{ standing?.swaps }} swap{{ standing?.swaps === 1 ? '' : 's' }}</ng-container></span>
+      <button type="button" class="cli__signin" (click)="onSignInClick($event)" [disabled]="status === 'signing'">{{ status === 'signed-in' ? 'Signed in' : status === 'signing' ? 'Signing…' : 'Sign in with wallet' }}</button>
+      <a class="cli__link" href="/agent">The desk</a>
     </div>
 
     <div class="cli__scroll" #screen aria-live="polite">

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseCommand, consoleAssets, judgeSwap, amountOutFromLogs, eligibility, isAddress, isTxHash, type ConsoleSwap } from "../src/desk/console.ts";
+import { parseCommand, consoleAssets, judgeSwap, amountOutFromLogs, consoleStanding, isAddress, isTxHash, type ConsoleSwap } from "../src/desk/console.ts";
 import { resolveAsset, type Asset } from "../src/desk/assets.ts";
 
 const ETH = resolveAsset("ETH@robinhood") as Asset;
@@ -61,19 +61,18 @@ test("what the swap paid is read from the to-token's Transfer logs to the user, 
   assert.equal(amountOutFromLogs([], USDG, ME), null);
 });
 
-test("eligibility is a count of this address's verified swaps against the bar, newest first", () => {
+test("a wallet's standing is the count of its swaps through the console, newest first, and never a gate", () => {
   const rows: ConsoleSwap[] = [
     { at: 1, address: ME.toLowerCase(), txHash: "0x" + "1".repeat(64), from: "ETH", to: "USDG", amountIn: 0.05, amountOut: 125, block: 1 },
     { at: 3, address: ME.toLowerCase(), txHash: "0x" + "3".repeat(64), from: "USDG", to: "ETH", amountIn: 100, amountOut: null, block: 3 },
     { at: 2, address: "0x000000000000000000000000000000000000dead", txHash: "0x" + "2".repeat(64), from: "ETH", to: "NVDA", amountIn: 0.1, amountOut: 1, block: 2 },
   ];
-  const e = eligibility(ME, rows, 3);
+  const e = consoleStanding(ME, rows);
   assert.equal(e.swaps, 2);
-  assert.equal(e.required, 3);
-  assert.equal(e.eligible, false);
   assert.deepEqual(e.recent.map((r) => r.at), [3, 1]);
-  assert.equal(eligibility(ME, rows, 2).eligible, true);
-  assert.equal(eligibility("0x000000000000000000000000000000000000dead", rows, 1).eligible, true);
+  assert.ok(!("required" in e) && !("eligible" in e), "nothing to clear: the count is shown back, not held against anyone");
+  assert.equal(consoleStanding("0x000000000000000000000000000000000000dead", rows).swaps, 1);
+  assert.equal(consoleStanding("0x0000000000000000000000000000000000000001", rows).swaps, 0);
   assert.ok(isAddress(ME));
   assert.ok(!isAddress("0x1234"));
   assert.ok(isTxHash("0x" + "a".repeat(64)));

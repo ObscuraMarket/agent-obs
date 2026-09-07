@@ -58,9 +58,9 @@ export function readsLines(r: Any): string[] {
   return out;
 }
 
-export function eligibleLines(e: { swaps: number; required: number; eligible: boolean; recent: Array<{ at: number; from: string; to: string; amountIn: number; amountOut: number | null; txHash: string }> }): string[] {
-  const out = [`${e.swaps} of ${e.required} verified swaps${e.eligible ? ": eligible. your agent is provisioned to this wallet; just type to it." : `. ${e.required - e.swaps} more unlock${e.required - e.swaps === 1 ? "s" : ""} your own agent.`}`];
+export function swapsLines(e: { swaps: number; recent: Array<{ at: number; from: string; to: string; amountIn: number; amountOut: number | null; txHash: string }> }): string[] {
+  const out = [e.swaps ? `${e.swaps} swap${e.swaps === 1 ? "" : "s"} from this wallet through the console, newest first.` : "No swaps from this wallet through the console yet."];
   for (const r of e.recent.slice(0, 5)) out.push(`  ${clock(r.at)}  ${r.amountIn} ${r.from} -> ${r.amountOut != null ? `${r.amountOut} ` : ""}${r.to}  ${r.txHash.slice(0, 10)}...`);
-  if (!e.eligible) out.push(`  /swap 0.05 ETH USDG is one. your wallet signs it; the desk reads it off the chain.`);
+  if (!e.swaps) out.push("  Try /quote 0.05 ETH USDG to see what the pools pay, then /swap to do it from your own wallet.");
   return out;
 }

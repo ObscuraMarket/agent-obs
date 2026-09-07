@@ -1,23 +1,24 @@
 import { AfterViewInit, Component, ElementRef, Inject, NgZone, Type, ViewChild, ViewContainerRef } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
-import { ObsDeskService, ObsConsoleQuote, ObsEligibility, ObsCliReply, ObsSession, ObsUserSettings, CONSOLE_VIEWS } from '../../service/obs-desk.service';
+import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, CONSOLE_VIEWS } from '../../service/obs-desk.service';
 
 type LineKind = 'input' | 'command' | 'output' | 'error' | 'agent' | 'system';
 interface CliLine { kind: LineKind; text: string; streaming?: boolean; suggest?: string[]; }
 interface Group { kind: LineKind; lines: CliLine[]; }
 type Status = 'guest' | 'connected' | 'signing' | 'signed-in';
-type AgentState = 'idle' | 'locked' | 'provisioning' | 'ready' | 'thinking' | 'error';
+type AgentState = 'idle' | 'provisioning' | 'ready' | 'thinking' | 'error';
 
 /** Completion vocabulary, kept in step with the desk's router. */
-const COMMANDS = ['help', 'explore', 'clear', 'whoami', 'name', 'style', 'voice', 'goal', 'reset', 'eligible', 'connect', 'balance', 'quote', 'swap', 'trade', 'rewards', 'cards', 'referral', 'yield', 'close', 'status', 'positions', 'thoughts', 'research', 'watch', 'reads'];
+const COMMANDS = ['help', 'explore', 'clear', 'whoami', 'name', 'style', 'voice', 'goal', 'reset', 'swaps', 'connect', 'balance', 'quote', 'swap', 'trade', 'rewards', 'cards', 'referral', 'yield', 'close', 'status', 'positions', 'thoughts', 'research', 'watch', 'reads'];
 const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['name', 'goal', 'voice', 'style'], help: ['all'] };
 const SESSION_KEY = 'obs-console-session';
 
 /**
- * The OBS console: one surface for talking to your agent and for shaping it, beside the desk's read-only commands
- * and your own wallet's swaps. A line is a message to your agent; a slash line is a command the desk routes
- * (src/cli/router.ts there). The page signs a challenge to prove the wallet, signs swaps with it, streams the
- * agent's reply token by token, and never holds a key.
+ * The OBS console: one surface for talking to your agent and for shaping it, beside the desk's read-only commands,
+ * the app's pages and your own wallet's swaps. A line is a message to your agent; a slash line is a command the
+ * desk routes (src/cli/router.ts there). Signing in with the wallet is the whole account: it gets its own agent
+ * straight away, with nothing to earn first. The page signs a challenge to prove the wallet, signs swaps with it,
+ * streams the agent's reply token by token, and never holds a key.
  */
 @Component({ selector: 'app-console', templateUrl: './console.component.html', styleUrls: ['./console.component.css'] })
 export class ConsoleComponent implements AfterViewInit {
@@ -35,7 +36,7 @@ export class ConsoleComponent implements AfterViewInit {
   agentState: AgentState = 'idle';
   agentName = 'OBS console';
   agentError: string | null = null;
-  elig: ObsEligibility | null = null;
+  standing: ObsStanding | null = null;
   settings: ObsUserSettings = {};
   busy = false;
   /** The site page open beside the console (trade, rewards, cards, referral, yield), or none. */
@@ -55,7 +56,7 @@ export class ConsoleComponent implements AfterViewInit {
   }
 
   ngAfterViewInit(): void {
-    this.print([{ kind: 'system', text: 'OBS console. the desk\'s command line. read it, quote through its router, swap from your own wallet; three verified swaps unlock an agent of your own.', suggest: ['/explore', '/status', '/connect'] }]);
+    this.print([{ kind: 'system', text: 'Welcome to the OBS console. Ask the desk what it\'s doing, open any page of the app from here, or sign in with your wallet to get an agent of your own.', suggest: ['/status', '/connect', '/explore'] }]);
     void this.silentReconnect();
     setTimeout(() => this.focusInput(), 0);
   }
@@ -75,9 +76,10 @@ export class ConsoleComponent implements AfterViewInit {
 
   get placeholder(): string {
     if (this.agentState === 'thinking') { return this.agentName + ' is thinking…'; }
-    if (this.agentState === 'ready') { return 'message, or /help'; }
-    if (this.status === 'signed-in') { return '/swap 0.05 ETH USDG unlocks your agent, or /help'; }
-    return '/help, /status, or /connect to sign in';
+    if (this.agentState === 'ready') { return 'Ask ' + this.agentName + ' anything, or type / for commands'; }
+    if (this.agentState === 'provisioning') { return 'Setting up your agent…'; }
+    if (this.status === 'signed-in') { return 'Type / for commands'; }
+    return 'Try /status, or /connect to sign in with your wallet';
   }
 
   joined(g: Group): string { return g.lines.map((l) => l.text).join(' '); }
@@ -92,7 +94,7 @@ export class ConsoleComponent implements AfterViewInit {
 
   onSignInClick(ev: Event): void {
     ev.stopPropagation();
-    if (this.status !== 'signed-in') { void this.runLine('/connect'); } else { void this.runLine('/eligible'); }
+    if (this.status !== 'signed-in') { void this.runLine('/connect'); } else { void this.runLine('/whoami'); }
   }
 
   pickHint(h: string): void {
@@ -193,20 +195,20 @@ export class ConsoleComponent implements AfterViewInit {
       const head = line.slice(1).split(/\s+/)[0].toLowerCase();
       if (head === 'connect') { await this.signIn(); return; }
       if (head === 'clear' || head === 'cls') { this.lines = []; return; }
-      const data = await this.get<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (e?.error && typeof e.error === 'object' ? e.error : { ok: false, lines: ['could not reach the desk. try again.'] }) as ObsCliReply);
+      const data = await this.get<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (e?.error && typeof e.error === 'object' ? e.error : { ok: false, lines: ['Couldn\'t reach the desk. Try again in a moment.'] }) as ObsCliReply);
       if (data.effect === 'clear') { this.lines = []; return; }
       if (data.effect === 'chat' && typeof data.text === 'string') { await this.chat(data.text, true); return; }
       if (data.effect === 'wallet' && data.ok) { await this.walletEffect(data); return; }
       if (data.effect === 'view') { this.applyView(data); return; }
       if (data.effect === 'settings' && data.ok && data.settings) { this.settings = data.settings; this.agentName = this.settings.name || (this.agentState === 'ready' ? 'OBS' : this.agentName); }
-      if (data.eligibility) { this.elig = data.eligibility; }
+      if (data.standing) { this.standing = data.standing; }
       const kind: LineKind = data.ok === false ? 'error' : 'output';
       const out = Array.isArray(data.lines) ? data.lines : [];
-      const printed: CliLine[] = out.length ? out.map((t) => ({ kind, text: t })) : [{ kind, text: data.ok === false ? 'that did not work.' : 'done.' }];
+      const printed: CliLine[] = out.length ? out.map((t) => ({ kind, text: t })) : [{ kind, text: data.ok === false ? 'That didn\'t work.' : 'Done.' }];
       if (data.suggest?.length) { printed[printed.length - 1].suggest = data.suggest.map(String); }
       this.print(printed);
     } catch (e: any) {
-      this.print([{ kind: 'error', text: 'failed: ' + this.reason(e) }]);
+      this.print([{ kind: 'error', text: 'Something went wrong: ' + this.reason(e) }]);
     } finally {
       this.busy = false;
       setTimeout(() => this.focusInput(), 0);
@@ -224,13 +226,13 @@ export class ConsoleComponent implements AfterViewInit {
     const lines: CliLine[] = (Array.isArray(data.lines) ? data.lines : []).map((t) => ({ kind: 'output' as LineKind, text: t }));
     if (name === null) { this.closeView(); this.print(lines); return; }
     const cls = this.views[name];
-    if (!cls) { this.print([{ kind: 'error', text: 'the ' + name + ' view is not in this build of the site.' }]); return; }
+    if (!cls) { this.print([{ kind: 'error', text: 'The ' + name + ' page isn\'t part of this build.' }]); return; }
     const host = this.viewHost;
-    if (!host) { this.print([{ kind: 'error', text: 'no room for a view here.' }]); return; }
+    if (!host) { this.print([{ kind: 'error', text: 'There\'s nowhere to open it here.' }]); return; }
     host.clear();
     host.createComponent(cls);
     this.view = name;
-    const printed = lines.length ? lines : [{ kind: 'output' as LineKind, text: name + ' is open beside the console.' }];
+    const printed = lines.length ? lines : [{ kind: 'output' as LineKind, text: name.charAt(0).toUpperCase() + name.slice(1) + ' is open beside the console.' }];
     if (data.suggest?.length) { printed[printed.length - 1].suggest = data.suggest.map(String); }
     this.print(printed);
   }
@@ -263,8 +265,8 @@ export class ConsoleComponent implements AfterViewInit {
     if (this.listening) { return; }
     this.listening = true;
     p.on?.('accountsChanged', (a: string[]) => this.zone.run(() => {
-      this.wallet = a?.[0] ?? null; this.token = null; this.elig = null; this.status = this.wallet ? 'connected' : 'guest'; this.agentState = 'idle'; this.agentName = 'OBS console';
-      this.print([{ kind: 'system', text: this.wallet ? 'wallet switched to ' + this.short(this.wallet) + '. sign in again to reach its agent.' : 'wallet disconnected.', suggest: this.wallet ? ['/connect'] : [] }]);
+      this.wallet = a?.[0] ?? null; this.token = null; this.standing = null; this.status = this.wallet ? 'connected' : 'guest'; this.agentState = 'idle'; this.agentName = 'OBS console';
+      this.print([{ kind: 'system', text: this.wallet ? 'Switched to wallet ' + this.short(this.wallet) + '. Sign in again to reach its agent.' : 'Wallet disconnected.', suggest: this.wallet ? ['/connect'] : [] }]);
     }));
     p.on?.('chainChanged', (c: string) => this.zone.run(() => { this.chainId = parseInt(c, 16); }));
   }
@@ -282,7 +284,7 @@ export class ConsoleComponent implements AfterViewInit {
       this.listen(p);
       const s = this.readSession(this.wallet);
       if (s) { this.token = s.token; this.status = 'signed-in'; await this.afterSignIn(true); }
-      else { this.print([{ kind: 'system', text: 'wallet ' + this.short(this.wallet) + ' is connected. sign in to reach its agent and its standing.', suggest: ['/connect', '/status'] }]); }
+      else { this.print([{ kind: 'system', text: 'Wallet ' + this.short(this.wallet) + ' is connected. Sign in to meet your agent.', suggest: ['/connect', '/status'] }]); }
     } catch { /* not connected: fine */ }
   }
 
@@ -304,10 +306,10 @@ export class ConsoleComponent implements AfterViewInit {
   /** Connect, sign the challenge, keep the bearer. The signature proves control; it moves nothing. */
   private async signIn(): Promise<void> {
     const p = this.provider();
-    if (!p) { this.print([{ kind: 'error', text: 'no wallet found in this browser. install MetaMask or Rabby, or open this page inside your wallet\'s browser.' }]); return; }
+    if (!p) { this.print([{ kind: 'error', text: 'No wallet found in this browser. Install MetaMask or Rabby, or open this page inside your wallet\'s browser.' }]); return; }
     const accs: string[] = await p.request({ method: 'eth_requestAccounts' });
     this.wallet = accs?.[0] ?? null;
-    if (!this.wallet) { this.print([{ kind: 'error', text: 'the wallet gave no account.' }]); return; }
+    if (!this.wallet) { this.print([{ kind: 'error', text: 'The wallet didn\'t give an account.' }]); return; }
     this.status = 'connected';
     this.listen(p);
     await this.ensureChain(p);
@@ -316,35 +318,26 @@ export class ConsoleComponent implements AfterViewInit {
     this.status = 'signing';
     try {
       const c = await this.get<{ ok: boolean; message: string; nonce: string }>(this.obs.accountChallenge(this.wallet));
-      this.print([{ kind: 'system', text: 'sign the message in your wallet. it proves the wallet is yours and authorizes nothing.' }]);
+      this.print([{ kind: 'system', text: 'Sign the message in your wallet. It proves the wallet is yours and authorizes nothing.' }]);
       const signature: string = await p.request({ method: 'personal_sign', params: [c.message, this.wallet] });
-      const l = await this.get<{ ok: boolean; error?: string; session?: ObsSession; eligibility?: ObsEligibility }>(this.obs.accountLink(this.wallet, c.nonce, signature));
+      const l = await this.get<{ ok: boolean; error?: string; session?: ObsSession; standing?: ObsStanding }>(this.obs.accountLink(this.wallet, c.nonce, signature));
       if (!l.ok || !l.session) { throw new Error(l.error || 'sign-in refused'); }
       this.token = l.session.token;
       this.storeSession(l.session);
       this.status = 'signed-in';
-      if (l.eligibility) { this.elig = l.eligibility; }
+      if (l.standing) { this.standing = l.standing; }
       await this.afterSignIn(false);
     } catch (e: any) {
       this.status = 'connected';
-      this.print([{ kind: 'error', text: 'not signed in: ' + this.reason(e), suggest: ['/connect'] }]);
+      this.print([{ kind: 'error', text: 'Not signed in: ' + this.reason(e), suggest: ['/connect'] }]);
     }
   }
 
-  /** What happens once the bearer is in hand: standing, then the agent when the bar is cleared. */
+  /** What happens once the bearer is in hand: the wallet's agent, straight away. Nothing to earn first. */
   private async afterSignIn(quiet: boolean): Promise<void> {
     if (!this.token || !this.wallet) { return; }
-    try {
-      const e = await this.get<ObsEligibility>(this.obs.consoleEligible(this.wallet));
-      this.elig = e;
-    } catch { /* the pill stays as it was */ }
-    if (!this.elig?.eligible) {
-      this.agentState = 'locked';
-      this.agentName = 'OBS console';
-      const left = (this.elig?.required ?? 3) - (this.elig?.swaps ?? 0);
-      this.print([{ kind: 'system', text: 'signed in as ' + this.short(this.wallet) + '. ' + (this.elig?.swaps ?? 0) + ' of ' + (this.elig?.required ?? 3) + ' verified swaps; ' + left + ' more unlock' + (left === 1 ? 's' : '') + ' an agent of your own.', suggest: ['/swap 0.05 ETH USDG', '/quote 0.05 ETH USDG', '/explore'] }]);
-      return;
-    }
+    this.get<ObsStanding>(this.obs.consoleSwaps(this.wallet)).then((s) => { this.standing = s; }).catch(() => { /* the count stays as it was */ });
+    if (!quiet) { this.print([{ kind: 'system', text: 'Signed in as ' + this.short(this.wallet) + '. Setting up your agent…' }]); }
     this.agentState = 'provisioning';
     this.agentError = null;
     try {
@@ -359,11 +352,11 @@ export class ConsoleComponent implements AfterViewInit {
         this.print([
           ...prior.map((m) => ({ kind: (m.role === 'user' ? 'input' : 'agent') as LineKind, text: m.content })),
           prior.length
-            ? { kind: 'system' as LineKind, text: this.agentName + ' is live.', suggest: ['/help'] }
-            : { kind: 'system' as LineKind, text: this.agentName + ' is live and it is yours. it reads the desk and remembers this conversation. talking to it is free.', suggest: ['what is the desk holding right now, and why?', '/explore', '/help'] },
+            ? { kind: 'system' as LineKind, text: this.agentName + ' is back, and remembers where you left off.', suggest: ['/help'] }
+            : { kind: 'system' as LineKind, text: 'Meet ' + this.agentName + ', your own agent. It reads the desk, remembers this conversation, and you can rename it with /name. Ask it anything.', suggest: ['What is the desk holding right now, and why?', '/explore', '/help'] },
         ]);
       } else if (!quiet) {
-        this.print([{ kind: 'system', text: this.agentName + ' is live.', suggest: ['/help'] }]);
+        this.print([{ kind: 'system', text: this.agentName + ' is ready.', suggest: ['/help'] }]);
       }
       this.agentState = 'ready';
     } catch (e: any) {
@@ -375,10 +368,9 @@ export class ConsoleComponent implements AfterViewInit {
   // ---- chat, streamed ---------------------------------------------------------------
 
   private async chat(text: string, alreadyPrinted = false): Promise<void> {
-    if (!this.token) { this.print([{ kind: 'system', text: 'sign in with your wallet first: it is the account here.', suggest: ['/connect'] }]); return; }
+    if (!this.token) { this.print([{ kind: 'system', text: 'Sign in with your wallet to talk to your agent. One signature, no transaction.', suggest: ['/connect'] }]); return; }
     if (this.agentState !== 'ready') {
-      const left = (this.elig?.required ?? 3) - (this.elig?.swaps ?? 0);
-      this.print([{ kind: 'system', text: this.agentState === 'locked' ? 'your agent unlocks at ' + (this.elig?.required ?? 3) + ' verified swaps from this wallet; ' + Math.max(0, left) + ' to go.' : 'your agent is not reachable right now.', suggest: this.agentState === 'locked' ? ['/swap 0.05 ETH USDG', '/eligible'] : ['/connect'] }]);
+      this.print([{ kind: 'system', text: this.agentState === 'provisioning' ? 'Your agent is still being set up. Give it a moment.' : 'Your agent isn\'t reachable right now.', suggest: this.agentState === 'provisioning' ? [] : ['/connect'] }]);
       return;
     }
     void alreadyPrinted;
@@ -432,9 +424,9 @@ export class ConsoleComponent implements AfterViewInit {
 
   private async balance(): Promise<void> {
     const p = this.provider();
-    if (!p || !this.wallet) { this.print([{ kind: 'system', text: 'connect first.', suggest: ['/connect'] }]); return; }
+    if (!p || !this.wallet) { this.print([{ kind: 'system', text: 'Connect your wallet first.', suggest: ['/connect'] }]); return; }
     const hex: string = await p.request({ method: 'eth_getBalance', params: [this.wallet, 'latest'] });
-    this.print([{ kind: 'output', text: this.short(this.wallet) + ': ' + (Number(BigInt(hex)) / 1e18).toFixed(5) + ' ETH on chain ' + this.chainId }]);
+    this.print([{ kind: 'output', text: this.short(this.wallet) + ' holds ' + (Number(BigInt(hex)) / 1e18).toFixed(5) + ' ETH' + (this.chainId === ConsoleComponent.CHAIN_ID ? ' on Robinhood Chain' : ' on chain ' + this.chainId) + '.' }]);
   }
 
   private fetchQuote(amount: number, from: string, to: string): Promise<ObsConsoleQuote> {
@@ -444,9 +436,9 @@ export class ConsoleComponent implements AfterViewInit {
   private showQuote(q: ObsConsoleQuote): void {
     const cost = q.pool.costPct != null ? ', all in ' + q.pool.costPct.toFixed(2) + '% against the mark' : '';
     const lines: CliLine[] = [{ kind: 'output', text: q.amountIn + ' ' + q.from + ' -> ' + q.pool.amountOut + ' ' + q.to + ' through the pools (' + q.pool.route.join(' then ') + cost + '); floor ' + q.pool.minOut }];
-    if (q.relay) { lines.push({ kind: 'output', text: q.relay.amountOut != null ? 'the app\'s Relay route pays ' + q.relay.amountOut + ' ' + q.to + (q.relay.feeUsd != null ? ' with $' + q.relay.feeUsd.toFixed(2) + ' of fees' : '') : 'Relay: ' + (q.relay.error || 'no quote') }); }
+    if (q.relay) { lines.push({ kind: 'output', text: q.relay.amountOut != null ? 'The app\'s Relay route pays ' + q.relay.amountOut + ' ' + q.to + (q.relay.feeUsd != null ? ' with $' + q.relay.feeUsd.toFixed(2) + ' of fees' : '') + '.' : 'Relay: ' + (q.relay.error || 'no quote') }); }
     const approvals = q.steps.filter((st) => st.id !== 'swap');
-    lines.push({ kind: 'output', text: approvals.length ? 'your wallet signs ' + (approvals.length + 1) + ' transactions: ' + q.steps.map((st) => st.note).join('; ') : 'one transaction to sign: ' + q.steps[q.steps.length - 1].note, suggest: ['/swap ' + q.amountIn + ' ' + q.from + ' ' + q.to] });
+    lines.push({ kind: 'output', text: approvals.length ? 'Your wallet signs ' + (approvals.length + 1) + ' transactions: ' + q.steps.map((st) => st.note).join('; ') : 'One transaction to sign: ' + q.steps[q.steps.length - 1].note, suggest: ['/swap ' + q.amountIn + ' ' + q.from + ' ' + q.to] });
     this.print(lines);
   }
 
@@ -463,30 +455,29 @@ export class ConsoleComponent implements AfterViewInit {
 
   private async swap(amount: number, from: string, to: string): Promise<void> {
     const p = this.provider();
-    if (!p || !this.wallet) { this.print([{ kind: 'system', text: 'connect first: the swap is signed by your wallet.', suggest: ['/connect'] }]); return; }
-    if (this.chainId !== ConsoleComponent.CHAIN_ID) { await this.ensureChain(p); if (this.chainId !== ConsoleComponent.CHAIN_ID) { this.print([{ kind: 'error', text: 'switch your wallet to Robinhood Chain first.' }]); return; } }
+    if (!p || !this.wallet) { this.print([{ kind: 'system', text: 'Connect your wallet first: it signs the swap.', suggest: ['/connect'] }]); return; }
+    if (this.chainId !== ConsoleComponent.CHAIN_ID) { await this.ensureChain(p); if (this.chainId !== ConsoleComponent.CHAIN_ID) { this.print([{ kind: 'error', text: 'Switch your wallet to Robinhood Chain first.' }]); return; } }
     const q = await this.fetchQuote(amount, from, to);
     this.showQuote(q);
     let swapHash: string | null = null;
     for (const st of q.steps) {
-      this.print([{ kind: 'system', text: 'sign in your wallet: ' + st.note }]);
+      this.print([{ kind: 'system', text: 'Sign in your wallet: ' + st.note }]);
       const hash: string = await p.request({ method: 'eth_sendTransaction', params: [{ from: this.wallet, to: st.to, data: st.data, value: this.hex(st.value) }] });
-      this.print([{ kind: 'system', text: 'sent ' + hash.slice(0, 12) + '…, waiting for the chain' }]);
+      this.print([{ kind: 'system', text: 'Sent ' + hash.slice(0, 12) + '…, waiting for the chain.' }]);
       const r = await this.waitReceipt(p, hash);
-      if (!r.ok) { this.print([{ kind: 'error', text: (st.id === 'swap' ? 'the swap' : 'the approval') + ' did not succeed (' + r.status + '). nothing else was sent.' }]); return; }
-      if (st.id === 'swap') { swapHash = hash; } else { this.print([{ kind: 'output', text: 'approval landed' }]); }
+      if (!r.ok) { this.print([{ kind: 'error', text: (st.id === 'swap' ? 'The swap' : 'The approval') + ' didn\'t succeed (' + r.status + '). Nothing else was sent.' }]); return; }
+      if (st.id === 'swap') { swapHash = hash; } else { this.print([{ kind: 'output', text: 'Approval landed.' }]); }
     }
     if (!swapHash) { return; }
-    this.print([{ kind: 'output', text: 'swap landed: ' + ConsoleComponent.EXPLORER + '/tx/' + swapHash }]);
+    this.print([{ kind: 'output', text: 'Swap landed: ' + ConsoleComponent.EXPLORER + '/tx/' + swapHash }]);
     const reply: any = await this.get<any>(this.obs.consoleSwap({ address: this.wallet, txHash: swapHash, from: q.from, to: q.to, amountIn: q.amountIn })).catch((e) => e?.error ?? e);
     if (reply?.ok) {
-      this.elig = reply.eligibility ?? this.elig;
-      const got = reply.swap?.amountOut != null ? ', ' + reply.swap.amountOut + ' ' + q.to + ' arrived' : '';
-      const e = reply.eligibility;
-      this.print([{ kind: 'output', text: 'verified on the chain' + got + '. ' + (e ? e.swaps + ' of ' + e.required + ' swaps' + (e.eligible ? ': eligible.' : '.') : ''), suggest: e?.eligible ? [] : ['/eligible'] }]);
-      if (e?.eligible && this.token && this.agentState !== 'ready') { await this.afterSignIn(false); }
+      this.standing = reply.standing ?? this.standing;
+      const got = reply.swap?.amountOut != null ? ', and ' + reply.swap.amountOut + ' ' + q.to + ' arrived' : '';
+      const n = reply.standing?.swaps;
+      this.print([{ kind: 'output', text: 'Verified on the chain' + got + '.' + (n ? ' That\'s ' + n + ' swap' + (n === 1 ? '' : 's') + ' from this wallet through the console.' : ''), suggest: ['/swaps'] }]);
     } else {
-      this.print([{ kind: 'error', text: 'the desk could not verify it yet: ' + (reply?.reason || reply?.error || 'no answer') + '. type /eligible in a minute.', suggest: ['/eligible'] }]);
+      this.print([{ kind: 'error', text: 'The desk couldn\'t verify it yet: ' + (reply?.reason || reply?.error || 'no answer') + '. Type /swaps in a minute.', suggest: ['/swaps'] }]);
     }
   }
 }

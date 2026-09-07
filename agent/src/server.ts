@@ -46,12 +46,12 @@ import { tradingArmed, railsFromEnv, type Rails } from "./desk/rails.ts";
 import { walletBalances } from "./obscura/reads.ts";
 import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL, dataPath } from "./config.ts";
 import { xLive, xConfigured } from "./social/xClient.ts";
-import { consoleQuote, verifySwap, eligibility, isAddress } from "./desk/console.ts";
+import { consoleQuote, verifySwap, consoleStanding, isAddress } from "./desk/console.ts";
 import { issueChallenge, linkAccount, verifySession, bearerOf } from "./desk/accounts.ts";
 import { getSettings, updateSettings, sanitizeSettings, describeSettings } from "./desk/userSettings.ts";
 import { ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
 import { routeConsole } from "./cli/router.ts";
-import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, eligibleLines } from "./desk/deskConsole.ts";
+import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines } from "./desk/deskConsole.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
 // Public exposure needs manners: a per-address budget on requests and a cap
@@ -822,14 +822,15 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "the quote failed" }));
     return;
   }
-  if (path === "/api/obs/console/eligible") {
+  // A wallet's swaps through the console, shown back to it. The old path answers the same, for pages not yet redeployed.
+  if (path === "/api/obs/console/swaps" || path === "/api/obs/console/eligible") {
     res.setHeader("Cache-Control", "no-store");
     const address = url.searchParams.get("address") ?? "";
     if (!isAddress(address)) {
       json(res, 400, { error: "address must be a 0x address" });
       return;
     }
-    json(res, 200, eligibility(address));
+    json(res, 200, consoleStanding(address));
     return;
   }
   if (path === "/api/obs/console/swap") {
@@ -844,7 +845,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           return;
         }
         return verifySwap(String(b.txHash ?? ""), String(b.address ?? ""), String(b.from ?? ""), String(b.to ?? ""), Number(b.amountIn)).then((r) =>
-          r.ok ? json(res, 200, { ok: true, already: r.already, swap: r.swap, eligibility: eligibility(r.swap.address) }) : json(res, 409, { ok: false, reason: r.reason }),
+          r.ok ? json(res, 200, { ok: true, already: r.already, swap: r.swap, standing: consoleStanding(r.swap.address) }) : json(res, 409, { ok: false, reason: r.reason }),
         );
       })
       .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : "bad request" }));
@@ -871,29 +872,29 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
       const r = await linkAccount(b, now);
       if (!r.ok) { json(res, 401, { ok: false, error: r.error }); return; }
-      json(res, 200, { ok: true, session: r.session, eligibility: eligibility(r.session.address) });
+      json(res, 200, { ok: true, session: r.session, standing: consoleStanding(r.session.address) });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;
   }
   // The console: one typed line in, lines out. The routing is pure (src/cli/router.ts); this is the only place
   // that acts. Chat is not handled here: it returns an intent and the page streams it, so a conversational turn
-  // keeps one path. Wallet effects come straight back too: the wallet in the browser does those.
+  // keeps one path. Wallet and view effects come straight back too: the page does those.
   if (path === "/api/obs/console/cli") {
     res.setHeader("Cache-Control", "no-store");
-    // A guest may read the desk, take the tour and quote; shaping an agent, standing and chat need the wallet.
+    // A guest may read the desk, take the tour, open the app's pages and quote; shaping an agent and chat need the wallet.
     const address = verifySession(bearerOf(req.headers.authorization));
     readBody(req, 4096).then(async (text) => {
       let b: Record<string, unknown> = {};
       try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
       const line = typeof b.line === "string" ? b.line : "";
-      if (line.length > 2000) { json(res, 400, { ok: false, lines: ["that is too long for one line."] }); return; }
-      const standing = address ? eligibility(address) : { address: "", swaps: 0, required: Number(process.env.OBS_CONSOLE_SWAPS_REQUIRED ?? 3) || 3, eligible: false, recent: [] };
+      if (line.length > 2000) { json(res, 400, { ok: false, lines: ["That's too long for one line."] }); return; }
+      const standing = address ? consoleStanding(address) : { address: "", swaps: 0, recent: [] };
       const before = address ? getSettings(address) : {};
-      const routed = routeConsole(line, { settings: before, eligible: standing.eligible, swaps: standing.swaps, required: standing.required });
+      const routed = routeConsole(line, { settings: before, signedIn: !!address, swaps: standing.swaps });
       const base = { lines: routed.lines, suggest: routed.suggest };
       const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read";
       if (needsWallet && !address) {
-        json(res, 200, { ok: false, effect: "none", lines: ["sign in with your wallet first: it is the account here."], suggest: ["/connect"] });
+        json(res, 200, { ok: false, effect: "none", lines: ["Sign in with your wallet first. It's your account here: one signature, no transaction."], suggest: ["/connect"] });
         return;
       }
       switch (routed.effect.kind) {
@@ -908,10 +909,6 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           json(res, 200, { ok: true, ...base, effect: "view", view: routed.effect.view });
           return;
         case "chat":
-          if (!standing.eligible) {
-            json(res, 200, { ok: false, effect: "none", lines: [`your agent unlocks at ${standing.required} verified swaps from this wallet; you have ${standing.swaps}.`, `a swap is one line, signed by your wallet, paid to your address.`], suggest: ["/swap 0.05 ETH USDG", "/eligible", "/explore"] });
-            return;
-          }
           json(res, 200, { ok: true, lines: [], effect: "chat", text: routed.effect.text });
           return;
         case "desk":
@@ -919,13 +916,13 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           return;
         case "read":
           if (routed.effect.what === "whoami") { json(res, 200, { ok: true, lines: describeSettings(before), effect: "read" }); return; }
-          json(res, 200, { ok: true, lines: eligibleLines(standing), effect: "read", eligibility: standing, ...(standing.eligible ? {} : { suggest: ["/swap 0.05 ETH USDG", "/quote 0.05 ETH USDG"] }) });
+          json(res, 200, { ok: true, lines: swapsLines(standing), effect: "read", standing, ...(standing.swaps ? {} : { suggest: ["/quote 0.05 ETH USDG", "/swap 0.05 ETH USDG"] }) });
           return;
         case "settings": {
           const cleaned = sanitizeSettings(routed.effect.patch);
           if ("error" in cleaned) { json(res, 200, { ok: false, lines: [cleaned.error], effect: "settings" }); return; }
           const settings = updateSettings(address as string, cleaned.settings);
-          if (standing.eligible) void refreshPersona(address as string);
+          void refreshPersona(address as string);
           json(res, 200, { ok: true, lines: describeSettings(settings), effect: "settings", settings });
           return;
         }
@@ -938,10 +935,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     res.setHeader("Cache-Control", "no-store");
     const address = requireWallet(req, res);
     if (!address) return;
-    const standing = eligibility(address);
-    if (!standing.eligible) { json(res, 403, { ok: false, code: "not_eligible", error: `${standing.required} verified swaps unlock your agent; you have ${standing.swaps}`, eligibility: standing }); return; }
     ensureUserAgent(address)
-      .then((r) => json(res, 200, { ok: true, ...r, name: agentDisplayName(address), settings: getSettings(address), eligibility: standing }))
+      .then((r) => json(res, 200, { ok: true, ...r, name: agentDisplayName(address), settings: getSettings(address) }))
       .catch((err) => { console.error(`[my-agent] ensure failed: ${err instanceof Error ? err.message : String(err)}`); json(res, 502, { ok: false, error: "could not reach your agent; try again shortly" }); });
     return;
   }
@@ -963,7 +958,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const cleaned = sanitizeSettings(b);
       if ("error" in cleaned) { json(res, 400, { ok: false, error: cleaned.error }); return; }
       const settings = updateSettings(address, cleaned.settings);
-      if (eligibility(address).eligible) void refreshPersona(address);
+      void refreshPersona(address);
       json(res, 200, { ok: true, settings, name: agentDisplayName(address) });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;
@@ -979,8 +974,6 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const msg = typeof b.text === "string" ? b.text.trim() : "";
       if (!msg) { json(res, 400, { ok: false, error: "empty message" }); return; }
       if (msg.length > 2000) { json(res, 400, { ok: false, error: "message too long (2000 characters at most)" }); return; }
-      const standing = eligibility(address);
-      if (!standing.eligible) { json(res, 403, { ok: false, code: "not_eligible", error: `${standing.required} verified swaps unlock your agent; you have ${standing.swaps}` }); return; }
       const guard = chatGuard(address, now);
       if (guard) { json(res, guard.status, { ok: false, error: guard.error }); return; }
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
@@ -1018,7 +1011,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/eligible?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/swaps?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in

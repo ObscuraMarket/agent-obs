@@ -41,6 +41,7 @@ export function parseCli(argv: string[]): CliCommand {
     case "research":
     case "log":
       return { kind: "research", n: n ?? 12 };
+    case "swaps":
     case "eligible":
     case "progress":
       return { kind: "eligible", address: rest[0] && /^0x[0-9a-fA-F]{40}$/.test(rest[0]) ? rest[0] : null };
@@ -77,7 +78,7 @@ export const HELP: Array<[string, string]> = [
   ["obs reads", "the chain as the desk reads it: prices, the OBS market"],
   ["obs quote 0.05 ETH USDG", "what the pools pay, with the app's Relay route beside it"],
   ["obs swap 0.05 ETH USDG", "the same, signed by your own wallet, paid to your address, counted by the desk"],
-  ["obs eligible [0x...]", "verified swaps against the bar that unlocks your own agent"],
+  ["obs swaps [0x...]", "the swaps a wallet made through the console"],
   ["obs wallet create | address | balances", "your own wallet, a file on this machine"],
   ["obs capital deposit ETH 0.1 | list", "the capital ledger of your own agent"],
   ["obs model check", "does your model answer"],
