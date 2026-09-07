@@ -53,11 +53,6 @@ const COMMAND_HELP: CommandHelp[] = [
 ];
 const COMMANDS = COMMAND_HELP.map((c) => c.cmd);
 const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['name', 'goal', 'voice', 'style'], help: ['all'] };
-/** The buttons that stay under the transcript: the whole app and the desk, in plain words, no command to learn. */
-const QUICK: Array<{ label: string; line: string }> = [
-  { label: 'Status', line: '/status' }, { label: 'Desk', line: '/desk' }, { label: 'My agent', line: '/agent' }, { label: 'Wallet', line: '/wallet' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
-  { label: 'Yield', line: '/yield' }, { label: 'Apps', line: '/apps' }, { label: 'Model', line: '/model' }, { label: 'Credits', line: '/credits' }, { label: 'Help', line: '/help' },
-];
 const SESSION_KEY = 'obs-console-session';
 
 /**
@@ -98,7 +93,6 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
   /** What the desk offers right now, read once from its status: Apps stay hidden until Composio is switched on there, and the door's wording follows its gate. */
   appsOn = true;
   gate: 'on' | 'allowlist' | 'off' = 'on';
-  get quick(): Array<{ label: string; line: string }> { return this.appsOn ? QUICK : QUICK.filter((q) => q.line !== '/apps'); }
   /** The welcome card's third line: who gets an agent by connecting, as the door stands today. */
   get inviteLine(): string {
     const who = this.gate === 'allowlist' ? 'For invited wallets' : this.gate === 'off' ? 'For everyone' : 'For OBS and AOBS holders';

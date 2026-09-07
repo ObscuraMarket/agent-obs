@@ -152,16 +152,6 @@ a.cli__chip--link:hover { background: rgba(184, 255, 61, 0.1); }
 .cli__card-text { font-size: 13.5px; line-height: 1.5; color: var(--text-dim); }
 .cli__welcome-note { margin: 14px 0 0; font-size: 13px; color: var(--text-faint); }
 
-/* The whole app and the desk under the transcript, in plain words, always one tap away. */
-.cli__quick { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel); overflow-x: auto; scrollbar-width: none; }
-.cli__quick::-webkit-scrollbar { display: none; }
-.cli__quick-btn {
-  flex: 0 0 auto; font-family: var(--body); font-size: 13px; font-weight: 600; color: var(--text-dim); background: transparent;
-  border: 1px solid var(--border-strong); border-radius: 999px; padding: 7px 14px; cursor: pointer; transition: color 0.15s ease, border-color 0.15s ease;
-}
-.cli__quick-btn:hover:not(:disabled), .cli__quick-btn--on { color: var(--lime); border-color: var(--lime); }
-.cli__quick-btn:disabled { opacity: 0.5; cursor: default; }
-
 /* The command menu above the input: each command in a few words, so "/" is never a guess. */
 .cli__menu { display: flex; flex-direction: column; padding: 6px; border-top: 1px solid var(--border); background: var(--panel); max-height: 300px; overflow-y: auto; }
 .cli__menu-item {

@@ -80,11 +80,6 @@
       <button type="button" *ngFor="let h of hint" class="cli__hint-item" (click)="pickHint(h)">{{ h }}</button>
     </div>
 
-    <!-- The whole app and the desk, always one tap away, in plain words. -->
-    <div class="cli__quick" aria-label="Quick actions">
-      <button type="button" *ngFor="let q of quick" class="cli__quick-btn" [class.cli__quick-btn--on]="view && q.line === '/' + view" (click)="runLine(q.line)" [disabled]="busy">{{ q.label }}</button>
-    </div>
-
     <form class="cli__input-row" (submit)="submit($event)">
       <span class="cli__prompt" aria-hidden="true">&gt;</span>
       <input #cmd class="cli__input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" enterkeyhint="send" [placeholder]="placeholder" (keydown)="onKey($event)" (input)="onInput()" [disabled]="agentState === 'provisioning'" aria-label="OBS console input">
