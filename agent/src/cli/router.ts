@@ -110,7 +110,7 @@ export function helpAllLines(door: Door = {}): string[] {
   "    /style <style>     concise, balanced or deep",
   "    /voice <text>      How it should sound: dry, warm, blunt, your call",
   "    /goal <text>       What you want from it",
-  "    /reset <field>     Put one setting back to the default",
+  "    /reset <field>     Put one setting back to the default; /reset chat gives it a fresh memory, everything taught stays",
   "    /model [name]      Pick the model it runs on, from every model OpenRouter serves; /models <search> finds one",
   "    /credits           Your balance; /credits buy 10 USDG adds credits (also ETH, AOBS, or a tokenized stock like NVDA)",
   "",
@@ -275,7 +275,8 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       return ok([], { kind: "settings", patch: { goal: arg } });
     case "reset": {
       const f = arg.toLowerCase();
-      const fields: Record<string, Record<string, unknown>> = { name: { name: "" }, goal: { goal: "" }, voice: { voice: "" }, style: { style: "balanced" }, model: { model: "" } };
+      // /reset chat: a fresh memory for the agent, a new session on the gateway; what was taught (name, style, voice, goal, model) stays.
+      const fields: Record<string, Record<string, unknown>> = { name: { name: "" }, goal: { goal: "" }, voice: { voice: "" }, style: { style: "balanced" }, model: { model: "" }, chat: { chatGen: (s.chatGen ?? 0) + 1 } };
       if (!f || !(f in fields)) return err([`Put a setting back to the default: /reset ${Object.keys(fields).join(", /reset ")}`]);
       return ok([], { kind: "settings", patch: fields[f] });
     }

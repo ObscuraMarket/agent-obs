@@ -47,12 +47,12 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'style', what: 'How much it says: concise, balanced or deep', usage: '/style concise', args: true },
   { cmd: 'voice', what: 'How it should sound', usage: '/voice dry and skeptical', args: true },
   { cmd: 'goal', what: 'What you want from your agent', usage: '/goal help me learn the desk', args: true },
-  { cmd: 'reset', what: 'Put a setting back to the default', usage: '/reset name', args: true },
+  { cmd: 'reset', what: 'Put a setting back to the default; /reset chat gives your agent a fresh memory', usage: '/reset chat', args: true },
   { cmd: 'close', what: 'Put the open page away' },
   { cmd: 'clear', what: 'Clear the screen' },
 ];
 const COMMANDS = COMMAND_HELP.map((c) => c.cmd);
-const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['name', 'goal', 'voice', 'style'], help: ['all'] };
+const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['chat', 'name', 'goal', 'voice', 'style', 'model'], help: ['all'] };
 const SESSION_KEY = 'obs-console-session';
 
 /**

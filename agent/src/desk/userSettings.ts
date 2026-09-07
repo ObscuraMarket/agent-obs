@@ -19,6 +19,8 @@ export interface UserSettings {
   goal?: string;
   /** An OpenRouter model id the agent runs on; unset means the default. Checked against the catalog by the route. */
   model?: string;
+  /** Which conversation the agent is on: /reset chat moves it to the next, a fresh memory on the gateway; everything taught stays. */
+  chatGen?: number;
 }
 
 interface Row extends UserSettings {
@@ -84,6 +86,11 @@ export function sanitizeSettings(patch: unknown): { settings: UserSettings } | {
       if (!/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i.test(m) || m.length > 80) return { error: "a model is an OpenRouter id like anthropic/claude-opus-5" };
       out.model = m;
     }
+  }
+  if ("chatGen" in p) {
+    const g = Number(p.chatGen);
+    if (!Number.isInteger(g) || g < 0 || g > 1_000_000) return { error: "the chat generation is a whole number" };
+    out.chatGen = g;
   }
   if (!Object.keys(out).length) return { error: "nothing to set: name, style, voice, goal or model" };
   return { settings: out };

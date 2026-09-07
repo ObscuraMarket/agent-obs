@@ -1118,6 +1118,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           void refreshPersona(address as string);
           // A model in the patch (a reset to the default included) reaches the gateway now, not at the next ensure.
           if ("model" in cleaned.settings) void refreshModel(address as string).catch((e) => console.error(`[my-agent] model for ${address}: ${e instanceof Error ? e.message : String(e)}`));
+          // /reset chat: the agent moves to a fresh conversation on the gateway; what was taught stays.
+          if ("chatGen" in cleaned.settings) { json(res, 200, { ok: true, lines: ["Fresh start: your agent's memory of this conversation is cleared. Its name, style, voice, goal, model and trading stay as they are."], effect: "settings", settings, suggest: ["/whoami", "/agent"] }); return; }
           json(res, 200, { ok: true, lines: describeSettings(settings), effect: "settings", settings });
           return;
         }

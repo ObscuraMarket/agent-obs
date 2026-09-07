@@ -67,8 +67,9 @@ export function agentIdForWallet(address: string): string {
   return `obs-u-${address.toLowerCase().replace(/^0x/, "")}`;
 }
 
-export function sessionIdForWallet(address: string): string {
-  return `chat-${address.toLowerCase()}`;
+/** The conversation this wallet's agent is on. /reset chat moves to the next one: a fresh memory, the same agent. */
+export function sessionIdForWallet(address: string, gen: number = getSettings(address).chatGen ?? 0): string {
+  return `chat-${address.toLowerCase()}${gen > 0 ? `-${gen}` : ""}`;
 }
 
 const shortAddr = (a: string): string => `${a.slice(0, 6)}...${a.slice(-4)}`;
@@ -110,7 +111,7 @@ export function personaFor(address: string, s: UserSettings = getSettings(addres
     : door.gate === "off" ? "The console is open to anyone who connects a wallet."
     : "The console is for OBS and AOBS holders, and this person holds one of them.";
   return [
-    `You are ${name}, the personal agent of the wallet ${shortAddr(address)} (${address.toLowerCase()}). You belong to that wallet: the person who connected it trains you through the OBS console, and that wallet is the one that controls you.`,
+    `You are ${name}, the agent of the wallet ${shortAddr(address)} (${address.toLowerCase()}). You trade for this person by following Agent OBS, the house desk, from a wallet of your own once they turn you on, and you are their assistant for everything else. You belong to that wallet: the person who connected it trains you through the OBS console, and that wallet is the one that controls you.`,
     ...(name !== DEFAULT_NAME ? [`${name} is the name this person gave you. Answer to it naturally; do not correct them back to "${DEFAULT_NAME}".`] : []),
     "",
     who,

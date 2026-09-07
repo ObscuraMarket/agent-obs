@@ -32,6 +32,10 @@ test("a line without a slash is a message to the agent; a slash is a command; a 
   assert.equal(routeConsole("/style loud", ctx).error, true);
   assert.deepEqual(routeConsole("/reset goal", ctx).effect, { kind: "settings", patch: { goal: "" } });
   assert.deepEqual(routeConsole("/reset model", ctx).effect, { kind: "settings", patch: { model: "" } }, "back to the default model");
+  assert.deepEqual(routeConsole("/reset chat", ctx).effect, { kind: "settings", patch: { chatGen: 1 } }, "a fresh memory: the next conversation");
+  assert.deepEqual(routeConsole("/reset chat", { ...ctx, settings: { chatGen: 2 } }).effect, { kind: "settings", patch: { chatGen: 3 } });
+  assert.deepEqual(sanitizeSettings({ chatGen: 3 }), { settings: { chatGen: 3 } });
+  assert.ok("error" in sanitizeSettings({ chatGen: -1 }));
   // The wallet's trading agent: on, on with a size, off, resize, show; a size that is not a number is one tap from fixed.
   assert.deepEqual(routeConsole("/start", ctx).effect, { kind: "follow", action: "start" });
   assert.deepEqual(routeConsole("/start $150", ctx).effect, { kind: "follow", action: "start", sizeUsd: 150 });
@@ -142,7 +146,7 @@ test("the desk's lines come from the page's own payloads", () => {
 
 test("the personal agent's instruction carries the rules that are policy, and never an em dash", () => {
   const p = personaFor("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", { name: "Ledger", style: "concise", voice: "dry", goal: "learn the desk" });
-  assert.match(p, /^You are Ledger, the personal agent of the wallet/);
+  assert.match(p, /^You are Ledger, the agent of the wallet .* You trade for this person by following Agent OBS/);
   assert.match(p, /How you trade: you are a trading agent in one specific way\. You follow Agent OBS/);
   assert.match(p, /their trading agent: from a wallet of your own you follow the house desk/);
   assert.ok(!/not a trading agent/.test(p), "it is their trading agent, and says so");
