@@ -239,7 +239,8 @@ export async function userAgentHistory(address: string): Promise<ChatTurn[]> {
 const inFlight = new Set<string>();
 const recent = new Map<string, number[]>();
 const RATE_PER_10_MIN = Number(process.env.OBS_USER_CHAT_PER_10_MIN ?? 20);
-const SLOTS = Number(process.env.OBS_USER_CHAT_SLOTS ?? 3);
+// Ten at once: measured on 2026-09-07 (see the load test in the session notes); OBS_USER_CHAT_SLOTS overrides.
+const SLOTS = Number(process.env.OBS_USER_CHAT_SLOTS ?? 10);
 let slotsUsed = 0;
 
 export function chatGuard(address: string, now = Date.now()): { status: number; error: string } | null {

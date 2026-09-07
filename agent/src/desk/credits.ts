@@ -61,8 +61,12 @@ export const freeUsd = (env: NodeJS.ProcessEnv = process.env): number => Math.ma
 export const marginPct = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CREDITS_MARGIN_PCT ?? 25) || 0);
 /** Paying in the agent's own token earns a little extra. */
 export const bonusPct = (symbol: string, env: NodeJS.ProcessEnv = process.env): number => (symbol.toUpperCase() === AGENT_TOKEN_SYMBOL ? Math.max(0, Number(env.OBS_CREDITS_AOBS_BONUS_PCT ?? 10) || 0) : 0);
-/** Tokens the gateway sends along with a message that this desk cannot see: the conversation so far. Estimated, and metered. */
-export const contextTokens = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CREDITS_CONTEXT_TOKENS ?? 2000) || 0);
+/**
+ * Tokens the gateway sends along with a message that this desk cannot see: its own system prompt, its tool
+ * definitions and the conversation so far. Estimated, and metered. Measured on 2026-09-07 against OpenRouter's own
+ * counter: a default-model turn cost about three times what a 2,000-token allowance priced, so 8,000 is the floor.
+ */
+export const contextTokens = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CREDITS_CONTEXT_TOKENS ?? 8000) || 0);
 
 export function readCredits(): CreditRow[] {
   return readLedger<CreditRow>(CREDITS_LEDGER).filter((r) => r && isAddress(r.address) && Number.isFinite(Number(r.usd)));
