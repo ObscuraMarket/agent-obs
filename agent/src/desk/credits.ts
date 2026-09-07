@@ -17,6 +17,12 @@ import { AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "../config.ts";
 import { isAddress, isTxHash } from "./console.ts";
 
 export const CREDITS_LEDGER = "obs-credits.jsonl";
+/** The unit: a credit is a cent, so 1,000 credits are $10 of USDG. The ledger keeps dollars; people see credits. */
+export const CREDITS_PER_USD = 100;
+/** PURE: dollars as credits, to a hundredth of a credit. */
+export const toCredits = (usd: number): number => Math.round(usd * CREDITS_PER_USD * 100) / 100;
+/** PURE: credits as a person reads them: whole when whole, else two decimals, with thousands separated. */
+export const fmtCredits = (credits: number): string => (Number.isInteger(credits) ? credits.toLocaleString("en-US") : credits.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const ERC20 = parseAbi(["function transfer(address to, uint256 amount) returns (bool)"]);
 
@@ -38,7 +44,8 @@ export interface CreditRow {
 export const treasury = (env: NodeJS.ProcessEnv = process.env): string | null => (isAddress(env.OBS_CREDITS_TREASURY) ? (env.OBS_CREDITS_TREASURY as string).toLowerCase() : null);
 /** Credits can be bought when the operator named a treasury; without one, turns are metered but never refused. */
 export const creditsOn = (env: NodeJS.ProcessEnv = process.env): boolean => treasury(env) !== null;
-export const freeUsd = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CREDITS_FREE_USD ?? 1) || 0);
+/** Credits on the house for a new wallet (OBS_CREDITS_FREE, in credits), as dollars for the ledger. */
+export const freeUsd = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CREDITS_FREE ?? 100) || 0) / CREDITS_PER_USD;
 export const marginPct = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CREDITS_MARGIN_PCT ?? 25) || 0);
 /** Paying in the agent's own token earns a little extra. */
 export const bonusPct = (symbol: string, env: NodeJS.ProcessEnv = process.env): number => (symbol.toUpperCase() === AGENT_TOKEN_SYMBOL ? Math.max(0, Number(env.OBS_CREDITS_AOBS_BONUS_PCT ?? 10) || 0) : 0);
@@ -151,8 +158,9 @@ export interface PaymentTx {
   note: string;
   token: string;
   amount: number;
-  /** What the payment is worth in credits, the bonus included, at prices right now. */
+  /** What the payment is worth, the bonus included, at prices right now: in dollars, and in credits. */
   creditsUsd: number;
+  credits: number;
   bonusPct: number;
 }
 
@@ -169,8 +177,8 @@ export async function paymentTx(t: PayToken, amount: number): Promise<PaymentTx 
   const creditsUsd = Math.round(usd * (1 + bonus / 100) * 100) / 100;
   const raw = toRaw(amount, t.decimals);
   const chainId = ASSETS["ETH@robinhood"] ? 4663 : 4663;
-  if (t.kind === "native") return { to, data: "0x", value: raw.toString(), chainId, note: `send ${amount} ETH to the credits treasury`, token: t.symbol, amount, creditsUsd, bonusPct: bonus };
-  return { to: t.contract as string, data: encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [to as `0x${string}`, raw] }), value: "0", chainId, note: `send ${amount} ${t.symbol} to the credits treasury`, token: t.symbol, amount, creditsUsd, bonusPct: bonus };
+  if (t.kind === "native") return { to, data: "0x", value: raw.toString(), chainId, note: `send ${amount} ETH to the credits treasury`, token: t.symbol, amount, creditsUsd, credits: toCredits(creditsUsd), bonusPct: bonus };
+  return { to: t.contract as string, data: encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [to as `0x${string}`, raw] }), value: "0", chainId, note: `send ${amount} ${t.symbol} to the credits treasury`, token: t.symbol, amount, creditsUsd, credits: toCredits(creditsUsd), bonusPct: bonus };
 }
 
 /**

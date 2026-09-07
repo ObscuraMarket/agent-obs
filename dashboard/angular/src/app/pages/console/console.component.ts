@@ -347,6 +347,12 @@ export class ConsoleComponent implements AfterViewInit {
 
   // ---- credits: one transaction to sign, read off the chain, credited ----------------------------------
 
+  /** Credits as a person reads them: whole when whole, two decimals otherwise. A credit is a cent. */
+  creditsText(c: number): string {
+    const n = Number.isInteger(c) ? c.toLocaleString('en-US') : c.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return n + ' credit' + (c === 1 ? '' : 's');
+  }
+
   private async refreshCredits(): Promise<void> {
     if (!this.token) { return; }
     try { const c = await this.get<ObsCredits>(this.obs.credits(this.token)); this.credits = c.balance; } catch { /* the bar keeps what it had */ }
@@ -367,7 +373,7 @@ export class ConsoleComponent implements AfterViewInit {
     const v: any = await this.get<any>(this.obs.creditsVerify(this.token, hash)).catch((e) => e?.error ?? e);
     if (v?.ok) {
       if (typeof v.balance === 'number') { this.credits = v.balance; }
-      this.print([{ kind: 'output', text: (v.already ? 'Already credited. ' : '') + '$' + Number(v.usd ?? 0).toFixed(2) + ' of credits added from ' + v.amount + ' ' + v.token + '. Balance: $' + Number(v.balance ?? 0).toFixed(2) + '.', suggest: ['/model', '/credits'] }]);
+      this.print([{ kind: 'output', text: (v.already ? 'Already credited. ' : '') + this.creditsText(Number(v.credits ?? 0)) + ' added from ' + v.amount + ' ' + v.token + '. Balance: ' + this.creditsText(Number(v.balance ?? 0)) + '.', suggest: ['/model', '/credits'] }]);
     } else {
       this.print([{ kind: 'error', text: 'The desk couldn\'t credit it yet: ' + (v?.reason || v?.error || 'no answer') + '. It landed at ' + ConsoleComponent.EXPLORER + '/tx/' + hash + '; type /credits in a minute.', suggest: ['/credits'] }]);
     }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { balanceUsd, creditsSummary, resolvePayToken, judgePayment, bonusPct, treasury, creditsOn, type CreditRow, type PayToken } from "../src/desk/credits.ts";
+import { balanceUsd, creditsSummary, resolvePayToken, judgePayment, bonusPct, treasury, creditsOn, toCredits, fmtCredits, freeUsd, type CreditRow, type PayToken } from "../src/desk/credits.ts";
 import { parseCatalog, findModels, featured, estimateTokens, turnCostUsd, modelLine } from "../src/desk/models.ts";
 import { sanitizeSettings, describeSettings } from "../src/desk/userSettings.ts";
 
@@ -30,6 +30,13 @@ test("credits are grants and deposits in, charges out, per wallet, and read at a
   assert.equal(creditsOn({ OBS_CREDITS_TREASURY: TREASURY } as NodeJS.ProcessEnv), true);
   assert.equal(bonusPct("AOBS", { OBS_CREDITS_AOBS_BONUS_PCT: "12" } as NodeJS.ProcessEnv), 12);
   assert.equal(bonusPct("USDG", {} as NodeJS.ProcessEnv), 0);
+  // The unit: a credit is a cent, so ten dollars of USDG are a thousand credits.
+  assert.equal(toCredits(10), 1000);
+  assert.equal(toCredits(0.00055), 0.06);
+  assert.equal(fmtCredits(1000), "1,000");
+  assert.equal(fmtCredits(99.945), "99.95");
+  assert.equal(freeUsd({} as NodeJS.ProcessEnv), 1, "a hundred credits on the house is a dollar in the ledger");
+  assert.equal(freeUsd({ OBS_CREDITS_FREE: "250" } as NodeJS.ProcessEnv), 2.5);
 });
 
 test("a payment is what a person names it, and what the chain says it was", () => {

@@ -400,8 +400,9 @@ export interface ObsCliReply {
   /** Credits after a credits effect. */
   balance?: number;
 }
-export interface ObsPayment { to: string; data: string; value: string; chainId: number; note: string; token: string; amount: number; creditsUsd: number; bonusPct: number; }
-export interface ObsCredits { ok: boolean; balance: number; granted: number; deposited: number; spent: number; turns: number; model: string; canBuy: boolean; }
+export interface ObsPayment { to: string; data: string; value: string; chainId: number; note: string; token: string; amount: number; creditsUsd: number; credits: number; bonusPct: number; }
+/** Credits, a cent each: a thousand are $10 of USDG. */
+export interface ObsCredits { ok: boolean; balance: number; granted: number; deposited: number; spent: number; turns: number; creditsPerUsd: number; model: string; canBuy: boolean; }
 export interface ObsUserSettings { name?: string; style?: 'concise' | 'balanced' | 'deep'; voice?: string; goal?: string; }
 export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; }
 export interface ObsHistoryTurn { role: string; content: string; ts: string; }

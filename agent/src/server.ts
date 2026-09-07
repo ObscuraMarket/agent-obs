@@ -54,7 +54,7 @@ import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL } from "./desk/models.ts";
-import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment } from "./desk/credits.ts";
+import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
 // Public exposure needs manners: a per-address budget on requests and a cap
@@ -948,17 +948,17 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
             const sum = creditsSummary(a, rows);
             const tokens = payTokens();
             const stocks = tokens.filter((t) => t.group === "stock").map((t) => t.symbol);
-            const lines = [`Credits: $${sum.balance.toFixed(2)}${sum.turns ? ` ($${sum.spent.toFixed(2)} spent over ${sum.turns} turn${sum.turns === 1 ? "" : "s"})` : ""}.`, `Your agent runs on ${modelFor(a)}; each turn costs from this at the model's price, free models nothing.`];
+            const lines = [`Credits: ${fmtCredits(toCredits(sum.balance))}${sum.turns ? ` (${fmtCredits(toCredits(sum.spent))} spent over ${sum.turns} turn${sum.turns === 1 ? "" : "s"})` : ""}. A thousand credits are $10 of USDG.`, `Your agent runs on ${modelFor(a)}; each turn costs from this at the model's price, free models nothing.`];
             if (creditsOn()) lines.push("", "Add credits by sending ETH, USDG, AOBS or a tokenized stock to the treasury, in one signed transaction:", "  /credits buy 10 USDG   or   /credits buy 0.005 ETH   or   /credits buy 1000 AOBS", `  Stocks: ${stocks.join(", ")}. Paying in AOBS earns a little extra.`);
             else lines.push("", "Buying credits isn't switched on here yet.");
-            json(res, 200, { ok: true, effect: "credits", lines, balance: sum.balance, suggest: creditsOn() ? ["/credits buy 10 USDG", "/credits buy 0.005 ETH", "/model"] : ["/model"] });
+            json(res, 200, { ok: true, effect: "credits", lines, balance: toCredits(sum.balance), suggest: creditsOn() ? ["/credits buy 10 USDG", "/credits buy 0.005 ETH", "/model"] : ["/model"] });
             return;
           }
           const tok = resolvePayToken(routed.effect.token ?? "");
           if (!tok) { json(res, 200, { ok: false, effect: "none", lines: [`"${routed.effect.token ?? ""}" isn't something you can pay with here. ETH, USDG, AOBS, or a tokenized stock: ${payTokens().filter((t) => t.group === "stock").map((t) => t.symbol).join(", ")}.`], suggest: ["/credits"] }); return; }
           const pay = await paymentTx(tok, routed.effect.amount ?? 0);
           if ("error" in pay) { json(res, 200, { ok: false, effect: "none", lines: [pay.error], suggest: ["/credits"] }); return; }
-          json(res, 200, { ok: true, effect: "pay", pay, lines: [`${pay.amount} ${pay.token} is about $${pay.creditsUsd.toFixed(2)} of credits${pay.bonusPct ? ` (+${pay.bonusPct}% for paying in ${pay.token})` : ""}, at prices right now. Sign it in your wallet.`] });
+          json(res, 200, { ok: true, effect: "pay", pay, lines: [`${pay.amount} ${pay.token} is about ${fmtCredits(pay.credits)} credits${pay.bonusPct ? ` (+${pay.bonusPct}% for paying in ${pay.token})` : ""}, at prices right now. Sign it in your wallet.`] });
           return;
         }
         case "apps": {
@@ -1054,7 +1054,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     res.setHeader("Cache-Control", "no-store");
     const address = requireWallet(req, res);
     if (!address) return;
-    json(res, 200, { ok: true, ...creditsSummary(address, readCredits()), model: modelFor(address), canBuy: creditsOn() });
+    const sum = creditsSummary(address, readCredits());
+    json(res, 200, { ok: true, balance: toCredits(sum.balance), granted: toCredits(sum.granted), deposited: toCredits(sum.deposited), spent: toCredits(sum.spent), turns: sum.turns, creditsPerUsd: CREDITS_PER_USD, model: modelFor(address), canBuy: creditsOn() });
     return;
   }
   if (path === "/api/obs/credits/verify") {
@@ -1067,7 +1068,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
       const r = await verifyPayment(String(b.txHash ?? ""), address, now);
       if (!r.ok) { json(res, 409, { ok: false, reason: r.reason }); return; }
-      json(res, 200, { ok: true, already: r.already, usd: r.row.usd, token: r.row.token, amount: r.row.amount, balance: balanceUsd(address, readCredits()) });
+      json(res, 200, { ok: true, already: r.already, credits: toCredits(r.row.usd), usd: r.row.usd, token: r.row.token, amount: r.row.amount, balance: toCredits(balanceUsd(address, readCredits())) });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;
   }
@@ -1104,7 +1105,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const modelId = modelFor(address);
       const model = await modelInfo(modelId);
       const paid = model ? !model.free : true;
-      if (paid && creditsOn() && balanceUsd(address, readCredits()) <= 0) { endTurn(address); json(res, 402, { ok: false, error: "You're out of credits. /credits shows how to add some, and /models free lists models that cost nothing." }); return; }
+      if (paid && creditsOn() && balanceUsd(address, readCredits()) <= 0) { endTurn(address); json(res, 402, { ok: false, error: "You're out of credits. /credits shows how to add some (a thousand credits are $10 of USDG), and /models free lists models that cost nothing." }); return; }
       let replyText = "";
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
       const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -1133,7 +1134,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         const tokensOut = estimateTokens(replyText);
         const charged = model ? turnCostUsd(model, tokensIn, tokensOut, marginPct()) : 0;
         chargeTurn(address, charged, { model: modelId, tokensIn, tokensOut }, Date.now());
-        send({ type: "done", charged, balance: balanceUsd(address, readCredits()), model: modelId });
+        send({ type: "done", charged: toCredits(charged), balance: toCredits(balanceUsd(address, readCredits())), model: modelId });
       } catch (err) {
         console.error(`[my-agent] stream failed (aborted=${ac.signal.aborted}, deltas=${deltas}): ${err instanceof Error ? err.message : String(err)}`);
         if (!ac.signal.aborted) send({ type: "error", message: "your agent could not respond just now; try again shortly" });

@@ -7,7 +7,7 @@
       <span class="cli__dot" [class.on]="agentState === 'ready' || agentState === 'thinking'" [class.warn]="agentState === 'provisioning' || agentState === 'error'" aria-hidden="true"></span>
       <span class="cli__who">OBS Console</span>
       <span class="cli__status">{{ statusLine }}<ng-container *ngIf="wallet"> · {{ short(wallet) }}</ng-container></span>
-      <button type="button" class="cli__credits" *ngIf="credits !== null" (click)="runLine('/credits')" title="Your credits: what your agent spends when it thinks. Tap to add some.">${{ credits | number:'1.2-2' }} credits</button>
+      <button type="button" class="cli__credits" *ngIf="credits !== null" (click)="runLine('/credits')" title="Your credits: what your agent spends when it thinks. A thousand credits are $10 of USDG. Tap to add some.">{{ creditsText(credits) }}</button>
       <button type="button" class="cli__signin" (click)="onSignInClick($event)" [disabled]="status === 'signing'">{{ status === 'signed-in' ? 'Signed in' : status === 'signing' ? 'Signing…' : 'Sign in with wallet' }}</button>
     </div>
 
