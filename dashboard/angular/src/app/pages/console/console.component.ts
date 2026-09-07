@@ -1,6 +1,6 @@
 import { AfterViewInit, Component, ElementRef, Inject, NgZone, Type, ViewChild, ViewContainerRef } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
-import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, CONSOLE_VIEWS } from '../../service/obs-desk.service';
+import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, CONSOLE_VIEWS, CONSOLE_WALLET, ConsoleWallet } from '../../service/obs-desk.service';
 
 type LineKind = 'input' | 'command' | 'output' | 'error' | 'agent' | 'system';
 interface CliLine { kind: LineKind; text: string; streaming?: boolean; suggest?: string[]; }
@@ -50,14 +50,14 @@ export class ConsoleComponent implements AfterViewInit {
   private static readonly CHAIN_HEX = '0x1237';
   private static readonly EXPLORER = 'https://robinhoodchain.blockscout.com';
 
-  constructor(private obs: ObsDeskService, private zone: NgZone, @Inject(CONSOLE_VIEWS) private views: Record<string, Type<unknown>>, title: Title, meta: Meta) {
+  constructor(private obs: ObsDeskService, private zone: NgZone, @Inject(CONSOLE_VIEWS) private views: Record<string, Type<unknown>>, @Inject(CONSOLE_WALLET) private siteWallet: ConsoleWallet | null, title: Title, meta: Meta) {
     title.setTitle('Obscura - OBS Console');
     meta.updateTag({ name: 'description', content: 'The OBS console: talk to your own agent, read the desk, quote and swap from your own wallet.' });
   }
 
   ngAfterViewInit(): void {
     this.print([{ kind: 'system', text: 'Welcome to the OBS console. Ask the desk what it\'s doing, open any page of the app from here, or sign in with your wallet to get an agent of your own.', suggest: ['/status', '/connect', '/explore'] }]);
-    void this.silentReconnect();
+    if (this.siteWallet) { this.watchSiteWallet(); } else { void this.silentReconnect(); }
     setTimeout(() => this.focusInput(), 0);
   }
 
@@ -193,7 +193,7 @@ export class ConsoleComponent implements AfterViewInit {
     try {
       if (!line.startsWith('/')) { await this.chat(line); return; }
       const head = line.slice(1).split(/\s+/)[0].toLowerCase();
-      if (head === 'connect') { await this.signIn(); return; }
+      if (head === 'connect') { await this.signIn(line.slice(1).split(/\s+/).slice(1).join(' ')); return; }
       if (head === 'clear' || head === 'cls') { this.lines = []; return; }
       const data = await this.get<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (e?.error && typeof e.error === 'object' ? e.error : { ok: false, lines: ['Couldn\'t reach the desk. Try again in a moment.'] }) as ObsCliReply);
       if (data.effect === 'clear') { this.lines = []; return; }
@@ -244,8 +244,42 @@ export class ConsoleComponent implements AfterViewInit {
 
   // ---- the wallet is the account ---------------------------------------------------
 
+  /** The wallet the site connected when it has one, else whatever the browser injected. */
   private provider(): any {
+    if (this.siteWallet?.provider) { return this.siteWallet.provider; }
     return typeof window !== 'undefined' ? (window as any).ethereum ?? null : null;
+  }
+
+  /** With the site's own wallet connection: follow the address it holds, so the header's wallet is the console's. */
+  private watchSiteWallet(): void {
+    const w = this.siteWallet;
+    if (!w) { return; }
+    let last: string | null = null;
+    w.address$.subscribe((addr) => this.zone.run(() => {
+      const next = addr || null;
+      if (next === last) { return; }
+      const had = last;
+      last = next;
+      if (!next) {
+        if (had) { this.forgetWallet(); this.print([{ kind: 'system', text: 'Wallet disconnected.' }]); }
+        return;
+      }
+      if (had && had.toLowerCase() !== next.toLowerCase()) { this.forgetWallet(); this.print([{ kind: 'system', text: 'Switched to wallet ' + this.short(next) + '.' }]); }
+      this.wallet = next;
+      this.status = 'connected';
+      void this.readChain(w.provider);
+      const s = this.readSession(next);
+      if (s) { this.token = s.token; this.status = 'signed-in'; void this.afterSignIn(true); }
+      else { this.print([{ kind: 'system', text: 'Wallet ' + this.short(next) + ' is connected. Sign in to meet your agent.', suggest: ['/connect', '/status'] }]); }
+    }));
+  }
+
+  private forgetWallet(): void {
+    this.wallet = null; this.token = null; this.standing = null; this.status = 'guest'; this.agentState = 'idle'; this.agentName = 'OBS console';
+  }
+
+  private async readChain(p: any): Promise<void> {
+    try { const c: string = await p.request({ method: 'eth_chainId' }); this.chainId = parseInt(c, 16); } catch { /* the swap reads it again */ }
   }
 
   private readSession(address: string): ObsSession | null {
@@ -303,17 +337,44 @@ export class ConsoleComponent implements AfterViewInit {
     this.chainId = parseInt(after, 16);
   }
 
-  /** Connect, sign the challenge, keep the bearer. The signature proves control; it moves nothing. */
-  private async signIn(): Promise<void> {
-    const p = this.provider();
-    if (!p) { this.print([{ kind: 'error', text: 'No wallet found in this browser. Install MetaMask or Rabby, or open this page inside your wallet\'s browser.' }]); return; }
-    const accs: string[] = await p.request({ method: 'eth_requestAccounts' });
-    this.wallet = accs?.[0] ?? null;
-    if (!this.wallet) { this.print([{ kind: 'error', text: 'The wallet didn\'t give an account.' }]); return; }
+  /**
+   * Connect, sign the challenge, keep the bearer. The signature proves control; it moves nothing, and it needs no
+   * particular chain, so nothing is switched here (a swap switches when it must). With the site's own picker,
+   * the wallet the header connected is used; when several are installed, /connect <name> picks one.
+   */
+  private async signIn(which = ''): Promise<void> {
+    const noWallet = 'No wallet found in this browser. Install MetaMask or Rabby, or open this page inside your wallet\'s browser.';
+    let p: any;
+    let wallet: string | null;
+    if (this.siteWallet) {
+      const w = this.siteWallet;
+      if (!w.address) {
+        const opts = w.list();
+        if (!opts.length) { this.print([{ kind: 'error', text: noWallet }]); return; }
+        const want = which.trim().toLowerCase();
+        const pick = want ? opts.find((o) => o.name.toLowerCase().startsWith(want) || o.rdns.toLowerCase().includes(want)) : opts.length === 1 ? opts[0] : null;
+        if (!pick) {
+          this.print([{ kind: 'system', text: want ? 'No wallet called "' + which.trim() + '" here. Pick one:' : 'Which wallet? Pick one:', suggest: opts.map((o) => '/connect ' + o.name) }]);
+          return;
+        }
+        this.print([{ kind: 'system', text: 'Connecting ' + pick.name + '. Approve it in the wallet.' }]);
+        try { await w.connect(pick); } catch (e: any) { this.print([{ kind: 'error', text: 'Not connected: ' + this.reason(e), suggest: ['/connect'] }]); return; }
+        if (!w.address) { this.print([{ kind: 'error', text: pick.name + ' didn\'t give an account.' }]); return; }
+      }
+      wallet = w.address;
+      p = w.provider;
+    } else {
+      p = this.provider();
+      if (!p) { this.print([{ kind: 'error', text: noWallet }]); return; }
+      const accs: string[] = await p.request({ method: 'eth_requestAccounts' });
+      wallet = accs?.[0] ?? null;
+      if (!wallet) { this.print([{ kind: 'error', text: 'The wallet didn\'t give an account.' }]); return; }
+      this.listen(p);
+    }
+    this.wallet = wallet;
     this.status = 'connected';
-    this.listen(p);
-    await this.ensureChain(p);
-    const stored = this.readSession(this.wallet);
+    void this.readChain(p);
+    const stored = this.readSession(wallet);
     if (stored) { this.token = stored.token; this.status = 'signed-in'; await this.afterSignIn(false); return; }
     this.status = 'signing';
     try {

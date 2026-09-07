@@ -49,6 +49,19 @@ s = s.replace("  providers: [", "  providers: [\n    // The pages the console op
 open(p, "w").write(s)
 PY
 fi
+# The console signs in with the wallet the site's own picker connected: the module hands its WalletService to the
+# console under CONSOLE_WALLET. Added once, only when absent.
+if ! grep -q "CONSOLE_WALLET" "$MODULE"; then
+  python3 - "$MODULE" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+s = s.replace("import { CONSOLE_VIEWS } from './service/obs-desk.service';", "import { CONSOLE_VIEWS, CONSOLE_WALLET } from './service/obs-desk.service';", 1)
+if "from './service/wallet.service'" not in s:
+    s = s.replace("import { CONSOLE_VIEWS, CONSOLE_WALLET } from './service/obs-desk.service';", "import { CONSOLE_VIEWS, CONSOLE_WALLET } from './service/obs-desk.service';\nimport { WalletService } from './service/wallet.service';", 1)
+s = s.replace("    { provide: CONSOLE_VIEWS, useValue:", "    // The wallet the header connected is the wallet the console signs in with.\n    { provide: CONSOLE_WALLET, useExisting: WalletService },\n    { provide: CONSOLE_VIEWS, useValue:", 1)
+open(p, "w").write(s)
+PY
+fi
 # The header: Trade, Rewards, Cards, Referral and Yield are console views now, so it lists Console, Agent, Docs and
 # Roadmap; the five pages keep their routes for deep links. Applied while the old links are there; the header's
 # active-link map learns the console route; its spec is replaced by one that describes the header this makes.

@@ -405,6 +405,22 @@ export interface ObsHistoryTurn { role: string; content: string; ts: string; }
  */
 export const CONSOLE_VIEWS = new InjectionToken<Record<string, Type<unknown>>>('obs.console.views', { providedIn: 'root', factory: () => ({}) });
 
+/** One wallet the site detected in the browser (EIP-6963, or the injected fallback). */
+export interface ConsoleWalletOption { uuid: string; name: string; rdns: string; provider: any; }
+/**
+ * The site's own wallet connection, when it has one: the same picker and the same provider the header uses, so
+ * signing in to the console uses the wallet the person already chose. A structural subset of the site's
+ * WalletService; this repo's build provides none and the console falls back to window.ethereum.
+ */
+export interface ConsoleWallet {
+  readonly address: string | null;
+  readonly provider: any;
+  readonly address$: { subscribe: (next: (address: string | null) => void) => { unsubscribe(): void } };
+  list(): ConsoleWalletOption[];
+  connect(option: ConsoleWalletOption): Promise<void>;
+}
+export const CONSOLE_WALLET = new InjectionToken<ConsoleWallet | null>('obs.console.wallet', { providedIn: 'root', factory: () => null });
+
 
 @Injectable({ providedIn: 'root' })
 export class ObsDeskService {

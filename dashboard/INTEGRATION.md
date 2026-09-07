@@ -499,7 +499,11 @@ line is a command. The wallet is the account.
   the console, from the components the site's module provides under
   `CONSOLE_VIEWS` in `obs-desk.service.ts`, which the relay wires up). Those
   five left the header on September 7: it lists Console, Agent, Docs and
-  Roadmap, and the pages keep their routes for deep links.
+  Roadmap, and the pages keep their routes for deep links. Signing in uses the
+  wallet the site's own picker connected: the module hands its `WalletService`
+  to the console under `CONSOLE_WALLET` (the relay adds it), `/connect <name>`
+  picks one when several are installed, and no chain switch is asked for until
+  a swap needs one.
   A guest may read the desk, take the tour, open the app's pages and quote;
   shaping the agent, `/swaps` and chat need the bearer. `suggest` entries are
   literal lines to submit, rendered as one-tap chips.
