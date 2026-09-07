@@ -9,6 +9,9 @@ import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
 import { resolveAsset, assetKey, type Asset } from "./assets.ts";
 import type { Trade, TradeStatus } from "./book.ts";
 
+/** How far over a cap a priced swap may land before it is refused: the width of a price tick between the model's read and this one. */
+const CAP_SLACK = 0.01;
+
 export interface Rails {
   tradingOn: boolean;
   maxSwapUsd: number;
@@ -174,7 +177,9 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   if (i.usd == null) return { ok: false, reason: `${i.from.symbol} is unpriced; refusing to size a swap blind` };
   if (!i.exit) {
     const cap = i.capUsd ?? r.maxSwapUsd;
-    if (i.usd > cap) return { ok: false, reason: `$${i.usd.toFixed(2)} exceeds the ${i.capUsd != null ? "grade" : "per-swap"} cap of $${cap}` };
+    // The model sizes an entry off the price in its observation and this check reads a fresh one, so a cent over the
+    // cap is the price having moved, not the model oversizing: one percent of slack, and the cap still means the cap.
+    if (i.usd > cap * (1 + CAP_SLACK)) return { ok: false, reason: `$${i.usd.toFixed(2)} exceeds the ${i.capUsd != null ? "grade" : "per-swap"} cap of $${cap}` };
     if (c.openOrders >= r.maxOpenOrders) return { ok: false, reason: `${c.openOrders} order(s) already open; the limit is ${r.maxOpenOrders}` };
   }
   const have = c.balances[assetKey(i.from)] ?? 0;

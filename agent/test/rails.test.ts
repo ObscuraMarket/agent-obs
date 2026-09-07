@@ -42,6 +42,8 @@ test("the rails pass a small, funded, allowlisted swap and refuse everything els
   assert.match(no({ from: resolveAsset("USDG@robinhood")!, to: resolveAsset("NVDA@robinhood")!, amount: 1 }, { rails: { ...rails, allowedAssets: new Set(["ETH@robinhood"]) } }), /allowlist/);
   assert.match(no({ usd: null }), /unpriced/);
   assert.match(no({ usd: 30 }), /per-swap cap/);
+  assert.deepEqual(checkRails(intent({ usd: 25.12 }), ctx()), { ok: true }, "a hair over the cap is the price having moved since the model sized the entry");
+  assert.match(no({ usd: 25.5 }), /per-swap cap/, "two percent over is oversizing");
   assert.match(no({}, { openOrders: 1 }), /already open/);
   assert.match(no({ amount: 0.1 }), /holds 0\.05/);
   assert.match(no({ amount: 0.049 }), /gas reserve/);
