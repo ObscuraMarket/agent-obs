@@ -141,6 +141,45 @@ s = s.replace('          <li><a routerLink="/app" class="nav-menu-link"', mobile
 open(p, "w").write(s)
 PY
 fi
+# The wallet picker sees every wallet in the browser, not only the ones that announce themselves: Phantom keeps its
+# Ethereum provider at window.phantom.ethereum and does not always announce it, and a browser with several wallets
+# lists them under window.ethereum.providers. Applied once, keyed on the Phantom flag it introduces.
+WALLET_TS="$APP/service/wallet.service.ts"
+if [ -f "$WALLET_TS" ] && ! grep -q "isPhantom" "$WALLET_TS"; then
+  python3 - "$WALLET_TS" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = """  list(): WalletOption[] {
+    if (this.discovered.length) return [...this.discovered];
+    const eth = (window as any).ethereum;
+    if (!eth) return [];
+    const name = eth.isMetaMask ? 'MetaMask' : eth.isCoinbaseWallet ? 'Coinbase Wallet' : eth.isRabby ? 'Rabby' : 'Browser Wallet';
+    return [{ uuid: 'injected', name, icon: '', rdns: 'injected', provider: eth }];
+  }"""
+new = """  list(): WalletOption[] {
+    // Announced wallets first, then every injected provider the page can see that did not announce itself:
+    // Phantom's Ethereum provider (window.phantom.ethereum), the providers a multi-wallet browser lists under
+    // window.ethereum.providers, and window.ethereum itself. Each provider appears once.
+    const out: WalletOption[] = [...this.discovered];
+    const seen = new Set<any>(out.map((w) => w.provider));
+    const w = window as any;
+    const nameOf = (eth: any): string => eth?.isPhantom ? 'Phantom' : eth?.isMetaMask ? 'MetaMask' : eth?.isCoinbaseWallet ? 'Coinbase Wallet' : eth?.isRabby ? 'Rabby' : eth?.isTrust ? 'Trust Wallet' : eth?.isBraveWallet ? 'Brave Wallet' : 'Browser Wallet';
+    const add = (eth: any, rdns: string) => {
+      if (!eth || typeof eth.request !== 'function' || seen.has(eth)) return;
+      if (out.some((x) => x.rdns === rdns && rdns !== 'injected')) return;
+      seen.add(eth);
+      out.push({ uuid: `${rdns}-${out.length}`, name: nameOf(eth), icon: '', rdns, provider: eth });
+    };
+    add(w.phantom?.ethereum, 'app.phantom');
+    for (const eth of Array.isArray(w.ethereum?.providers) ? w.ethereum.providers : []) add(eth, eth?.isPhantom ? 'app.phantom' : 'injected');
+    add(w.ethereum, w.ethereum?.isPhantom ? 'app.phantom' : 'injected');
+    return out;
+  }"""
+if old not in s: raise SystemExit("wallet.service.ts list() is not the shape this patch knows")
+s = s.replace(old, new, 1)
+open(p, "w").write(s)
+PY
+fi
 # The header asks the desk's door about the connected wallet, once per connection, and lights the link on yes.
 if [ -f "$HEADER_TS" ] && ! grep -q "consoleOpen" "$HEADER_TS" && [ "$CONSOLE_LIVE" != "yes" ]; then
   python3 - "$HEADER_TS" <<'PY'

@@ -400,7 +400,17 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
   private async pay(p: ObsPayment, lines: string[]): Promise<void> {
     const prov = this.provider();
     if (!prov || !this.wallet || !this.token) { this.print([{ kind: 'system', text: 'Connect your wallet first: it signs the payment.', suggest: ['/connect'] }]); return; }
-    if (this.chainId !== ConsoleComponent.CHAIN_ID) { await this.ensureChain(prov); if (this.chainId !== ConsoleComponent.CHAIN_ID) { this.print([{ kind: 'error', text: 'Switch your wallet to Robinhood Chain first.' }]); return; } }
+    if (this.chainId !== ConsoleComponent.CHAIN_ID) {
+      await this.ensureChain(prov);
+      if (this.chainId !== ConsoleComponent.CHAIN_ID) {
+        // A wallet that cannot add Robinhood Chain (Phantom, for one) can still fund the agent: the ETH just has to come from a wallet that is on the chain.
+        const text = p.purpose === 'fund'
+          ? 'Your wallet couldn\'t switch to Robinhood Chain, and some wallets can\'t add it. Send ' + p.amount + ' ETH on Robinhood Chain to your agent\'s wallet ' + p.to + ' from any wallet that is on the chain, then type /wallet.'
+          : 'Switch your wallet to Robinhood Chain first.';
+        this.print([{ kind: 'error', text, suggest: p.purpose === 'fund' ? ['/wallet'] : [] }]);
+        return;
+      }
+    }
     this.print(lines.map((t) => ({ kind: 'output' as LineKind, text: t })));
     let hash: string;
     try { hash = await prov.request({ method: 'eth_sendTransaction', params: [{ from: this.wallet, to: p.to, data: p.data, value: this.hex(p.value) }] }); }
@@ -456,7 +466,10 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
   /** The wallet the site connected when it has one, else whatever the browser injected. */
   private provider(): any {
     if (this.siteWallet?.provider) { return this.siteWallet.provider; }
-    return typeof window !== 'undefined' ? (window as any).ethereum ?? null : null;
+    if (typeof window === 'undefined') { return null; }
+    // Phantom keeps its Ethereum provider at window.phantom.ethereum and does not always set window.ethereum.
+    const w = window as any;
+    return w.ethereum ?? w.phantom?.ethereum ?? null;
   }
 
   /** With the site's own wallet connection: follow the address it holds, so the header's wallet is the console's. */
@@ -552,7 +565,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
    * the wallet the header connected is used; when several are installed, /connect <name> picks one.
    */
   private async signIn(which = ''): Promise<void> {
-    const noWallet = 'No wallet found in this browser. Install MetaMask or Rabby, or open this page inside your wallet\'s browser.';
+    const noWallet = 'No wallet found in this browser. Install MetaMask, Rabby or Phantom, or on a phone open this page inside your wallet app\'s own browser.';
     let p: any;
     let wallet: string | null;
     if (this.siteWallet) {
