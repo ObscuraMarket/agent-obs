@@ -138,3 +138,17 @@ serves only what `dashboard/INTEGRATION.md` lists. The Mac this was built
 on keeps its own copy of everything until you tell it to stop; two desks
 must never run against one wallet, so when the box is the desk, the Mac's
 timers come down.
+
+## Checking the swaps
+
+`npm run obscura:verify` (in `agent/`) asks the three places a swap can come
+from for the same pairs and compares them: the routing backend
+(`api.obscura.market`, the partners), Relay (the app's Private route, the door
+the app uses for ETH and USDG on Robinhood Chain), and the pools on Robinhood
+Chain quoted by the desk's own router, which is where every such swap settles.
+It prints one line per pair with each door's output and its spread against
+the pool, then verdicts, problems first. Read-only. With `--order` and
+`OBS_TRADING=on` it also creates one real order on the backend at the
+partner's minimum, reads it back, checks the deposit address, and sends
+nothing to it; an unfunded order expires on its own.
+

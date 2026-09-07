@@ -48,14 +48,33 @@ export interface OrderStatus {
   raw: Record<string, unknown>;
 }
 
-async function call<T>(path: string, init: RequestInit): Promise<T | null> {
+export interface ApiReply {
+  /** The HTTP status; 0 when the backend could not be reached at all. */
+  status: number;
+  body: unknown;
+  error: string | null;
+}
+
+/** The backend's answer with its status, for the checks that must tell a crash from an empty list. Never throws. */
+export async function callRaw(path: string, init: RequestInit): Promise<ApiReply> {
   try {
     const res = await fetch(API_URL + path, { ...init, headers: { "content-type": "application/json", "User-Agent": UA, ...(init.headers ?? {}) }, signal: AbortSignal.timeout(25_000) });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
+    const text = await res.text();
+    let body: unknown = text;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* not JSON: the text itself is the body, which a 500 page usually is */
+    }
+    return { status: res.status, body, error: res.ok ? null : `HTTP ${res.status}${typeof body === "string" && body.trim() ? `: ${body.trim().slice(0, 80)}` : ""}` };
+  } catch (e) {
+    return { status: 0, body: null, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+async function call<T>(path: string, init: RequestInit): Promise<T | null> {
+  const r = await callRaw(path, init);
+  return r.status >= 200 && r.status < 300 ? (r.body as T) : null;
 }
 
 export async function currencies(): Promise<Currency[]> {
@@ -85,10 +104,15 @@ export function parseQuotes(body: unknown): Quote[] {
   return out.sort((a, b) => b.toAmount - a.toAmount);
 }
 
+/** The quote call with its status kept: the verification needs to tell a 500 from "no partner". */
+export async function quoteRaw(from: AssetRef, to: AssetRef, amount: number): Promise<ApiReply & { quotes: Quote[] }> {
+  if (!(amount > 0)) return { status: 0, body: null, error: "amount must be positive", quotes: [] };
+  const r = await callRaw("/quote", { method: "POST", body: JSON.stringify({ fromCurrency: from.code, fromNetwork: from.network, toCurrency: to.code, toNetwork: to.network, amount }) });
+  return { ...r, quotes: r.status >= 200 && r.status < 300 ? parseQuotes(r.body) : [] };
+}
+
 export async function quote(from: AssetRef, to: AssetRef, amount: number): Promise<Quote[]> {
-  if (!(amount > 0)) return [];
-  const body = await call<unknown>("/quote", { method: "POST", body: JSON.stringify({ fromCurrency: from.code, fromNetwork: from.network, toCurrency: to.code, toNetwork: to.network, amount }) });
-  return parseQuotes(body);
+  return (await quoteRaw(from, to, amount)).quotes;
 }
 
 /** PURE: an order as the app reads it, or null for a miss. The deposit
