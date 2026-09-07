@@ -18,6 +18,7 @@ import { ASSETS } from "../desk/assets.ts";
 import { readTokens, dynamicPoolSpec, dynamicAssets } from "../desk/candidates.ts";
 import { UA, rpc, ethCall, rpcBlocked } from "./rpc.ts";
 import { obsMarket, poolRead, chainMemory, type MarketRead, type PoolSpec } from "./pools.ts";
+import { stockReference } from "./stockRef.ts";
 
 export { rpcBlocked };
 export type { MarketRead };
@@ -136,6 +137,19 @@ export function walletBalances(w: WalletRead): { byKey: Record<string, number>; 
   return { byKey, bySymbol, unread };
 }
 
+/**
+ * PURE with rows: the tokenized stocks that reached the wallet as credits payments (obs-credits.jsonl), so a stock
+ * someone paid with is a holding the book reads and marks. Anything else in the wallet is read as before.
+ */
+export function receivedStocks(rows: Array<{ kind?: string; token?: string }> = readLedger<{ kind?: string; token?: string }>("obs-credits.jsonl"), stocks: Record<string, string> = ((chainMemory().tokens as { stocks?: Record<string, string> }).stocks ?? {})): Array<{ symbol: string; contract: string }> {
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const sym = (r?.token ?? "").toUpperCase();
+    if (r?.kind === "deposit" && sym && stocks[sym]) seen.add(sym);
+  }
+  return [...seen].map((symbol) => ({ symbol, contract: stocks[symbol] }));
+}
+
 /** The desk's wallet as the chains and Obscura report it. Null when no wallet is configured. */
 export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead | null> {
   if (!address) return null;
@@ -153,6 +167,8 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
   for (const a of registered.filter((x) => x.chain === "robinhood" && x.symbol !== "USDG")) tokens[`${a.symbol}@${a.network}`] = await tokenBalance(a.contract as string, address, a.decimals);
   // Launch tokens the desk has traded (data/obs-tokens.json): read too, so a held one is on the book.
   for (const t of readTokens()) if (!ASSETS[`${t.symbol}@robinhood`]) tokens[`${t.symbol}@robinhood`] = await tokenBalance(t.contract, address, t.decimals);
+  // Tokenized stocks that arrived as credits payments: read too, so they are on the book.
+  for (const t of receivedStocks()) if (!(`${t.symbol}@robinhood` in tokens)) tokens[`${t.symbol}@robinhood`] = await tokenBalance(t.contract, address, 18);
   const own = { symbol: AGENT_TOKEN_SYMBOL, contract: AGENT_TOKEN, qty: await tokenBalance(AGENT_TOKEN, address, 18) };
   const nvda = tokens["NVDA@robinhood"] ?? null;
   const [[ethMainnet, ...mainnetBalances], rewards] = await Promise.all([
@@ -399,9 +415,25 @@ export async function assetPrices(symbols: string[], known: Record<string, numbe
     } else out[s] = r.priceUsd;
   }
   if (want.includes("OBS") && out.OBS == null) out.OBS = (await explorerToken()).priceUsd;
+  // A tokenized stock with no pool of its own is marked at the stock's own print, cached five minutes.
+  for (const s of want) {
+    if (s in out) continue;
+    const stocks = (chainMemory().tokens as { stocks?: Record<string, string> }).stocks ?? {};
+    if (!stocks[s]) continue;
+    const c = printCache.get(s);
+    if (c && Date.now() - c.at < PRINT_TTL_MS) { if (c.usd != null) out[s] = c.usd; continue; }
+    try {
+      const ref = await stockReference(s);
+      const usd = ref.printUsd ?? ref.perpUsd ?? null;
+      printCache.set(s, { at: Date.now(), usd });
+      if (usd != null && usd > 0) out[s] = usd;
+    } catch { printCache.set(s, { at: Date.now(), usd: null }); }
+  }
   for (const s of want) if (!(s in out)) out[s] = null;
   return out;
 }
+const printCache = new Map<string, { at: number; usd: number | null }>();
+const PRINT_TTL_MS = 5 * 60_000;
 
 export interface PriceRead {
   btcUsd: number | null;

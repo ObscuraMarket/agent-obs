@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { balanceUsd, creditsSummary, resolvePayToken, judgePayment, bonusPct, treasury, creditsOn, toCredits, fmtCredits, freeUsd, type CreditRow, type PayToken } from "../src/desk/credits.ts";
+import { balanceUsd, creditsSummary, resolvePayToken, judgePayment, bonusPct, treasury, creditsOn, toCredits, fmtCredits, freeUsd, treasuryIsDesk, capitalRowFor, type CreditRow, type PayToken } from "../src/desk/credits.ts";
+import { receivedStocks } from "../src/obscura/reads.ts";
 import { parseCatalog, findModels, featured, estimateTokens, turnCostUsd, modelLine } from "../src/desk/models.ts";
 import { sanitizeSettings, describeSettings } from "../src/desk/userSettings.ts";
 
@@ -37,6 +38,18 @@ test("credits are grants and deposits in, charges out, per wallet, and read at a
   assert.equal(fmtCredits(99.945), "99.95");
   assert.equal(freeUsd({} as NodeJS.ProcessEnv), 1, "a hundred credits on the house is a dollar in the ledger");
   assert.equal(freeUsd({ OBS_CREDITS_FREE: "250" } as NodeJS.ProcessEnv), 2.5);
+});
+
+test("when the treasury is the desk's own wallet, a payment is capital handed to the desk, and a stock paid with is read as a holding", () => {
+  assert.equal(treasuryIsDesk({ OBS_CREDITS_TREASURY: ME } as NodeJS.ProcessEnv, ME), true);
+  assert.equal(treasuryIsDesk({ OBS_CREDITS_TREASURY: ME.toLowerCase() } as NodeJS.ProcessEnv, ME), true, "case does not matter");
+  assert.equal(treasuryIsDesk({ OBS_CREDITS_TREASURY: TREASURY } as NodeJS.ProcessEnv, ME), false, "a separate treasury is not the book");
+  assert.equal(treasuryIsDesk({} as NodeJS.ProcessEnv, ME), false);
+  const row = capitalRowFor("0x000000000000000000000000000000000000dEaD", "nvda", 0.5, 114.257, "0xABC", 5);
+  assert.deepEqual(row, { at: 5, kind: "deposit", asset: "NVDA", amount: 0.5, usd: 114.26, note: "credits bought by 0x000000000000000000000000000000000000dead", txHash: "0xabc", from: "0x000000000000000000000000000000000000dead" });
+  const stocks = { NVDA: "0x3", AAPL: "0x4" };
+  assert.deepEqual(receivedStocks([{ kind: "deposit", token: "aapl" }, { kind: "deposit", token: "USDG" }, { kind: "charge", token: "NVDA" }, { kind: "deposit", token: "AAPL" }], stocks), [{ symbol: "AAPL", contract: "0x4" }]);
+  assert.deepEqual(receivedStocks([], stocks), []);
 });
 
 test("a payment is what a person names it, and what the chain says it was", () => {

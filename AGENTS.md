@@ -68,7 +68,10 @@ never pasted into a chat or an issue, and only `scripts/wallet.mjs export
 and nothing else. The desk's capital ledger (`agent/data/obs-capital.jsonl`)
 is written by `npm run capital`, never by the model and never by engineering
 on the operator's behalf; a deposit that is not in the ledger is not on the
-book.
+book. The one row the desk writes itself is a credits payment it has verified
+on chain when the credits treasury is its own wallet: the asset and amount
+that arrived, at their value then, so console revenue is capital handed to
+the desk and never trading profit.
 
 **Arming is the operator's act alone.** `OBS_TRADING=on` is set by the
 operator in their `.env`, never by engineering and never by the model. The

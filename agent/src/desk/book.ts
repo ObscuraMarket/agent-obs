@@ -53,6 +53,10 @@ export interface CapitalFlow {
   asset: string;
   amount: number;
   usd: number | null;
+  /** Set on a row the desk wrote itself: a credits payment it verified on chain, from that wallet, in that transaction. */
+  note?: string;
+  txHash?: string;
+  from?: string;
 }
 
 export interface BookSnapshot {

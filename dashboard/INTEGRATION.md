@@ -532,7 +532,9 @@ available yet.
   transaction the wallet signs (ETH, USDG, AOBS or a tokenized stock to the
   treasury). The page then calls `POST /api/obs/credits/verify` `{ txHash }`
   (bearer), which reads the payment off the chain, prices it at the pools
-  (or the stock's print) and credits it once. A credit is a cent (a thousand
+  (or the stock's print) and credits it once; when the treasury is the desk's
+  own wallet, the same payment is written to the desk's capital ledger, so the
+  book's PnL stays trading only. A credit is a cent (a thousand
   credits are $10 of USDG); every figure named credits below is in credits.
   `GET /api/obs/credits` (bearer) is `{ balance, granted, deposited, spent,
   turns, creditsPerUsd, model, canBuy }`. Every

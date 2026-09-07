@@ -13,7 +13,8 @@ import { chainMemory } from "../obscura/pools.ts";
 import { lastAgentTokenPrice } from "./agentToken.ts";
 import { stockReference } from "../obscura/stockRef.ts";
 import { assetPrices } from "../obscura/reads.ts";
-import { AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "../config.ts";
+import { AGENT_TOKEN, AGENT_TOKEN_SYMBOL, WALLET_ADDRESS } from "../config.ts";
+import { recordCapital, type CapitalFlow } from "./book.ts";
 import { isAddress, isTxHash } from "./console.ts";
 
 export const CREDITS_LEDGER = "obs-credits.jsonl";
@@ -44,6 +45,17 @@ export interface CreditRow {
 export const treasury = (env: NodeJS.ProcessEnv = process.env): string | null => (isAddress(env.OBS_CREDITS_TREASURY) ? (env.OBS_CREDITS_TREASURY as string).toLowerCase() : null);
 /** Credits can be bought when the operator named a treasury; without one, turns are metered but never refused. */
 export const creditsOn = (env: NodeJS.ProcessEnv = process.env): boolean => treasury(env) !== null;
+/**
+ * The treasury is the desk's own trading wallet: what people pay lands where the agent trades from. A payment is
+ * then also capital handed to the desk, and it is written to the capital ledger so the book measures trading
+ * against it rather than counting it as profit the desk never made.
+ */
+export const treasuryIsDesk = (env: NodeJS.ProcessEnv = process.env, wallet: string = WALLET_ADDRESS): boolean => { const t = treasury(env); return !!t && !!wallet && t === wallet.toLowerCase(); };
+
+/** PURE: the capital row for a verified payment: the asset and amount that arrived, at their value before any credits bonus. */
+export function capitalRowFor(payer: string, token: string, amount: number, usd: number, txHash: string, at: number): CapitalFlow {
+  return { at, kind: "deposit", asset: token.toUpperCase(), amount, usd: Math.round(usd * 100) / 100, note: `credits bought by ${payer.toLowerCase()}`, txHash: txHash.toLowerCase(), from: payer.toLowerCase() };
+}
 /** Credits on the house for a new wallet (OBS_CREDITS_FREE, in credits), as dollars for the ledger. */
 export const freeUsd = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CREDITS_FREE ?? 100) || 0) / CREDITS_PER_USD;
 export const marginPct = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CREDITS_MARGIN_PCT ?? 25) || 0);
@@ -225,5 +237,6 @@ export async function verifyPayment(hash: string, address: string, now = Date.no
   const bonus = bonusPct(j.token.symbol);
   const row: CreditRow = { at: now, address: address.toLowerCase(), kind: "deposit", usd: Math.round(usd * (1 + bonus / 100) * 100) / 100, token: j.token.symbol, amount: j.amount, txHash: hash.toLowerCase(), note: bonus ? `+${bonus}% for paying in ${j.token.symbol}` : undefined };
   appendLedger(CREDITS_LEDGER, row as unknown as Record<string, unknown>);
+  if (treasuryIsDesk()) recordCapital(capitalRowFor(address, j.token.symbol, j.amount, usd, hash, now));
   return { ok: true, row, already: false };
 }
