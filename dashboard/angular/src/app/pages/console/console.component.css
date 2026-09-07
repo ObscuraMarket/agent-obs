@@ -22,6 +22,19 @@
 }
 .obs-console,
 .obs-console * { box-sizing: border-box; }
+/* Every button here draws itself: no native push-button under it (Safari keeps one unless told), and nothing the
+   site's global stylesheet says about buttons (height, shadow, casing, spacing) reaches the console's pills. */
+.obs-console button {
+  appearance: none; -webkit-appearance: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin: 0; min-height: 0; height: auto; line-height: 1.25; white-space: nowrap;
+  box-shadow: none; text-shadow: none; background-image: none; text-transform: none; letter-spacing: normal; text-decoration: none;
+  outline: none;
+}
+.obs-console button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.obs-console .cli__card { display: flex; align-items: flex-start; justify-content: flex-start; white-space: normal; }
+.obs-console .cli__menu-item { display: grid; align-items: baseline; white-space: normal; }
+.obs-console .cli__signin { margin-left: auto; }
 .obs-console { max-width: 1180px; margin: 0 auto; padding: 28px 20px 40px; color: var(--text); }
 
 .cli {
@@ -93,7 +106,6 @@
 .cli__chip--cmd { font-family: var(--mono); color: var(--lime); border-color: var(--border); }
 .cli__chip:hover:not(:disabled) { color: var(--text); border-color: var(--lime); background: rgba(184, 255, 61, 0.07); }
 .cli__chip:disabled { opacity: 0.4; cursor: default; }
-.cli__chip:focus-visible, .cli__signin:focus-visible, .cli__hint-item:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 .cli__caret { display: inline-block; width: 7px; height: 14px; margin-left: 3px; background: var(--lime); vertical-align: text-bottom; animation: cli-blink 1s steps(2, start) infinite; }
 @keyframes cli-blink { to { visibility: hidden; } }
