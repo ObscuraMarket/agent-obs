@@ -15,6 +15,8 @@ const ctx = { settings: {}, signedIn: false, swaps: 1 };
 test("a line without a slash is a message to the agent; a slash is a command; a typo is one tap from fixed", () => {
   assert.deepEqual(routeConsole("what are you holding", ctx), { lines: [], effect: { kind: "chat", text: "what are you holding" } });
   assert.deepEqual(routeConsole("/status", ctx).effect, { kind: "desk", command: "status" });
+  assert.deepEqual(routeConsole("/desk", ctx).effect, { kind: "desk", command: "status", house: true }, "the house desk by name, whoever is signed in");
+  assert.deepEqual(routeConsole("/obs", ctx).effect, { kind: "desk", command: "status", house: true });
   assert.deepEqual(routeConsole("/thoughts 5", ctx).effect, { kind: "desk", command: "thoughts", n: 5 });
   assert.deepEqual(routeConsole("/book", ctx).effect, { kind: "desk", command: "positions" });
   assert.deepEqual(routeConsole("/swap 0.05 ETH USDG", ctx).effect, { kind: "wallet", action: "swap", amount: 0.05, from: "ETH", to: "USDG" });

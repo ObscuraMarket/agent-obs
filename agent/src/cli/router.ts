@@ -24,7 +24,7 @@ export type ConsoleEffect =
   | { kind: "none" }
   | { kind: "clear" }
   | { kind: "chat"; text: string }
-  | { kind: "desk"; command: DeskCommand; n?: number }
+  | { kind: "desk"; command: DeskCommand; n?: number; /** /desk: the house desk's status even when signed in, where /status is the person's own agent. */ house?: boolean }
   | { kind: "read"; what: "whoami" | "swaps" }
   | { kind: "settings"; patch: Record<string, unknown> }
   /** Client-side: the wallet does these. The route only echoes them back. */
@@ -83,7 +83,8 @@ export function helpLines(door: Door = {}): string[] {
     "Type a message to talk to your agent, or start a line with / for a command.",
     "",
     "  /explore           A short tour, one step at a time",
-    "  /status            What the desk is doing right now",
+    "  /status            Your own agent's status once you're signed in; the desk's until then",
+    "  /desk              What Agent OBS, the house desk, is doing right now",
     "  /trade /rewards /cards /yield   Open a page of the app beside the console",
     "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
     `  /connect           ${connectLine(door.gate)}`,
@@ -136,7 +137,8 @@ export function helpAllLines(door: Door = {}): string[] {
     "    /yield             Coming soon, with its waitlist",
   "",
   "  The desk (live, read only)",
-  "    /status /positions /thoughts [n] /research [n] /watch /reads",
+  "    /desk              What Agent OBS is doing right now (/status is your own agent once you're signed in)",
+  "    /positions /thoughts [n] /research [n] /watch /reads",
   "",
   "  Your wallet",
   "    /connect           Connect your wallet: your account here, and the wallet that controls your agent",
@@ -196,6 +198,10 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       const last = step >= tour.length;
       return ok([`(${step}/${tour.length}) ${t.title}`, ``, ...t.lines, ...(last ? [``, `That's the tour. /help has the full list whenever you want it.`] : [])], { kind: "none" }, last ? [t.tryIt] : [t.tryIt, `/explore ${step + 1}`]);
     }
+    case "desk":
+    case "obs":
+    case "house":
+      return ok([], { kind: "desk", command: "status", house: true });
     case "wallet":
       return ok([], { kind: "agentWallet", action: "show" });
     case "fund": {
@@ -319,7 +325,7 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
   }
 }
 
-export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "model", "models", "credits", "buy", "swaps", "apps", "connect", "balance", "quote", "swap", "start", "stop", "size", "agent", "wallet", "fund", "withdraw", ...VIEWS, "close", ...DESK];
+export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "model", "models", "credits", "buy", "swaps", "apps", "connect", "balance", "quote", "swap", "start", "stop", "size", "agent", "wallet", "fund", "withdraw", "desk", ...VIEWS, "close", ...DESK];
 
 /** PURE: one near miss for a typo, by edit distance, only when it is actually close. */
 export function suggest(cmd: string): string[] {

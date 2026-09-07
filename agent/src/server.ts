@@ -1016,9 +1016,24 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         case "chat":
           json(res, 200, { ok: true, lines: [], effect: "chat", text: routed.effect.text });
           return;
-        case "desk":
-          json(res, 200, { ok: true, lines: await deskLines(routed.effect.command, routed.effect.n, now), effect: "desk" });
+        case "desk": {
+          // Signed in, /status is the person's own agent, with the house desk in one line under it; /desk is the desk.
+          if (address && routed.effect.command === "status" && !routed.effect.house) {
+            const a = address as string;
+            const state = followState(readFollow(), a);
+            const p = await pnlPayload(1, now, false);
+            const prices = (p.prices as Prices | undefined) ?? {};
+            const book = state.mode === "live"
+              ? liveBook(a, state, readFollowTrades(), readFollowNotes(), prices, await agentBalanceEth(a).catch(() => null))
+              : followBook(deskFromDisk().book.trades, state, prices);
+            const desk = await deskLines("status", undefined, now);
+            const holding = desk.find((l) => l.startsWith("holding ")) ?? "";
+            json(res, 200, { ok: true, effect: "follow", lines: [...followLines(book, now), "", `Agent OBS, the desk it follows: ${holding || "no read right now"}. /desk shows the whole desk.`], suggest: state.on ? ["/agent", "/desk", "/stop"] : ["/start", "/desk", "/wallet"] });
+            return;
+          }
+          json(res, 200, { ok: true, lines: await deskLines(routed.effect.command, routed.effect.n, now), effect: "desk", ...(address ? {} : routed.effect.command === "status" ? { suggest: ["/connect", "/explore"] } : {}) });
           return;
+        }
         case "agentWallet": {
           // The agent's own wallet: made from the seed and the person's address, funded by them, emptied back to them only.
           const a = address as string;

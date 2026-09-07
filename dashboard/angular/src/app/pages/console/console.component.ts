@@ -12,7 +12,8 @@ type AgentState = 'idle' | 'provisioning' | 'ready' | 'thinking' | 'error';
 /** Every command the page knows, in plain words, for the menu that opens on "/": kept in step with the desk's router. */
 interface CommandHelp { cmd: string; what: string; usage?: string; args?: boolean; }
 const COMMAND_HELP: CommandHelp[] = [
-  { cmd: 'status', what: 'What the desk is doing right now' },
+  { cmd: 'status', what: 'Your own agent\'s status once you\'re signed in; the desk\'s until then' },
+  { cmd: 'desk', what: 'What Agent OBS, the house desk, is doing right now' },
   { cmd: 'trade', what: 'Open Trade beside the console' },
   { cmd: 'rewards', what: 'Open Rewards: your cashback in tokenized stocks' },
   { cmd: 'cards', what: 'Open Cards' },
@@ -54,7 +55,7 @@ const COMMANDS = COMMAND_HELP.map((c) => c.cmd);
 const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['name', 'goal', 'voice', 'style'], help: ['all'] };
 /** The buttons that stay under the transcript: the whole app and the desk, in plain words, no command to learn. */
 const QUICK: Array<{ label: string; line: string }> = [
-  { label: 'Status', line: '/status' }, { label: 'My agent', line: '/agent' }, { label: 'Wallet', line: '/wallet' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
+  { label: 'Status', line: '/status' }, { label: 'Desk', line: '/desk' }, { label: 'My agent', line: '/agent' }, { label: 'Wallet', line: '/wallet' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
   { label: 'Yield', line: '/yield' }, { label: 'Apps', line: '/apps' }, { label: 'Model', line: '/model' }, { label: 'Credits', line: '/credits' }, { label: 'Help', line: '/help' },
 ];
 const SESSION_KEY = 'obs-console-session';
