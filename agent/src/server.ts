@@ -46,6 +46,7 @@ import { tradingArmed, railsFromEnv, sentTodayUsd, entryStats, type Rails } from
 import { walletBalances } from "./obscura/reads.ts";
 import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL, dataPath } from "./config.ts";
 import { xLive, xConfigured } from "./social/xClient.ts";
+import { consoleQuote, verifySwap, eligibility, isAddress } from "./desk/console.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
 // Public exposure needs manners: a per-address budget on requests and a cap
@@ -401,12 +402,31 @@ function cors(req: IncomingMessage, res: ServerResponse): void {
     refusedOrigins.set(origin, Date.now());
     console.log(`[obs] origin refused by OBS_DASHBOARD_ORIGINS: ${origin}`);
   }
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Cache-Control", "public, max-age=30");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
 }
+/** The request body, capped: the console's report is a few fields. */
+function readBody(req: IncomingMessage, max: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > max) {
+        reject(new Error(`body larger than ${max} bytes`));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
 const json = (res: ServerResponse, code: number, body: unknown) => {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
@@ -619,7 +639,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     res.end();
     return;
   }
-  if (req.method !== "GET") {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  // Read-only, with one exception: the console's report of a swap a person sent from their own wallet, which the
+  // desk verifies on the chain before it counts anything. Nothing else is written through this API.
+  if (req.method !== "GET" && !(req.method === "POST" && path === "/api/obs/console/swap")) {
     json(res, 405, { error: "read-only" });
     return;
   }
@@ -628,8 +652,6 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     json(res, 429, { error: `rate limited: ${RATE_PER_MIN} requests a minute per client` });
     return;
   }
-  const url = new URL(req.url ?? "/", "http://localhost");
-  const path = url.pathname.replace(/\/+$/, "") || "/";
   const now = Date.now();
   if (path === "/skill" || path.startsWith("/skill/")) {
     // The skill: SKILL.md and its references, for another model to load. Read-only files, no traversal.
@@ -762,13 +784,55 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     json(res, 200, { items: publicFeed(readLedger<PostRow>("x-posts.jsonl"), readLedger<PostRow>("x-replies.jsonl"), X_HANDLE, Number.isFinite(limit) ? limit : 30), at: now });
     return;
   }
+  // The swap console: a quote through the desk's router with the transactions the person's own wallet signs, where
+  // an address stands against the bar, and the report of a sent swap. Never cached: a quote is a moment.
+  if (path === "/api/obs/console/quote") {
+    res.setHeader("Cache-Control", "no-store");
+    const user = url.searchParams.get("user") ?? "";
+    if (!isAddress(user)) {
+      json(res, 400, { error: "user must be a 0x address: the swap pays its output there" });
+      return;
+    }
+    consoleQuote(url.searchParams.get("from") ?? "", url.searchParams.get("to") ?? "", Number(url.searchParams.get("amount")), user, now)
+      .then((r) => json(res, "error" in r ? 400 : 200, r))
+      .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "the quote failed" }));
+    return;
+  }
+  if (path === "/api/obs/console/eligible") {
+    res.setHeader("Cache-Control", "no-store");
+    const address = url.searchParams.get("address") ?? "";
+    if (!isAddress(address)) {
+      json(res, 400, { error: "address must be a 0x address" });
+      return;
+    }
+    json(res, 200, eligibility(address));
+    return;
+  }
+  if (path === "/api/obs/console/swap") {
+    res.setHeader("Cache-Control", "no-store");
+    readBody(req, 4096)
+      .then((text) => {
+        let b: Record<string, unknown>;
+        try {
+          b = JSON.parse(text) as Record<string, unknown>;
+        } catch {
+          json(res, 400, { error: "the body must be JSON: {address, txHash, from, to, amountIn}" });
+          return;
+        }
+        return verifySwap(String(b.txHash ?? ""), String(b.address ?? ""), String(b.from ?? ""), String(b.to ?? ""), Number(b.amountIn)).then((r) =>
+          r.ok ? json(res, 200, { ok: true, already: r.already, swap: r.swap, eligibility: eligibility(r.swap.address) }) : json(res, 409, { ok: false, reason: r.reason }),
+        );
+      })
+      .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : "bad request" }));
+    return;
+  }
   if (path === "/api/obs/reads") {
     cachedReads()
       .then((r) => json(res, 200, { ...r, block: readsBlock(r) }))
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/eligible?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in

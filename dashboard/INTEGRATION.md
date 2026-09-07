@@ -449,6 +449,34 @@ new one as a `research` event and the `hello` frame carries the last forty
 as `research`; the reference page merges them into the terminal's timeline
 between the cycles.
 
+### The swap console: `GET /api/obs/console/quote`, `GET /api/obs/console/eligible`, `POST /api/obs/console/swap`
+
+A person swaps from their own wallet on the page; three verified swaps
+(`OBS_CONSOLE_SWAPS_REQUIRED`) make their address eligible to run their own
+agent. The desk quotes, builds, verifies and counts. It never holds a key of
+theirs and never sends for them; the swap pays its output to their address
+inside the same transaction.
+
+- `GET /api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...`:
+  `{ from, to, amountIn, pool: { amountOut, minOut, costPct, feePct, route[],
+  priceInUsd, priceOutUsd }, relay: { amountOut, feeUsd, error } | null,
+  steps: [{ id, to, data, value, chainId, note }], deadline, required }`.
+  `pool` is the desk's own router through the pools on Robinhood Chain;
+  `relay` is the app's Private route for the same pair, for comparison, only
+  for ETH and USDG. `steps` are the transactions the wallet signs in order:
+  `approve-token` and `approve-permit2` once for a token input, then `swap`
+  (`value` is wei as a decimal string; `chainId` is 4663). A pair the desk
+  cannot route answers 400 with `error`. Never cached.
+- `GET /api/obs/console/eligible?address=0x...`: `{ address, swaps, required,
+  eligible, recent: [{ at, txHash, from, to, amountIn, amountOut }] }`.
+- `POST /api/obs/console/swap` with `{ address, txHash, from, to, amountIn }`:
+  the page reports the swap it sent. The desk waits for the receipt, checks
+  that the transaction came from `address`, went to the swap router and
+  succeeded (and for ETH in, carried the ETH reported), reads what arrived
+  from the receipt, and counts it once. `200 { ok: true, already, swap,
+  eligibility }` or `409 { ok: false, reason }`. This is the one write on the
+  API, and it writes only what the chain confirms.
+
 ## 2b. The skill, for other agents
 
 The same contract packaged for a model to load: `GET /skill` returns

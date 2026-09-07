@@ -11,11 +11,11 @@ import { chainOf, type Asset } from "./assets.ts";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
-function viemChain(a: Asset) {
+export function viemChain(a: Asset) {
   const c = chainOf(a);
   return defineChain({ id: c.id, name: c.name, nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [c.rpc] } } });
 }
-function transport(a: Asset) {
+export function transport(a: Asset) {
   const c = chainOf(a);
   return http(c.rpc, c.browserUa ? { fetchOptions: { headers: { "User-Agent": UA } } } : undefined);
 }
@@ -105,13 +105,13 @@ export async function readTokenBalance(asset: Asset, token: `0x${string}`, holde
   const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
   return pub.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [holder as `0x${string}`] });
 }
-export async function readErc20Allowance(asset: Asset, token: `0x${string}`, spender: `0x${string}`): Promise<bigint> {
+export async function readErc20Allowance(asset: Asset, token: `0x${string}`, spender: `0x${string}`, owner = WALLET_ADDRESS): Promise<bigint> {
   const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
-  return pub.readContract({ address: token, abi: erc20Abi, functionName: "allowance", args: [WALLET_ADDRESS as `0x${string}`, spender] });
+  return pub.readContract({ address: token, abi: erc20Abi, functionName: "allowance", args: [owner as `0x${string}`, spender] });
 }
-export async function readPermit2Allowance(asset: Asset, permit2: `0x${string}`, token: `0x${string}`, spender: `0x${string}`): Promise<{ amount: bigint; expiration: number }> {
+export async function readPermit2Allowance(asset: Asset, permit2: `0x${string}`, token: `0x${string}`, spender: `0x${string}`, owner = WALLET_ADDRESS): Promise<{ amount: bigint; expiration: number }> {
   const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
-  const [amount, expiration] = await pub.readContract({ address: permit2, abi: PERMIT2_ABI, functionName: "allowance", args: [WALLET_ADDRESS as `0x${string}`, token, spender] });
+  const [amount, expiration] = await pub.readContract({ address: permit2, abi: PERMIT2_ABI, functionName: "allowance", args: [owner as `0x${string}`, token, spender] });
   return { amount, expiration: Number(expiration) };
 }
 

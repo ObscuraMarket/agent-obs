@@ -373,6 +373,22 @@ export function probeObsApiUrl(): void {
     .finally(() => clearTimeout(timer));
 }
 
+/** One transaction the person's own wallet signs for a console swap: the one-time approvals a token input needs, then the swap. */
+export interface ObsConsoleStep { id: 'approve-token' | 'approve-permit2' | 'swap'; to: string; data: string; value: string; chainId: number; note: string; }
+/** `/api/obs/console/quote`: the pair through the desk's router, the app's Relay route beside it, and the steps. */
+export interface ObsConsoleQuote {
+  from: string; to: string; amountIn: number;
+  pool: { amountOut: number; minOut: number; costPct: number | null; feePct: number; route: string[]; priceInUsd: number | null; priceOutUsd: number | null };
+  relay: { amountOut: number | null; feeUsd: number | null; error: string | null } | null;
+  steps: ObsConsoleStep[]; deadline: number; required: number;
+}
+/** `/api/obs/console/eligible`: where an address stands against the swaps that unlock its own agent. */
+export interface ObsEligibility {
+  address: string; swaps: number; required: number; eligible: boolean;
+  recent: Array<{ at: number; txHash: string; from: string; to: string; amountIn: number; amountOut: number | null }>;
+}
+export interface ObsConsoleSwapReply { ok: boolean; already?: boolean; reason?: string; eligibility?: ObsEligibility; }
+
 @Injectable({ providedIn: 'root' })
 export class ObsDeskService {
   /** Read on every call, so a fallback chosen by the probe takes effect on the next request. */
@@ -420,6 +436,20 @@ export class ObsDeskService {
   /** The live watch's heartbeat. Polled when the stream is down. */
   live(): Observable<ObsLive> {
     return this.http.get<ObsLive>(`${this.base}/api/obs/live`);
+  }
+
+  /** The swap console: a quote through the desk's router with the transactions the person's wallet signs. */
+  consoleQuote(from: string, to: string, amount: number, user: string): Observable<ObsConsoleQuote> {
+    return this.http.get<ObsConsoleQuote>(`${this.base}/api/obs/console/quote`, { params: { from, to, amount, user } });
+  }
+
+  consoleEligible(address: string): Observable<ObsEligibility> {
+    return this.http.get<ObsEligibility>(`${this.base}/api/obs/console/eligible`, { params: { address } });
+  }
+
+  /** Report a swap the person sent; the desk reads it off the chain before it counts. */
+  consoleSwap(body: { address: string; txHash: string; from: string; to: string; amountIn: number }): Observable<ObsConsoleSwapReply> {
+    return this.http.post<ObsConsoleSwapReply>(`${this.base}/api/obs/console/swap`, body);
   }
 
   /** URL of the SSE terminal stream (hello/thought/trade events), for EventSource. */

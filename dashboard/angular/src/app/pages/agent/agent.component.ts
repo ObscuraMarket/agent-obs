@@ -5,7 +5,8 @@ import { Subscription, interval } from 'rxjs';
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import {
   CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade,
-  ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
+  ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent,
+  ObsConsoleQuote, ObsConsoleStep, ObsEligibility
 } from '../../service/obs-desk.service';
 
 type MarketAssetId = 'agent' | 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
@@ -111,6 +112,15 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   @ViewChild('chartCanvas') chartCanvas?: ElementRef<HTMLCanvasElement>;
   @ViewChild('termEl') termEl?: ElementRef<HTMLDivElement>;
+  @ViewChild('conOut') conOut?: ElementRef<HTMLDivElement>;
+
+  // The swap console: a person's own swaps from their own wallet, the gate to running their own agent.
+  conLines: Array<{ cls: string; text: string }> = [];
+  conWallet: string | null = null;
+  conChainId: number | null = null;
+  conElig: ObsEligibility | null = null;
+  conBusy = false;
+  private conListening = false;
 
   // The chart engine: a canvas drawn on a requestAnimationFrame loop outside
   // Angular. Every motion goes through a frame-time-normalised exponential
@@ -207,6 +217,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit(): void {
+    this.conWelcome();
     if (this.pendingSeed) {
       const s = this.pendingSeed;
       this.pendingSeed = null;
@@ -1398,6 +1409,196 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   short(address: string): string {
     return address.slice(0, 6) + '…' + address.slice(-4);
+  }
+
+  // ---- the swap console -----------------------------------------------
+  // Everything a person does here is signed by their own wallet (EIP-1193, the provider the browser exposes). The
+  // desk quotes through its router, hands back the transactions, and verifies each swap on the chain afterwards.
+
+  private static readonly CHAIN_ID = 4663;
+  private static readonly CHAIN_HEX = '0x1237';
+
+  private conProvider(): any {
+    return typeof window !== 'undefined' ? (window as any).ethereum ?? null : null;
+  }
+
+  private conPrint(text: string, cls = ''): void {
+    this.conLines.push({ cls, text });
+    if (this.conLines.length > 300) { this.conLines.splice(0, this.conLines.length - 300); }
+    setTimeout(() => { const el = this.conOut?.nativeElement; if (el) { el.scrollTop = el.scrollHeight; } }, 0);
+  }
+
+  private conWelcome(): void {
+    if (this.conLines.length) { return; }
+    this.conPrint('Swap console. Your wallet signs every swap; the desk quotes it through the pools on Robinhood Chain, verifies it on the chain and counts it.', 'dim');
+    this.conPrint('Three verified swaps make your wallet eligible to run your own agent. Type help for the commands.', 'dim');
+  }
+
+  conSubmit(input: HTMLInputElement): void {
+    const line = input.value;
+    input.value = '';
+    void this.conRun(line);
+  }
+
+  /** PURE: the same grammar the desk reads: "swap 0.05 ETH USDG", "quote 100 usdg to eth", "swap 1,000 USDG -> NVDA". */
+  private conParse(line: string): { kind: string; amount?: number; from?: string; to?: string; text?: string } {
+    const t = (line || '').trim();
+    if (!t) { return { kind: 'empty' }; }
+    const [head, ...rest] = t.split(/\s+/);
+    const w = head.toLowerCase();
+    if (w === 'help' || w === '?') { return { kind: 'help' }; }
+    if (w === 'connect') { return { kind: 'connect' }; }
+    if (w === 'balance' || w === 'balances' || w === 'bal') { return { kind: 'balance' }; }
+    if (w === 'status' || w === 'progress' || w === 'eligible') { return { kind: 'status' }; }
+    if (w === 'clear') { return { kind: 'clear' }; }
+    if (w === 'quote' || w === 'swap') {
+      const m = rest.join(' ').match(/^([\d,]*\d(?:\.\d+)?)\s+([A-Za-z0-9]+)\s*(?:->|to|for)?\s+([A-Za-z0-9]+)$/i);
+      const amount = m ? Number(m[1].replace(/,/g, '')) : NaN;
+      if (m && amount > 0) { return { kind: w, amount, from: m[2].toUpperCase(), to: m[3].toUpperCase() }; }
+    }
+    return { kind: 'unknown', text: t };
+  }
+
+  async conRun(line: string): Promise<void> {
+    const cmd = this.conParse(line);
+    if (cmd.kind === 'empty') { return; }
+    this.conPrint('> ' + line.trim(), 'you');
+    if (this.conBusy) { this.conPrint('still working on the last command', 'warn'); return; }
+    this.conBusy = true;
+    try {
+      switch (cmd.kind) {
+        case 'help': this.conHelp(); break;
+        case 'clear': this.conLines = []; this.conWelcome(); break;
+        case 'connect': await this.conConnect(); break;
+        case 'balance': await this.conBalance(); break;
+        case 'status': await this.conStatus(); break;
+        case 'quote': await this.conQuote(cmd.amount as number, cmd.from as string, cmd.to as string); break;
+        case 'swap': await this.conSwap(cmd.amount as number, cmd.from as string, cmd.to as string); break;
+        default: this.conPrint('not a command: ' + cmd.text + '. Type help.', 'bad');
+      }
+    } catch (e: any) {
+      this.conPrint('failed: ' + this.conReason(e), 'bad');
+    } finally {
+      this.conBusy = false;
+    }
+  }
+
+  private conReason(e: any): string {
+    const m = e?.error?.error || e?.error?.reason || e?.data?.message || e?.message || String(e);
+    return String(m).replace(/\s+/g, ' ').slice(0, 220);
+  }
+
+  private conHelp(): void {
+    this.conPrint('connect                    your wallet, on Robinhood Chain', 'dim');
+    this.conPrint('balance                    ETH in your wallet', 'dim');
+    this.conPrint('quote 0.05 ETH USDG        what the pools pay, and the app\'s Relay route beside it', 'dim');
+    this.conPrint('swap 0.05 ETH USDG         the same, signed by your wallet, paid to your address', 'dim');
+    this.conPrint('status                     your verified swaps against the bar', 'dim');
+    this.conPrint('Tokens: ETH, USDG, NVDA and any token the desk is watching, by symbol.', 'dim');
+  }
+
+  private async conConnect(): Promise<void> {
+    const p = this.conProvider();
+    if (!p) { this.conPrint('no wallet found in this browser. Install MetaMask or Rabby, or open this page inside your wallet\'s browser.', 'bad'); return; }
+    const accs: string[] = await p.request({ method: 'eth_requestAccounts' });
+    this.conWallet = accs?.[0] ?? null;
+    if (!this.conWallet) { this.conPrint('the wallet gave no account', 'bad'); return; }
+    await this.conEnsureChain(p);
+    if (!this.conListening) {
+      this.conListening = true;
+      p.on?.('accountsChanged', (a: string[]) => this.zone.run(() => { this.conWallet = a?.[0] ?? null; this.conElig = null; this.conPrint(this.conWallet ? 'wallet switched to ' + this.short(this.conWallet) : 'wallet disconnected', 'dim'); if (this.conWallet) { void this.conStatus(true); } }));
+      p.on?.('chainChanged', (c: string) => this.zone.run(() => { this.conChainId = parseInt(c, 16); }));
+    }
+    this.conPrint('connected ' + this.short(this.conWallet) + (this.conChainId === AgentComponent.CHAIN_ID ? ' on Robinhood Chain' : ' on chain ' + this.conChainId + '; switch to Robinhood Chain to swap'), this.conChainId === AgentComponent.CHAIN_ID ? 'ok' : 'warn');
+    await this.conStatus(true);
+  }
+
+  private async conEnsureChain(p: any): Promise<void> {
+    const c: string = await p.request({ method: 'eth_chainId' });
+    this.conChainId = parseInt(c, 16);
+    if (this.conChainId === AgentComponent.CHAIN_ID) { return; }
+    try {
+      await p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: AgentComponent.CHAIN_HEX }] });
+    } catch (e: any) {
+      if (e?.code === 4902 || /unrecognized|not added|4902/i.test(String(e?.message))) {
+        await p.request({ method: 'wallet_addEthereumChain', params: [{ chainId: AgentComponent.CHAIN_HEX, chainName: 'Robinhood Chain', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://rpc.mainnet.chain.robinhood.com'], blockExplorerUrls: ['https://robinhoodchain.blockscout.com'] }] });
+      } else { throw e; }
+    }
+    const after: string = await p.request({ method: 'eth_chainId' });
+    this.conChainId = parseInt(after, 16);
+  }
+
+  private async conBalance(): Promise<void> {
+    const p = this.conProvider();
+    if (!p || !this.conWallet) { this.conPrint('connect first', 'warn'); return; }
+    const hex: string = await p.request({ method: 'eth_getBalance', params: [this.conWallet, 'latest'] });
+    const eth = Number(BigInt(hex)) / 1e18;
+    this.conPrint(this.short(this.conWallet) + ': ' + eth.toFixed(5) + ' ETH on chain ' + this.conChainId, 'ok');
+  }
+
+  private async conStatus(quiet = false): Promise<void> {
+    if (!this.conWallet) { if (!quiet) { this.conPrint('connect first', 'warn'); } return; }
+    const e = await new Promise<ObsEligibility>((res, rej) => this.obs.consoleEligible(this.conWallet as string).subscribe({ next: res, error: rej }));
+    this.conElig = e;
+    this.conPrint(e.swaps + ' of ' + e.required + ' verified swaps' + (e.eligible ? ': eligible. Your agent is yours to run: the QUICKSTART link above.' : ''), e.eligible ? 'ok' : '');
+    for (const r of e.recent.slice(0, 5)) { this.conPrint('  ' + this.clock(r.at) + '  ' + r.amountIn + ' ' + r.from + ' -> ' + (r.amountOut != null ? r.amountOut + ' ' : '') + r.to + '  ' + r.txHash.slice(0, 10) + '…', 'dim'); }
+  }
+
+  private async conFetchQuote(amount: number, from: string, to: string): Promise<ObsConsoleQuote> {
+    const user = this.conWallet || '0x000000000000000000000000000000000000dEaD';
+    return new Promise<ObsConsoleQuote>((res, rej) => this.obs.consoleQuote(from, to, amount, user).subscribe({ next: res, error: rej }));
+  }
+
+  private conShowQuote(q: ObsConsoleQuote): void {
+    const cost = q.pool.costPct != null ? ', all in ' + q.pool.costPct.toFixed(2) + '% against the mark' : '';
+    this.conPrint(q.amountIn + ' ' + q.from + ' -> ' + q.pool.amountOut + ' ' + q.to + ' through the pools (' + q.pool.route.join(' then ') + cost + '); floor ' + q.pool.minOut, 'ok');
+    if (q.relay) { this.conPrint(q.relay.amountOut != null ? 'the app\'s Relay route pays ' + q.relay.amountOut + ' ' + q.to + (q.relay.feeUsd != null ? ' with $' + q.relay.feeUsd.toFixed(2) + ' of fees' : '') : 'Relay: ' + (q.relay.error || 'no quote'), 'dim'); }
+    const approvals = q.steps.filter((st) => st.id !== 'swap');
+    this.conPrint(approvals.length ? 'your wallet would sign ' + (approvals.length + 1) + ' transactions: ' + q.steps.map((st) => st.note).join('; ') : 'one transaction to sign: ' + q.steps[q.steps.length - 1].note, 'dim');
+  }
+
+  private async conQuote(amount: number, from: string, to: string): Promise<void> {
+    this.conShowQuote(await this.conFetchQuote(amount, from, to));
+  }
+
+  private conHex(v: string): string {
+    return '0x' + BigInt(v).toString(16);
+  }
+
+  private async conWaitReceipt(p: any, hash: string): Promise<{ ok: boolean; status: string }> {
+    for (let i = 0; i < 60; i++) {
+      const r = await p.request({ method: 'eth_getTransactionReceipt', params: [hash] });
+      if (r && r.status != null) { return { ok: r.status === '0x1' || r.status === 1, status: String(r.status) }; }
+      await new Promise((res) => setTimeout(res, 2000));
+    }
+    return { ok: false, status: 'not landed in two minutes' };
+  }
+
+  private async conSwap(amount: number, from: string, to: string): Promise<void> {
+    const p = this.conProvider();
+    if (!p || !this.conWallet) { this.conPrint('connect first: the swap is signed by your wallet', 'warn'); return; }
+    if (this.conChainId !== AgentComponent.CHAIN_ID) { await this.conEnsureChain(p); if (this.conChainId !== AgentComponent.CHAIN_ID) { this.conPrint('switch your wallet to Robinhood Chain first', 'bad'); return; } }
+    const q = await this.conFetchQuote(amount, from, to);
+    this.conShowQuote(q);
+    let swapHash: string | null = null;
+    for (const st of q.steps) {
+      this.conPrint('sign: ' + st.note, 'warn');
+      const hash: string = await p.request({ method: 'eth_sendTransaction', params: [{ from: this.conWallet, to: st.to, data: st.data, value: this.conHex(st.value) }] });
+      this.conPrint('sent ' + hash.slice(0, 12) + '…, waiting for the chain', 'dim');
+      const r = await this.conWaitReceipt(p, hash);
+      if (!r.ok) { this.conPrint((st.id === 'swap' ? 'the swap' : 'the approval') + ' did not succeed (' + r.status + '). Nothing else was sent.', 'bad'); return; }
+      if (st.id === 'swap') { swapHash = hash; } else { this.conPrint('approval landed', 'ok'); }
+    }
+    if (!swapHash) { return; }
+    this.conPrint('swap landed: https://robinhoodchain.blockscout.com/tx/' + swapHash, 'ok');
+    const reply = await new Promise<any>((res, rej) => this.obs.consoleSwap({ address: this.conWallet as string, txHash: swapHash as string, from: q.from, to: q.to, amountIn: q.amountIn }).subscribe({ next: res, error: rej })).catch((e) => e?.error ?? e);
+    if (reply?.ok) {
+      this.conElig = reply.eligibility ?? this.conElig;
+      const got = reply.swap?.amountOut != null ? ', ' + reply.swap.amountOut + ' ' + q.to + ' arrived' : '';
+      this.conPrint('verified on the chain' + got + '. ' + (reply.eligibility ? reply.eligibility.swaps + ' of ' + reply.eligibility.required + ' swaps' + (reply.eligibility.eligible ? ': eligible. Your agent is yours to run.' : '.') : ''), 'ok');
+    } else {
+      this.conPrint('the desk could not verify it yet: ' + (reply?.reason || reply?.error || 'no answer') + '. Type status in a minute.', 'warn');
+    }
   }
 
   get handle(): string {

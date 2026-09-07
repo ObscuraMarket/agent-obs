@@ -321,6 +321,33 @@
     <div class="term" #termEl></div>
   </div>
 
+  <!-- The swap console: a person's own swaps, from their own wallet, on the desk's router. Three of them unlock their own agent. -->
+  <div class="card block console" id="console">
+    <div class="card-head ico-head term-head">
+      <h2>
+        <svg class="term-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <polyline points="4 17 10 11 4 5"/>
+          <line class="cursor" x1="12" y1="19" x2="20" y2="19"/>
+        </svg>
+        Swap console
+      </h2>
+      <span class="con-state" [class.on]="conWallet && conChainId === 4663" [class.warn]="conWallet && conChainId !== 4663">{{ conWallet ? short(conWallet) + (conChainId === 4663 ? ' on Robinhood Chain' : ' on the wrong chain') : 'no wallet connected' }}</span>
+    </div>
+    <div class="legend">
+      <span><b>{{ conElig ? conElig.swaps : 0 }} of {{ conElig?.required || 3 }}</b> swaps from your own wallet unlock your own agent</span>
+      <span *ngIf="conElig?.eligible"><b class="lg-ok">eligible</b> <a href="https://github.com/ObscuraMarket/agent-obs/blob/main/QUICKSTART.md" target="_blank" rel="noopener">run your agent</a></span>
+      <span *ngIf="!conElig?.eligible">your wallet signs every swap; the desk quotes, verifies and counts, and never holds a key of yours</span>
+    </div>
+    <div class="term con-out" #conOut aria-live="polite">
+      <div class="con-line" *ngFor="let l of conLines" [ngClass]="l.cls">{{ l.text }}</div>
+    </div>
+    <div class="con-in">
+      <span class="con-prompt" aria-hidden="true">&gt;</span>
+      <input #conInput class="con-input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="connect · quote 0.05 ETH USDG · swap 0.05 ETH USDG · status · help" (keydown.enter)="conSubmit(conInput)" [disabled]="conBusy" aria-label="Console command">
+      <button type="button" class="con-btn" (click)="conSubmit(conInput)" [disabled]="conBusy">{{ conBusy ? 'working' : 'run' }}</button>
+    </div>
+  </div>
+
   <!-- Desk: six house boxes -->
   <div class="card block">
     <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Desk</h2><span>{{ (status?.desk?.lastThoughtAt ? 'last cycle ' + ago(status?.desk?.lastThoughtAt) : '') | titlecase }}</span></div>
