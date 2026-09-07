@@ -90,3 +90,14 @@ test("the prompt tells the truth about whether a swap can execute", () => {
   assert.ok(!/—/.test(p));
 });
 
+
+test("a swap decision whose amount carries thousands separators is a swap, not a hold", () => {
+  // 2026-09-07 02:01Z: "swap 2,823,944.32596 ONLY@robinhood -> ETH@robinhood" parsed as hold and the sell was lost.
+  const p = parseThoughtReply(["THOUGHT: the tape broke", "THESIS: swap 2,823,944.32596 ONLY@robinhood -> ETH@robinhood", "EVIDENCE: buy pressure 26% over the last 10 min", "INVALIDATION: buyers back over 50%", "CONVICTION: 4", "DECISION: swap 2,823,944.32596 ONLY@robinhood -> ETH@robinhood", "REASON: exiting a breakdown on tape"].join("\n"));
+  assert.equal(p.decision.kind, "propose-swap");
+  assert.equal((p.decision as { amount: number }).amount, 2823944.32596);
+  assert.equal((p.decision as { from: string }).from, "ONLY@robinhood");
+  const plain = parseThoughtReply(["DECISION: swap 0.04 ETH@robinhood -> WHLR@robinhood"].join("\n"));
+  assert.equal((plain.decision as { amount: number }).amount, 0.04, "an amount without separators still parses");
+  assert.equal(parseThoughtReply("DECISION: swap , ETH -> USDG").decision.kind, "hold", "no digits is no swap");
+});

@@ -202,13 +202,16 @@ export function parseThoughtReply(raw: string): { thoughts: string[]; decision: 
     } else if (key === "REASON") reason = val;
     else if (key === "NOTE") note = val;
     else if (key === "DECISION") {
-      const swap = val.match(/^swap\s+([\d.]+)\s+([A-Za-z0-9]+(?:@[A-Za-z0-9-]+)?)\s*(?:->|to)\s*([A-Za-z0-9]+(?:@[A-Za-z0-9-]+)?)/i);
-      if (swap && Number(swap[1]) > 0) {
+      // The amount as the model writes it, which is the way the observation shows it: thousands separators included.
+      // Until 2026-09-07 "swap 2,823,944.32596 ONLY@robinhood -> ETH@robinhood" failed the match, fell through to hold,
+      // and the model's sells of losing positions were lost while it kept trying.
+      const swap = val.match(/^swap\s+([\d,]*\d(?:\.\d+)?)\s+([A-Za-z0-9]+(?:@[A-Za-z0-9-]+)?)\s*(?:->|to)\s*([A-Za-z0-9]+(?:@[A-Za-z0-9-]+)?)/i);
+      if (swap && Number(swap[1].replace(/,/g, "")) > 0) {
         const norm = (s: string) => {
           const [sym, net] = s.split("@");
           return net ? `${sym.toUpperCase()}@${net.toLowerCase()}` : sym.toUpperCase();
         };
-        decision = { kind: "propose-swap", amount: Number(swap[1]), from: norm(swap[2]), to: norm(swap[3]), reason: "" };
+        decision = { kind: "propose-swap", amount: Number(swap[1].replace(/,/g, "")), from: norm(swap[2]), to: norm(swap[3]), reason: "" };
       }
       else decision = { kind: "hold", reason: "" };
     }
