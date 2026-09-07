@@ -20,6 +20,7 @@
     "dashboard": "tsx src/server.ts",
     "desk": "tsx src/desk/cycle.ts",
     "desk:dry": "DRY_RUN=1 tsx src/desk/cycle.ts",
+    "model:check": "tsx scripts/modelCheck.ts",
     "live": "tsx src/desk/live.ts",
     "live:paper": "OBS_PAPER=on tsx src/desk/live.ts",
     "wallet": "node scripts/wallet.mjs",

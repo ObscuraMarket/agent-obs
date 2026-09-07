@@ -26,6 +26,7 @@ cd agent-obs/agent
 npm install
 npm test                       # 160+ tests, all pure, about a second
 cp .env.example .env           # then set the values below
+npm run model:check            # your model answers, or the reason it did not
 npm run reads                  # live numbers from the chain, no keys, no model
 npm run dashboard              # the API and the page on http://localhost:4671
 ```
