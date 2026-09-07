@@ -63,7 +63,7 @@ git commit -q -m "chore(obs): Agent page relay from ObscuraMarket/agent-obs@$SHA
 git push -q -f origin "$BRANCH"
 BODY="Relayed from ObscuraMarket/agent-obs at $SHA.
 
-Files: \`$APP/pages/agent/\`, \`$APP/pages/console/\`, \`$APP/service/obs-desk.service.ts\`, the page's images and video under \`$SITE_ASSETS/\` (added, never removed), \`$DOCS/INTEGRATION.md\` (the API contract), \`$DOCS/reference.html\` (the dependency-free reference page). The console page is registered once in \`$APP/app-routing.module.ts\` (route \`console\`) and \`$APP/app.module.ts\` (its declaration), the way the Agent page is; nothing else in your routing, module or environments is touched. Fields in \`/api/obs/*\` are only ever added, never renamed or removed."
+Files: \`$APP/pages/agent/\`, \`$APP/pages/console/\`, \`$APP/service/obs-desk.service.ts\`, the page's images and video under \`$SITE_ASSETS/\` (added, never removed), \`$DOCS/INTEGRATION.md\` (the API contract), \`$DOCS/reference.html\` (the dependency-free reference page). The console page is registered once in \`$APP/app-routing.module.ts\` (route \`console\`) and \`$APP/app.module.ts\` (its declaration), the way the Agent page is; nothing else in your routing, module or environments is touched. Fields in \`/api/obs/*\` are added and never renamed; the few removed are listed in \`$DOCS/INTEGRATION.md\` with their dates."
 OPEN="$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json url --jq '.[0].url // ""')"
 if [ -n "$OPEN" ]; then
   echo "pull request updated: $OPEN"
