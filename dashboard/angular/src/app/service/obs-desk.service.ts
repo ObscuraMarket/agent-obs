@@ -402,7 +402,7 @@ export interface ObsCliReply {
   /** Credits after a credits effect. */
   balance?: number;
 }
-export interface ObsPayment { to: string; data: string; value: string; chainId: number; note: string; token: string; amount: number; creditsUsd: number; credits: number; bonusPct: number; }
+export interface ObsPayment { to: string; data: string; value: string; chainId: number; note: string; token: string; amount: number; creditsUsd: number; credits: number; bonusPct: number; /** What the transfer is for: credits (the default) or funding the agent's own wallet. */ purpose?: 'credits' | 'fund'; }
 /** Credits, a cent each: a thousand are $10 of USDG. */
 export interface ObsCredits { ok: boolean; balance: number; granted: number; deposited: number; spent: number; turns: number; creditsPerUsd: number; model: string; canBuy: boolean; }
 export interface ObsUserSettings { name?: string; style?: 'concise' | 'balanced' | 'deep'; voice?: string; goal?: string; }
@@ -525,6 +525,11 @@ export class ObsDeskService {
 
   credits(token: string): Observable<ObsCredits> {
     return this.http.get<ObsCredits>(`${this.base}/api/obs/credits`, this.bearer(token));
+  }
+
+  /** `/api/obs/my-agent/wallet/verify`: a funding the wallet sent to its agent's wallet, read off the chain and recorded once. */
+  fundVerify(token: string, txHash: string): Observable<{ ok: boolean; already?: boolean; amount?: number; usd?: number | null; balance?: number | null; reason?: string }> {
+    return this.http.post<{ ok: boolean; already?: boolean; amount?: number; usd?: number | null; balance?: number | null; reason?: string }>(`${this.base}/api/obs/my-agent/wallet/verify`, { txHash }, this.bearer(token));
   }
 
   creditsVerify(token: string, txHash: string): Observable<{ ok: boolean; already?: boolean; usd?: number; token?: string; amount?: number; balance?: number; reason?: string }> {

@@ -22,6 +22,9 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'stop', what: 'Turn your trading agent off' },
   { cmd: 'size', what: 'What your agent puts into each entry', usage: '/size 150', args: true },
   { cmd: 'agent', what: 'Your trading agent\'s book: on or off, what it holds, what it made' },
+  { cmd: 'wallet', what: 'Your agent\'s own wallet: where it is and what it holds' },
+  { cmd: 'fund', what: 'Put ETH into your agent\'s wallet from yours; you sign it', usage: '/fund 0.05 ETH', args: true },
+  { cmd: 'withdraw', what: 'Send ETH from your agent\'s wallet back to yours', usage: '/withdraw all', args: true },
   { cmd: 'apps', what: 'Connect Slack, Linear, X, Gmail, Google Docs and more to your agent', usage: '/apps connect Slack' },
   { cmd: 'model', what: 'Pick the model your agent runs on, any of them', usage: '/model claude' },
   { cmd: 'models', what: 'Find a model by name', usage: '/models gemini', args: true },
@@ -51,7 +54,7 @@ const COMMANDS = COMMAND_HELP.map((c) => c.cmd);
 const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['name', 'goal', 'voice', 'style'], help: ['all'] };
 /** The buttons that stay under the transcript: the whole app and the desk, in plain words, no command to learn. */
 const QUICK: Array<{ label: string; line: string }> = [
-  { label: 'Status', line: '/status' }, { label: 'My agent', line: '/agent' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
+  { label: 'Status', line: '/status' }, { label: 'My agent', line: '/agent' }, { label: 'Wallet', line: '/wallet' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
   { label: 'Yield', line: '/yield' }, { label: 'Apps', line: '/apps' }, { label: 'Model', line: '/model' }, { label: 'Credits', line: '/credits' }, { label: 'Help', line: '/help' },
 ];
 const SESSION_KEY = 'obs-console-session';
@@ -383,6 +386,13 @@ export class ConsoleComponent implements AfterViewInit {
     this.print([{ kind: 'system', text: 'Sent ' + hash.slice(0, 12) + '…, waiting for the chain.' }]);
     const r = await this.waitReceipt(prov, hash);
     if (!r.ok) { this.print([{ kind: 'error', text: 'The payment didn\'t land (' + r.status + '). Nothing was credited.', suggest: ['/credits'] }]); return; }
+    if (p.purpose === 'fund') {
+      // A funding of the agent's own wallet: the desk reads it off the chain and records it; the balance comes back with it.
+      const f: any = await this.get<any>(this.obs.fundVerify(this.token, hash)).catch((e) => e?.error ?? e);
+      if (f?.ok) { this.print([{ kind: 'output', text: (f.already ? 'Already recorded. ' : '') + 'Your agent\'s wallet received ' + Number(f.amount ?? p.amount).toFixed(5) + ' ETH' + (typeof f.balance === 'number' ? ', and holds ' + f.balance.toFixed(5) + ' ETH now.' : '.'), suggest: ['/wallet', '/start', '/agent'] }]); }
+      else { this.print([{ kind: 'error', text: 'The desk couldn\'t record it yet: ' + (f?.reason || f?.error || 'no answer') + '. It landed at ' + ConsoleComponent.EXPLORER + '/tx/' + hash + '; type /wallet in a minute.', suggest: ['/wallet'] }]); }
+      return;
+    }
     const v: any = await this.get<any>(this.obs.creditsVerify(this.token, hash)).catch((e) => e?.error ?? e);
     if (v?.ok) {
       if (typeof v.balance === 'number') { this.credits = v.balance; }

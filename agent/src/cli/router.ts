@@ -39,7 +39,9 @@ export type ConsoleEffect =
   /** Credits: the balance, or a payment to sign. */
   | { kind: "credits"; action: "show" | "buy"; amount?: number; token?: string }
   /** The wallet's own trading agent, which follows the desk: turn it on (with a size), off, resize it, or show its book. */
-  | { kind: "follow"; action: "start" | "stop" | "size" | "show"; sizeUsd?: number };
+  | { kind: "follow"; action: "start" | "stop" | "size" | "show"; sizeUsd?: number }
+  /** The agent's own wallet: show it, fund it from the person's wallet (they sign), or send ETH back to their wallet. */
+  | { kind: "agentWallet"; action: "show" | "fund" | "withdraw"; amount?: number; all?: boolean };
 
 export interface ConsoleResult {
   lines: string[];
@@ -86,6 +88,7 @@ export function helpLines(door: Door = {}): string[] {
     "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
     `  /connect           ${connectLine(door.gate)}`,
     "  /start [size]      Turn your trading agent on: it follows every trade Agent OBS makes, at your size, paper for now. /stop, /agent",
+    "  /wallet            Your agent's own wallet: /fund 0.05 ETH puts ETH in from your wallet, /withdraw all takes it back",
     ...(door.apps === false ? [] : ["  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent"]),
     "  /model             Pick the model your agent runs on, any of them",
     "  /credits           Your credits, and how to add some with ETH, USDG, AOBS or a tokenized stock",
@@ -122,6 +125,9 @@ export function helpAllLines(door: Door = {}): string[] {
   "    /stop              Turn it off; it still sells what it holds when the desk does",
   "    /size <usd>        What it puts into each entry, up to what the desk itself trades",
   "    /agent             Its book: on or off, what it holds, what it has made",
+  "    /wallet            Its own wallet, made for it and held by the desk: where it is and what it holds",
+  "    /fund 0.05 ETH     Put ETH in from your wallet; you sign the transfer",
+  "    /withdraw all      Send it back to your wallet, or a part: /withdraw 0.02; it can only ever go to the wallet you signed in with",
   "",
   "  The app (opens beside the console; /close puts it away)",
   "    /trade             Swap through Obscura's routes",
@@ -189,6 +195,21 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       const t = tour[step - 1];
       const last = step >= tour.length;
       return ok([`(${step}/${tour.length}) ${t.title}`, ``, ...t.lines, ...(last ? [``, `That's the tour. /help has the full list whenever you want it.`] : [])], { kind: "none" }, last ? [t.tryIt] : [t.tryIt, `/explore ${step + 1}`]);
+    }
+    case "wallet":
+      return ok([], { kind: "agentWallet", action: "show" });
+    case "fund": {
+      const m = arg.match(/^([\d,]*\d(?:\.\d+)?)\s*(eth)?$/i);
+      const amount = m ? Number(m[1].replace(/,/g, "")) : NaN;
+      if (!m || !(amount > 0)) return err(["Say how much ETH to send to your agent's wallet: /fund 0.05 ETH"], ["/fund 0.05 ETH", "/wallet"]);
+      return ok([], { kind: "agentWallet", action: "fund", amount });
+    }
+    case "withdraw": {
+      if (/^all$/i.test(arg)) return ok([], { kind: "agentWallet", action: "withdraw", all: true });
+      const m = arg.match(/^([\d,]*\d(?:\.\d+)?)\s*(eth)?$/i);
+      const amount = m ? Number(m[1].replace(/,/g, "")) : NaN;
+      if (!m || !(amount > 0)) return err(["Say how much to send back to your wallet: /withdraw 0.02 ETH, or /withdraw all"], ["/withdraw all", "/wallet"]);
+      return ok([], { kind: "agentWallet", action: "withdraw", amount });
     }
     case "start":
     case "on": {
@@ -293,7 +314,7 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
   }
 }
 
-export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "model", "models", "credits", "buy", "swaps", "apps", "connect", "balance", "quote", "swap", "start", "stop", "size", "agent", ...VIEWS, "close", ...DESK];
+export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "model", "models", "credits", "buy", "swaps", "apps", "connect", "balance", "quote", "swap", "start", "stop", "size", "agent", "wallet", "fund", "withdraw", ...VIEWS, "close", ...DESK];
 
 /** PURE: one near miss for a typo, by edit distance, only when it is actually close. */
 export function suggest(cmd: string): string[] {

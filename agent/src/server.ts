@@ -55,6 +55,7 @@ import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, 
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 import { holderGate, forgetHolder, gateMode } from "./desk/gate.ts";
 import { followState, readFollow, recordFollow, checkSize, followBook, followLines } from "./desk/follow.ts";
+import { walletsOn, agentWalletAddress, rememberWallet, fundTx, withdrawEth, agentBalanceEth, verifyFunding, walletLines, walletBook, readAgentCapital } from "./desk/agentWallet.ts";
 import type { Prices } from "./desk/book.ts";
 import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL } from "./desk/models.ts";
 import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, freeUsd, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
@@ -691,7 +692,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   const path = url.pathname.replace(/\/+$/, "") || "/";
   // Read-only, with one exception: the console's report of a swap a person sent from their own wallet, which the
   // desk verifies on the chain before it counts anything. Nothing else is written through this API.
-  const WRITES = new Set(["/api/obs/console/swap", "/api/obs/account/challenge", "/api/obs/account/link", "/api/obs/console/cli", "/api/obs/my-agent/ensure", "/api/obs/my-agent/stream", "/api/obs/my-agent/settings", "/api/obs/my-agent/approve", "/api/obs/credits/verify"]);
+  const WRITES = new Set(["/api/obs/console/swap", "/api/obs/my-agent/wallet/verify", "/api/obs/account/challenge", "/api/obs/account/link", "/api/obs/console/cli", "/api/obs/my-agent/ensure", "/api/obs/my-agent/stream", "/api/obs/my-agent/settings", "/api/obs/my-agent/approve", "/api/obs/credits/verify"]);
   if (req.method !== "GET" && !(req.method === "POST" && WRITES.has(path))) {
     json(res, 405, { error: "read-only" });
     return;
@@ -903,7 +904,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const before = address ? getSettings(address) : {};
       const routed = routeConsole(line, { settings: before, signedIn: !!address, swaps: standing.swaps, apps: appsOn(), gate: gateMode() });
       const base = { lines: routed.lines, suggest: routed.suggest };
-      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps" || routed.effect.kind === "credits" || routed.effect.kind === "follow" || (routed.effect.kind === "model" && routed.effect.action === "set");
+      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps" || routed.effect.kind === "credits" || routed.effect.kind === "follow" || routed.effect.kind === "agentWallet" || (routed.effect.kind === "model" && routed.effect.action === "set");
       if (needsWallet && !address) {
         json(res, 200, { ok: false, effect: "none", lines: ["Connect your wallet first. It's your account here and the wallet that controls your agent: one signature, no transaction."], suggest: ["/connect"] });
         return;
@@ -1004,6 +1005,31 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         case "desk":
           json(res, 200, { ok: true, lines: await deskLines(routed.effect.command, routed.effect.n, now), effect: "desk" });
           return;
+        case "agentWallet": {
+          // The agent's own wallet: made from the seed and the person's address, funded by them, emptied back to them only.
+          const a = address as string;
+          if (!walletsOn()) { json(res, 200, { ok: false, effect: "none", lines: ["Agent wallets aren't switched on here yet."], suggest: ["/agent", "/help"] }); return; }
+          const wallet = agentWalletAddress(a);
+          rememberWallet(a, wallet, undefined, now);
+          const act = routed.effect.action;
+          if (act === "fund") {
+            const pay = fundTx(wallet, routed.effect.amount ?? 0);
+            if ("error" in pay) { json(res, 200, { ok: false, effect: "none", lines: [pay.error], suggest: ["/fund 0.05 ETH", "/wallet"] }); return; }
+            json(res, 200, { ok: true, effect: "pay", pay, lines: [`${pay.amount} ETH to your agent's wallet ${wallet}. Sign it in your wallet.`], suggest: ["/wallet"] });
+            return;
+          }
+          if (act === "withdraw") {
+            const r = await withdrawEth(a, routed.effect.all ? "all" : (routed.effect.amount ?? 0), now);
+            if (!r.ok) { json(res, 200, { ok: false, effect: "none", lines: [r.reason], suggest: ["/wallet", "/withdraw all"] }); return; }
+            const left = await agentBalanceEth(a).catch(() => null);
+            json(res, 200, { ok: true, effect: "agentWallet", lines: [`Sent ${r.amount.toFixed(5)} ETH back to your wallet. ${r.explorerUrl}`, ...(left != null ? [`Your agent's wallet holds ${left.toFixed(5)} ETH now.`] : [])], suggest: ["/wallet", "/agent"] });
+            return;
+          }
+          const [bal, px] = await Promise.all([agentBalanceEth(a).catch(() => null), cachedPrices(["ETH"]).then((p) => p.ETH ?? null).catch(() => null)]);
+          const lines = bal == null ? [`Your agent's wallet: ${wallet}`, "  its balance could not be read right now; try again in a moment."] : walletLines(wallet, bal, px, walletBook(a, readAgentCapital()));
+          json(res, 200, { ok: true, effect: "agentWallet", lines, wallet, suggest: ["/fund 0.05 ETH", "/withdraw all", "/agent"] });
+          return;
+        }
         case "follow": {
           // The wallet's own trading agent: it follows the desk at the wallet's size, on paper for now. One row per
           // command; the book is the desk's own accounting on the mirrored trades, marked at the desk's prices.
@@ -1107,6 +1133,21 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const r = await verifyPayment(String(b.txHash ?? ""), address, now);
       if (!r.ok) { json(res, 409, { ok: false, reason: r.reason }); return; }
       json(res, 200, { ok: true, already: r.already, credits: toCredits(r.row.usd), usd: r.row.usd, token: r.row.token, amount: r.row.amount, balance: toCredits(balanceUsd(address, readCredits())) });
+    }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
+    return;
+  }
+  if (path === "/api/obs/my-agent/wallet/verify") {
+    // A funding the person sent to their agent's wallet: read off the chain, recorded once.
+    res.setHeader("Cache-Control", "no-store");
+    const address = requireWallet(req, res);
+    if (!address) return;
+    readBody(req, 4096).then(async (text) => {
+      let b: Record<string, unknown> = {};
+      try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
+      const r = await verifyFunding(String(b.txHash ?? ""), address, now);
+      if (!r.ok) { json(res, 409, { ok: false, reason: r.reason }); return; }
+      const balance = await agentBalanceEth(address).catch(() => null);
+      json(res, 200, { ok: true, already: r.already, amount: r.row.amount, usd: r.row.usd, balance });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;
   }
