@@ -165,8 +165,22 @@ export async function withdrawEth(address: string, amount: number | "all", now =
   const pub = createPublicClient({ chain, transport: transport(eth) });
   const account = agentAccount(address);
   const balance = await pub.getBalance({ address: account.address });
-  const gasPrice = await pub.getGasPrice();
-  const gasCost = TRANSFER_GAS * gasPrice * 2n;
+  // The gas is reserved the way the transfer will be priced, and the transfer is sent under that same cap: the fee
+  // cap the chain quotes for the next block, times the gas the chain says a transfer to this address takes, with a
+  // quarter kept in hand. Reserving at "twice the gas price" sent "all" over the balance once the library priced
+  // the transfer under its own, higher cap, and the person read the library's error (2026-09-07).
+  let maxFeePerGas: bigint;
+  let maxPriorityFeePerGas: bigint | undefined;
+  try {
+    const f = await pub.estimateFeesPerGas();
+    maxFeePerGas = f.maxFeePerGas ?? (await pub.getGasPrice());
+    maxPriorityFeePerGas = f.maxPriorityFeePerGas;
+  } catch {
+    maxFeePerGas = await pub.getGasPrice();
+  }
+  let gasUnits = TRANSFER_GAS;
+  try { gasUnits = await pub.estimateGas({ account: account.address, to: address, value: 1n }); } catch { /* a plain transfer's gas stands */ }
+  const gasCost = (gasUnits * maxFeePerGas * 5n) / 4n;
   let value: bigint;
   if (amount === "all") {
     value = balance - gasCost;
@@ -177,7 +191,13 @@ export async function withdrawEth(address: string, amount: number | "all", now =
     if (value + gasCost > balance) return { ok: false, reason: `Your agent's wallet holds ${Number(formatEther(balance)).toFixed(5)} ETH; ${amount} ETH plus gas is more than that. /withdraw all sends everything it can.` };
   }
   const wallet = createWalletClient({ account, chain, transport: transport(eth) });
-  const hash = await wallet.sendTransaction({ to: address, value, gas: TRANSFER_GAS });
+  let hash: `0x${string}`;
+  try {
+    hash = await wallet.sendTransaction({ to: address, value, gas: gasUnits, maxFeePerGas, ...(maxPriorityFeePerGas != null ? { maxPriorityFeePerGas } : {}) });
+  } catch (e) {
+    const m = (e as { shortMessage?: string; message?: string })?.shortMessage ?? (e instanceof Error ? e.message : String(e));
+    return { ok: false, reason: `The transfer was not sent: ${m.split("\n")[0].slice(0, 160)}. Try /withdraw all again in a moment, or a smaller amount.` };
+  }
   const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 180_000 });
   if (receipt.status !== "success") return { ok: false, reason: `the transfer ${hash} reverted` };
   const sent = Number(value) / 1e18;
