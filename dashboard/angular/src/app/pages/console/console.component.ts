@@ -1,6 +1,6 @@
 import { AfterViewInit, Component, ElementRef, Inject, NgZone, Type, ViewChild, ViewContainerRef } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
-import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, CONSOLE_VIEWS, CONSOLE_WALLET, ConsoleWallet } from '../../service/obs-desk.service';
+import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, ObsPayment, ObsCredits, CONSOLE_VIEWS, CONSOLE_WALLET, ConsoleWallet } from '../../service/obs-desk.service';
 
 type LineKind = 'input' | 'command' | 'output' | 'error' | 'agent' | 'system';
 interface Approval { toolCallId: string; tool: string; args?: unknown; decision: 'pending' | 'allowed' | 'denied'; }
@@ -20,6 +20,10 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'yield', what: 'Open Yield (coming soon)' },
   { cmd: 'connect', what: 'Connect your wallet and get your own agent' },
   { cmd: 'apps', what: 'Connect Slack, Linear, X, Gmail, Google Docs and more to your agent', usage: '/apps connect Slack' },
+  { cmd: 'model', what: 'Pick the model your agent runs on, any of them', usage: '/model claude' },
+  { cmd: 'models', what: 'Find a model by name', usage: '/models gemini', args: true },
+  { cmd: 'credits', what: 'Your credits, and how to add some', usage: '/credits buy 10 USDG' },
+  { cmd: 'buy', what: 'Add credits with ETH, USDG, AOBS or a tokenized stock', usage: '/buy 10 USDG', args: true },
   { cmd: 'help', what: 'Every command, explained' },
   { cmd: 'explore', what: 'A short tour, one step at a time' },
   { cmd: 'positions', what: 'What the desk holds' },
@@ -45,7 +49,7 @@ const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'd
 /** The buttons that stay under the transcript: the whole app and the desk, in plain words, no command to learn. */
 const QUICK: Array<{ label: string; line: string }> = [
   { label: 'Status', line: '/status' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
-  { label: 'Referral', line: '/referral' }, { label: 'Yield', line: '/yield' }, { label: 'Apps', line: '/apps' }, { label: 'Help', line: '/help' },
+  { label: 'Referral', line: '/referral' }, { label: 'Yield', line: '/yield' }, { label: 'Apps', line: '/apps' }, { label: 'Model', line: '/model' }, { label: 'Credits', line: '/credits' }, { label: 'Help', line: '/help' },
 ];
 const SESSION_KEY = 'obs-console-session';
 
@@ -77,6 +81,8 @@ export class ConsoleComponent implements AfterViewInit {
   busy = false;
   /** The site page open beside the console (trade, rewards, cards, referral, yield), or none. */
   view: string | null = null;
+  /** The wallet's credits in dollars, once signed in; null until known. */
+  credits: number | null = null;
   /** False until the first line runs: the welcome card shows in its place. */
   started = false;
   /** The command menu that opens as soon as a line starts with "/". */
@@ -321,6 +327,8 @@ export class ConsoleComponent implements AfterViewInit {
       if (data.effect === 'chat' && typeof data.text === 'string') { await this.chat(data.text, true); return; }
       if (data.effect === 'wallet' && data.ok) { await this.walletEffect(data); return; }
       if (data.effect === 'view') { this.applyView(data); return; }
+      if (data.effect === 'pay' && data.ok && data.pay) { await this.pay(data.pay, Array.isArray(data.lines) ? data.lines : []); return; }
+      if (typeof data.balance === 'number') { this.credits = data.balance; }
       if (data.effect === 'settings' && data.ok && data.settings) { this.settings = data.settings; this.agentName = this.settings.name || (this.agentState === 'ready' ? 'OBS' : this.agentName); }
       if (data.standing) { this.standing = data.standing; }
       const kind: LineKind = data.ok === false ? 'error' : 'output';
@@ -334,6 +342,34 @@ export class ConsoleComponent implements AfterViewInit {
     } finally {
       this.busy = false;
       setTimeout(() => this.focusInput(), 0);
+    }
+  }
+
+  // ---- credits: one transaction to sign, read off the chain, credited ----------------------------------
+
+  private async refreshCredits(): Promise<void> {
+    if (!this.token) { return; }
+    try { const c = await this.get<ObsCredits>(this.obs.credits(this.token)); this.credits = c.balance; } catch { /* the bar keeps what it had */ }
+  }
+
+  /** Add credits: sign the transfer to the treasury, wait for it to land, then have the desk read it and credit it. */
+  private async pay(p: ObsPayment, lines: string[]): Promise<void> {
+    const prov = this.provider();
+    if (!prov || !this.wallet || !this.token) { this.print([{ kind: 'system', text: 'Connect your wallet first: it signs the payment.', suggest: ['/connect'] }]); return; }
+    if (this.chainId !== ConsoleComponent.CHAIN_ID) { await this.ensureChain(prov); if (this.chainId !== ConsoleComponent.CHAIN_ID) { this.print([{ kind: 'error', text: 'Switch your wallet to Robinhood Chain first.' }]); return; } }
+    this.print(lines.map((t) => ({ kind: 'output' as LineKind, text: t })));
+    let hash: string;
+    try { hash = await prov.request({ method: 'eth_sendTransaction', params: [{ from: this.wallet, to: p.to, data: p.data, value: this.hex(p.value) }] }); }
+    catch (e: any) { this.print([{ kind: 'error', text: 'Not sent: ' + this.reason(e), suggest: ['/credits'] }]); return; }
+    this.print([{ kind: 'system', text: 'Sent ' + hash.slice(0, 12) + '…, waiting for the chain.' }]);
+    const r = await this.waitReceipt(prov, hash);
+    if (!r.ok) { this.print([{ kind: 'error', text: 'The payment didn\'t land (' + r.status + '). Nothing was credited.', suggest: ['/credits'] }]); return; }
+    const v: any = await this.get<any>(this.obs.creditsVerify(this.token, hash)).catch((e) => e?.error ?? e);
+    if (v?.ok) {
+      if (typeof v.balance === 'number') { this.credits = v.balance; }
+      this.print([{ kind: 'output', text: (v.already ? 'Already credited. ' : '') + '$' + Number(v.usd ?? 0).toFixed(2) + ' of credits added from ' + v.amount + ' ' + v.token + '. Balance: $' + Number(v.balance ?? 0).toFixed(2) + '.', suggest: ['/model', '/credits'] }]);
+    } else {
+      this.print([{ kind: 'error', text: 'The desk couldn\'t credit it yet: ' + (v?.reason || v?.error || 'no answer') + '. It landed at ' + ConsoleComponent.EXPLORER + '/tx/' + hash + '; type /credits in a minute.', suggest: ['/credits'] }]);
     }
   }
 
@@ -397,7 +433,7 @@ export class ConsoleComponent implements AfterViewInit {
   }
 
   private forgetWallet(): void {
-    this.wallet = null; this.token = null; this.standing = null; this.status = 'guest'; this.agentState = 'idle'; this.agentName = 'OBS console';
+    this.wallet = null; this.token = null; this.standing = null; this.credits = null; this.status = 'guest'; this.agentState = 'idle'; this.agentName = 'OBS console';
   }
 
   private async readChain(p: any): Promise<void> {
@@ -520,6 +556,7 @@ export class ConsoleComponent implements AfterViewInit {
   private async afterSignIn(quiet: boolean): Promise<void> {
     if (!this.token || !this.wallet) { return; }
     this.get<ObsStanding>(this.obs.consoleSwaps(this.wallet)).then((s) => { this.standing = s; }).catch(() => { /* the count stays as it was */ });
+    void this.refreshCredits();
     if (!quiet) { this.print([{ kind: 'system', text: 'Signed in as ' + this.short(this.wallet) + '. Setting up your agent…' }]); }
     this.agentState = 'provisioning';
     this.agentError = null;
@@ -578,6 +615,7 @@ export class ConsoleComponent implements AfterViewInit {
       const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ text }) });
       if (!res.ok || !res.body) {
         const j = await res.json().catch(() => null);
+        if (res.status === 402) { aside({ kind: 'system', text: j?.error || 'You\'re out of credits.', suggest: ['/credits', '/models free'] }); this.credits = 0; return; }
         throw new Error(j?.error || 'your agent could not respond');
       }
       const reader = res.body.getReader();
@@ -592,7 +630,7 @@ export class ConsoleComponent implements AfterViewInit {
         for (const frame of frames) {
           const line = frame.trim();
           if (!line.startsWith('data:')) { continue; }
-          let ev: { type: string; text?: string; message?: string; phase?: string; tool?: string; ok?: boolean; toolCallId?: string; args?: unknown; decision?: string };
+          let ev: { type: string; text?: string; message?: string; phase?: string; tool?: string; ok?: boolean; toolCallId?: string; args?: unknown; decision?: string; balance?: number; charged?: number };
           try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
           if (ev.type === 'delta') { acc += ev.text ?? ''; this.zone.run(() => say(acc)); }
           else if (ev.type === 'final') { acc = ev.text || acc; this.zone.run(() => say(acc)); }
@@ -600,6 +638,7 @@ export class ConsoleComponent implements AfterViewInit {
           else if (ev.type === 'tool' && ev.phase === 'call') { this.zone.run(() => aside({ kind: 'system', text: 'Working in your apps: ' + this.toolLabel(ev.tool ?? '') + '.' })); }
           else if (ev.type === 'tool' && ev.phase === 'result' && ev.ok === false) { this.zone.run(() => aside({ kind: 'system', text: 'That didn\'t work in the app (' + this.toolLabel(ev.tool ?? '') + ').' })); }
           else if (ev.type === 'approval') { this.zone.run(() => aside({ kind: 'system', text: this.agentName + ' wants to ' + this.toolLabel(ev.tool ?? '') + '. Allow it?', approval: { toolCallId: ev.toolCallId ?? '', tool: ev.tool ?? '', args: ev.args, decision: 'pending' } })); }
+          else if (ev.type === 'done' && typeof ev.balance === 'number') { this.zone.run(() => { this.credits = ev.balance as number; }); }
           else if (ev.type === 'approval_resolved') { this.zone.run(() => { for (const l of this.lines) { if (l.approval && l.approval.toolCallId === ev.toolCallId && l.approval.decision === 'pending') { l.approval.decision = ev.decision === 'approved' ? 'allowed' : 'denied'; } } }); }
         }
       }

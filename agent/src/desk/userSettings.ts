@@ -17,6 +17,8 @@ export interface UserSettings {
   style?: Style;
   voice?: string;
   goal?: string;
+  /** An OpenRouter model id the agent runs on; unset means the default. Checked against the catalog by the route. */
+  model?: string;
 }
 
 interface Row extends UserSettings {
@@ -75,7 +77,15 @@ export function sanitizeSettings(patch: unknown): { settings: UserSettings } | {
       out.goal = g;
     }
   }
-  if (!Object.keys(out).length) return { error: "nothing to set: name, style, voice or goal" };
+  if ("model" in p) {
+    if (p.model === "" || p.model === null) out.model = "";
+    else {
+      const m = typeof p.model === "string" ? p.model.trim() : "";
+      if (!/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i.test(m) || m.length > 80) return { error: "a model is an OpenRouter id like anthropic/claude-opus-5" };
+      out.model = m;
+    }
+  }
+  if (!Object.keys(out).length) return { error: "nothing to set: name, style, voice, goal or model" };
   return { settings: out };
 }
 
@@ -88,7 +98,7 @@ export function getSettings(address: string, rows: Row[] = readLedger<Row>(FILE)
     const { address: _a, at: _t, ...rest } = r;
     s = { ...s, ...rest };
   }
-  for (const k of ["name", "voice", "goal"] as const) if (s[k] === "") delete s[k];
+  for (const k of ["name", "voice", "goal", "model"] as const) if (s[k] === "") delete s[k];
   return s;
 }
 
@@ -107,5 +117,6 @@ export function describeSettings(s: UserSettings): string[] {
     `style   ${s.style ?? "balanced (default)"}`,
     `voice   ${s.voice ?? "not set"}`,
     `goal    ${s.goal ?? "not set"}`,
+    `model   ${s.model ?? "the default"}`,
   ];
 }

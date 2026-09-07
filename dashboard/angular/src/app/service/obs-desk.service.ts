@@ -395,7 +395,13 @@ export interface ObsCliReply {
   view?: string | null;
   /** Links to open, such as an app's sign-in; rendered as chips that open a new tab. */
   links?: Array<{ label: string; url: string }>;
+  /** A pay effect: the one transaction the wallet signs to add credits, priced before signing. */
+  pay?: ObsPayment;
+  /** Credits after a credits effect. */
+  balance?: number;
 }
+export interface ObsPayment { to: string; data: string; value: string; chainId: number; note: string; token: string; amount: number; creditsUsd: number; bonusPct: number; }
+export interface ObsCredits { ok: boolean; balance: number; granted: number; deposited: number; spent: number; turns: number; model: string; canBuy: boolean; }
 export interface ObsUserSettings { name?: string; style?: 'concise' | 'balanced' | 'deep'; voice?: string; goal?: string; }
 export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; }
 export interface ObsHistoryTurn { role: string; content: string; ts: string; }
@@ -512,6 +518,14 @@ export class ObsDeskService {
   /** The person's answer to an approval their agent asked for: a tool call inside one of their apps. */
   myAgentApprove(token: string, toolCallId: string, approved: boolean): Observable<{ ok: boolean; resolved?: boolean }> {
     return this.http.post<{ ok: boolean; resolved?: boolean }>(`${this.base}/api/obs/my-agent/approve`, { toolCallId, approved }, this.bearer(token));
+  }
+
+  credits(token: string): Observable<ObsCredits> {
+    return this.http.get<ObsCredits>(`${this.base}/api/obs/credits`, this.bearer(token));
+  }
+
+  creditsVerify(token: string, txHash: string): Observable<{ ok: boolean; already?: boolean; usd?: number; token?: string; amount?: number; balance?: number; reason?: string }> {
+    return this.http.post<{ ok: boolean; already?: boolean; usd?: number; token?: string; amount?: number; balance?: number; reason?: string }>(`${this.base}/api/obs/credits/verify`, { txHash }, this.bearer(token));
   }
 
   myAgentStream(token: string): { url: string; headers: Record<string, string> } {

@@ -34,7 +34,11 @@ export type ConsoleEffect =
   /** Client-side: the page opens one of the site's own pages beside the console, or closes it (null). */
   | { kind: "view"; view: ConsoleView | null }
   /** The person's apps, through Composio: what is connected, connect one, disconnect one. */
-  | { kind: "apps"; action: "list" | "connect" | "disconnect"; app?: string };
+  | { kind: "apps"; action: "list" | "connect" | "disconnect"; app?: string }
+  /** The model the agent runs on: show it, search the catalog, or pick one. */
+  | { kind: "model"; action: "show" | "list" | "set"; query?: string }
+  /** Credits: the balance, or a payment to sign. */
+  | { kind: "credits"; action: "show" | "buy"; amount?: number; token?: string };
 
 export interface ConsoleResult {
   lines: string[];
@@ -67,6 +71,8 @@ export const HELP = [
   "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
   "  /connect           Connect your wallet and get an agent of your own to talk to and train",
   "  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent",
+  "  /model             Pick the model your agent runs on, any of them",
+  "  /credits           Your credits, and how to add some with ETH, USDG, AOBS or a tokenized stock",
   "",
   "  /help all          Every command",
 ];
@@ -81,6 +87,8 @@ export const HELP_ALL = [
   "    /voice <text>      How it should sound: dry, warm, blunt, your call",
   "    /goal <text>       What you want from it",
   "    /reset <field>     Put one setting back to the default",
+  "    /model [name]      Pick the model it runs on, from every model OpenRouter serves; /models <search> finds one",
+  "    /credits           Your balance; /credits buy 10 USDG adds credits (also ETH, AOBS, or a tokenized stock like NVDA)",
   "",
   "  Your apps (your agent gets their tools, and asks you before it acts in one)",
   "    /apps              What's connected, and what can be",
@@ -186,6 +194,23 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       if (!f || !(f in fields)) return err([`Put a setting back to the default: /reset ${Object.keys(fields).join(", /reset ")}`]);
       return ok([], { kind: "settings", patch: fields[f] });
     }
+    case "model":
+    case "models": {
+      const [sub, ...rw] = arg.split(/\s+/);
+      const s2 = (sub ?? "").toLowerCase();
+      if (cmd === "models" || s2 === "list" || s2 === "search" || s2 === "find") return ok([], { kind: "model", action: "list", query: (cmd === "models" ? arg : rw.join(" ")).trim() });
+      if (!arg) return ok([], { kind: "model", action: "show" });
+      return ok([], { kind: "model", action: "set", query: arg });
+    }
+    case "credits":
+    case "buy": {
+      const text = cmd === "buy" ? arg : arg.replace(/^(?:buy|add|top\s*up)\s*/i, "");
+      if (cmd === "credits" && !arg) return ok([], { kind: "credits", action: "show" });
+      const m = text.match(/^([\d,]*\d(?:\.\d+)?)\s+(?:rh\s+)?([A-Za-z0-9]+)$/i);
+      const amount = m ? Number(m[1].replace(/,/g, "")) : NaN;
+      if (!m || !(amount > 0)) return err(["Add credits with an amount and a token: /credits buy 10 USDG", "  Also ETH, AOBS, or a tokenized stock like NVDA."], ["/credits buy 10 USDG", "/credits"]);
+      return ok([], { kind: "credits", action: "buy", amount, token: m[2].toUpperCase() });
+    }
     case "apps":
     case "integrations": {
       const [sub, ...restWords] = arg.split(/\s+/);
@@ -213,7 +238,7 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
   }
 }
 
-export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "swaps", "apps", "connect", "balance", "quote", "swap", ...VIEWS, "close", ...DESK];
+export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "model", "models", "credits", "buy", "swaps", "apps", "connect", "balance", "quote", "swap", ...VIEWS, "close", ...DESK];
 
 /** PURE: one near miss for a typo, by edit distance, only when it is actually close. */
 export function suggest(cmd: string): string[] {

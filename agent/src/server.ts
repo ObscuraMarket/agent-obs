@@ -49,10 +49,12 @@ import { xLive, xConfigured } from "./social/xClient.ts";
 import { consoleQuote, verifySwap, consoleStanding, isAddress } from "./desk/console.ts";
 import { issueChallenge, linkAccount, verifySession, bearerOf } from "./desk/accounts.ts";
 import { getSettings, updateSettings, sanitizeSettings, describeSettings } from "./desk/userSettings.ts";
-import { approveTool, ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
+import { refreshModel, modelFor, personaFor, approveTool, ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
 import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
+import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL } from "./desk/models.ts";
+import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment } from "./desk/credits.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
 // Public exposure needs manners: a per-address budget on requests and a cap
@@ -684,7 +686,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   const path = url.pathname.replace(/\/+$/, "") || "/";
   // Read-only, with one exception: the console's report of a swap a person sent from their own wallet, which the
   // desk verifies on the chain before it counts anything. Nothing else is written through this API.
-  const WRITES = new Set(["/api/obs/console/swap", "/api/obs/account/challenge", "/api/obs/account/link", "/api/obs/console/cli", "/api/obs/my-agent/ensure", "/api/obs/my-agent/stream", "/api/obs/my-agent/settings", "/api/obs/my-agent/approve"]);
+  const WRITES = new Set(["/api/obs/console/swap", "/api/obs/account/challenge", "/api/obs/account/link", "/api/obs/console/cli", "/api/obs/my-agent/ensure", "/api/obs/my-agent/stream", "/api/obs/my-agent/settings", "/api/obs/my-agent/approve", "/api/obs/credits/verify"]);
   if (req.method !== "GET" && !(req.method === "POST" && WRITES.has(path))) {
     json(res, 405, { error: "read-only" });
     return;
@@ -893,7 +895,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const before = address ? getSettings(address) : {};
       const routed = routeConsole(line, { settings: before, signedIn: !!address, swaps: standing.swaps });
       const base = { lines: routed.lines, suggest: routed.suggest };
-      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps";
+      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps" || routed.effect.kind === "credits" || (routed.effect.kind === "model" && routed.effect.action === "set");
       if (needsWallet && !address) {
         json(res, 200, { ok: false, effect: "none", lines: ["Connect your wallet first. It's your account here and the wallet that controls your agent: one signature, no transaction."], suggest: ["/connect"] });
         return;
@@ -909,6 +911,56 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         case "view":
           json(res, 200, { ok: true, ...base, effect: "view", view: routed.effect.view });
           return;
+        case "model": {
+          // The model the agent runs on: any model OpenRouter serves, at its price. A guest may look; picking needs the wallet.
+          const cat = await catalog();
+          const cur = address ? modelFor(address) : DEFAULT_MODEL;
+          const money = (v: number) => (v === 0 ? "free" : `$${v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`);
+          const priceOf = (id: string) => { const m = cat.find((x) => x.id === id); return m ? (m.free ? "free" : `${money(m.promptPerM)} in, ${money(m.completionPerM)} out per million tokens`) : "price unknown"; };
+          if (routed.effect.action === "show") {
+            const feat = featured(cat);
+            json(res, 200, { ok: true, effect: "model", lines: [`Your agent runs on ${cur} (${priceOf(cur)}).`, "", ...(feat.length ? ["Featured:", ...feat.map((m) => modelLine(m, m.id === cur)), ""] : []), `/model <name> picks one. /models <search> finds any of the ${cat.length} models.`], suggest: feat.filter((m) => m.id !== cur).slice(0, 3).map((m) => `/model ${m.id}`) });
+            return;
+          }
+          if (routed.effect.action === "list") {
+            const q = routed.effect.query ?? "";
+            const hits = q ? findModels(cat, q, 10) : featured(cat);
+            json(res, 200, { ok: !!hits.length, effect: "model", lines: hits.length ? [q ? `Models matching "${q}":` : "Featured:", ...hits.map((m) => modelLine(m, m.id === cur))] : [`No model matches "${q}". Try a maker or a family: /models claude, /models gemini, /models free.`], suggest: hits.slice(0, 3).map((m) => `/model ${m.id}`) });
+            return;
+          }
+          const hits = findModels(cat, routed.effect.query ?? "", 5);
+          if (!hits.length) { json(res, 200, { ok: false, effect: "none", lines: [`No model matches "${routed.effect.query ?? ""}". /models <search> lists what there is.`], suggest: ["/models claude", "/models free"] }); return; }
+          if (hits.length > 1 && hits[0].id.toLowerCase() !== (routed.effect.query ?? "").trim().toLowerCase()) {
+            json(res, 200, { ok: true, effect: "model", lines: ["Which one?", ...hits.map((m) => modelLine(m))], suggest: hits.slice(0, 4).map((m) => `/model ${m.id}`) });
+            return;
+          }
+          const pick = hits[0];
+          updateSettings(address as string, { model: pick.id });
+          void refreshModel(address as string).catch((e) => console.error(`[my-agent] model for ${address}: ${e instanceof Error ? e.message : String(e)}`));
+          json(res, 200, { ok: true, effect: "model", lines: [`Your agent now runs on ${pick.id} (${priceOf(pick.id)}).`, pick.free ? "Turns on it cost nothing." : "Each turn costs from your credits at that price."], suggest: ["/credits", "/whoami"] });
+          return;
+        }
+        case "credits": {
+          // Credits: the balance, or one payment to sign. Buying is on when the operator named a treasury.
+          const a = address as string;
+          const rows = readCredits();
+          if (routed.effect.action === "show") {
+            const sum = creditsSummary(a, rows);
+            const tokens = payTokens();
+            const stocks = tokens.filter((t) => t.group === "stock").map((t) => t.symbol);
+            const lines = [`Credits: $${sum.balance.toFixed(2)}${sum.turns ? ` ($${sum.spent.toFixed(2)} spent over ${sum.turns} turn${sum.turns === 1 ? "" : "s"})` : ""}.`, `Your agent runs on ${modelFor(a)}; each turn costs from this at the model's price, free models nothing.`];
+            if (creditsOn()) lines.push("", "Add credits by sending ETH, USDG, AOBS or a tokenized stock to the treasury, in one signed transaction:", "  /credits buy 10 USDG   or   /credits buy 0.005 ETH   or   /credits buy 1000 AOBS", `  Stocks: ${stocks.join(", ")}. Paying in AOBS earns a little extra.`);
+            else lines.push("", "Buying credits isn't switched on here yet.");
+            json(res, 200, { ok: true, effect: "credits", lines, balance: sum.balance, suggest: creditsOn() ? ["/credits buy 10 USDG", "/credits buy 0.005 ETH", "/model"] : ["/model"] });
+            return;
+          }
+          const tok = resolvePayToken(routed.effect.token ?? "");
+          if (!tok) { json(res, 200, { ok: false, effect: "none", lines: [`"${routed.effect.token ?? ""}" isn't something you can pay with here. ETH, USDG, AOBS, or a tokenized stock: ${payTokens().filter((t) => t.group === "stock").map((t) => t.symbol).join(", ")}.`], suggest: ["/credits"] }); return; }
+          const pay = await paymentTx(tok, routed.effect.amount ?? 0);
+          if ("error" in pay) { json(res, 200, { ok: false, effect: "none", lines: [pay.error], suggest: ["/credits"] }); return; }
+          json(res, 200, { ok: true, effect: "pay", pay, lines: [`${pay.amount} ${pay.token} is about $${pay.creditsUsd.toFixed(2)} of credits${pay.bonusPct ? ` (+${pay.bonusPct}% for paying in ${pay.token})` : ""}, at prices right now. Sign it in your wallet.`] });
+          return;
+        }
         case "apps": {
           // The person's apps, through Composio, for the wallet that signed in. Off until the operator sets the key.
           if (!appsOn()) { json(res, 200, { ok: false, effect: "none", lines: ["Connecting apps isn't switched on here yet."], suggest: ["/help"] }); return; }
@@ -967,6 +1019,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     if (!address) return;
     ensureUserAgent(address)
       .then((r) => {
+        grantFree(address);
         if (appsOn()) void ensureApps(address).catch((e) => console.error(`[apps] attach for ${address}: ${e instanceof Error ? e.message : String(e)}`));
         json(res, 200, { ok: true, ...r, name: agentDisplayName(address), settings: getSettings(address) });
       })
@@ -993,6 +1046,28 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const settings = updateSettings(address, cleaned.settings);
       void refreshPersona(address);
       json(res, 200, { ok: true, settings, name: agentDisplayName(address) });
+    }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
+    return;
+  }
+  if (path === "/api/obs/credits") {
+    // The wallet's credits: balance, what it spent, the model it runs on.
+    res.setHeader("Cache-Control", "no-store");
+    const address = requireWallet(req, res);
+    if (!address) return;
+    json(res, 200, { ok: true, ...creditsSummary(address, readCredits()), model: modelFor(address), canBuy: creditsOn() });
+    return;
+  }
+  if (path === "/api/obs/credits/verify") {
+    // A payment the wallet sent: read off the chain, priced at the pools, credited once.
+    res.setHeader("Cache-Control", "no-store");
+    const address = requireWallet(req, res);
+    if (!address) return;
+    readBody(req, 4096).then(async (text) => {
+      let b: Record<string, unknown> = {};
+      try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
+      const r = await verifyPayment(String(b.txHash ?? ""), address, now);
+      if (!r.ok) { json(res, 409, { ok: false, reason: r.reason }); return; }
+      json(res, 200, { ok: true, already: r.already, usd: r.row.usd, token: r.row.token, amount: r.row.amount, balance: balanceUsd(address, readCredits()) });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;
   }
@@ -1024,6 +1099,13 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       if (msg.length > 2000) { json(res, 400, { ok: false, error: "message too long (2000 characters at most)" }); return; }
       const guard = chatGuard(address, now);
       if (guard) { json(res, guard.status, { ok: false, error: guard.error }); return; }
+      // The turn's price: the wallet's model at OpenRouter's rates plus the margin. Out of credits is a refusal only
+      // where credits can be bought; without a treasury the desk meters and lets the turn through.
+      const modelId = modelFor(address);
+      const model = await modelInfo(modelId);
+      const paid = model ? !model.free : true;
+      if (paid && creditsOn() && balanceUsd(address, readCredits()) <= 0) { endTurn(address); json(res, 402, { ok: false, error: "You're out of credits. /credits shows how to add some, and /models free lists models that cost nothing." }); return; }
+      let replyText = "";
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
       const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
       const ac = new AbortController();
@@ -1037,7 +1119,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         for await (const ev of stream) {
           arm();
           if (ev.type === "text_delta") { deltas++; send({ type: "delta", text: deEmDash(ev.text) }); }
-          else if (ev.type === "text_final") send({ type: "final", text: deEmDash(ev.text) });
+          else if (ev.type === "text_final") { replyText = ev.text; send({ type: "final", text: deEmDash(ev.text) }); }
           else if (ev.type === "error") send({ type: "error", message: (ev as { message?: string }).message ?? "your agent could not respond" });
           else if (ev.type === "tool_call") send({ type: "tool", phase: "call", tool: ev.tool, toolCallId: ev.toolCallId, args: ev.args });
           else if (ev.type === "tool_result") send({ type: "tool", phase: "result", tool: ev.tool, toolCallId: ev.toolCallId, ok: !ev.isError });
@@ -1046,7 +1128,12 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           else if (ev.type === "approval_resolved") send({ type: "approval_resolved", toolCallId: ev.toolCallId, decision: ev.decision });
           else if (ev.type === "agent_end") break;
         }
-        send({ type: "done" });
+        // Metered from what went in and came out: the gateway reports no token counts, so about four characters a token, plus a context allowance.
+        const tokensIn = estimateTokens(personaFor(address)) + estimateTokens(msg) + contextTokens();
+        const tokensOut = estimateTokens(replyText);
+        const charged = model ? turnCostUsd(model, tokensIn, tokensOut, marginPct()) : 0;
+        chargeTurn(address, charged, { model: modelId, tokensIn, tokensOut }, Date.now());
+        send({ type: "done", charged, balance: balanceUsd(address, readCredits()), model: modelId });
       } catch (err) {
         console.error(`[my-agent] stream failed (aborted=${ac.signal.aborted}, deltas=${deltas}): ${err instanceof Error ? err.message : String(err)}`);
         if (!ac.signal.aborted) send({ type: "error", message: "your agent could not respond just now; try again shortly" });

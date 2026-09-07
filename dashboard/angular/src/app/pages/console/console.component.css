@@ -63,6 +63,8 @@
   cursor: default;
 }
 .cli__status { color: var(--text-faint); }
+.cli__credits { font-family: var(--body); font-size: 12px; font-weight: 600; color: var(--text-dim); background: transparent; border: 1px solid var(--border-strong); border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+.cli__credits:hover { color: var(--lime); border-color: var(--lime); }
 .cli__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
 .cli__dot.on { background: var(--lime); box-shadow: 0 0 8px var(--lime); }
 .cli__dot.warn { background: var(--amber); }

@@ -523,9 +523,24 @@ available yet.
   it; `{ type: "tool", phase: "call" | "result", tool, ok }` reports tool
   activity and `{ type: "approval_resolved", toolCallId, decision }` closes an
   approval.
+- Models and credits: the `model` effect answers `/model` (the current model
+  and a featured list), `/models <search>` (any of OpenRouter's catalog, with
+  prices per million tokens) and `/model <name>` (picks one for the wallet's
+  agent); the `credits` effect answers `/credits` with `lines` and `balance`,
+  and `/credits buy <amount> <token>` with a `pay` effect: `pay: { to, data,
+  value, chainId, note, token, amount, creditsUsd, bonusPct }`, the one
+  transaction the wallet signs (ETH, USDG, AOBS or a tokenized stock to the
+  treasury). The page then calls `POST /api/obs/credits/verify` `{ txHash }`
+  (bearer), which reads the payment off the chain, prices it at the pools
+  (or the stock's print) and credits it once. `GET /api/obs/credits` (bearer)
+  is `{ balance, granted, deposited, spent, turns, model, canBuy }`. Every
+  chat turn is metered at the model's price plus the desk's margin, from an
+  estimate of the text in and out; the stream's `done` frame carries
+  `charged` and `balance`, and a turn is refused with 402 when credits can be
+  bought and the balance is gone. Free models cost nothing.
 - `POST /api/obs/my-agent/ensure` (bearer): provisions the wallet's own agent
-  on first sign-in and keeps it configured after (and attaches its apps when
-  apps are on); there is no bar to clear.
+  on first sign-in (with a small credit on the house) and keeps it configured
+  after (and attaches its apps when apps are on); there is no bar to clear.
   `GET /api/obs/my-agent/history` returns prior turns;
   `GET|POST /api/obs/my-agent/settings` reads and sets `name`, `style`,
   `voice`, `goal`; `POST /api/obs/my-agent/stream` `{ text }` streams the

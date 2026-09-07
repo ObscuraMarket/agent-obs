@@ -49,6 +49,16 @@ test("the app's pages are console views: one command opens each beside the conso
   }
   assert.deepEqual(routeConsole("/app", ctx).effect, { kind: "view", view: "trade" }, "the Trade page's own route name still opens it");
   assert.deepEqual(routeConsole("/close", ctx).effect, { kind: "view", view: null });
+  assert.deepEqual(routeConsole("/model", ctx).effect, { kind: "model", action: "show" });
+  assert.deepEqual(routeConsole("/model claude opus", ctx).effect, { kind: "model", action: "set", query: "claude opus" });
+  assert.deepEqual(routeConsole("/models free", ctx).effect, { kind: "model", action: "list", query: "free" });
+  assert.deepEqual(routeConsole("/model list gemini", ctx).effect, { kind: "model", action: "list", query: "gemini" });
+  assert.deepEqual(routeConsole("/credits", ctx).effect, { kind: "credits", action: "show" });
+  assert.deepEqual(routeConsole("/credits buy 10 USDG", ctx).effect, { kind: "credits", action: "buy", amount: 10, token: "USDG" });
+  assert.deepEqual(routeConsole("/buy 0.005 rh eth", ctx).effect, { kind: "credits", action: "buy", amount: 0.005, token: "ETH" });
+  assert.deepEqual(routeConsole("/credits buy 1,000 aobs", ctx).effect, { kind: "credits", action: "buy", amount: 1000, token: "AOBS" });
+  assert.equal(routeConsole("/credits buy USDG", ctx).error, true);
+  for (const v of ["model", "models", "credits", "buy"]) assert.ok(VOCAB.includes(v));
   assert.deepEqual(routeConsole("/apps", ctx).effect, { kind: "apps", action: "list" });
   assert.deepEqual(routeConsole("/apps connect Google Docs", ctx).effect, { kind: "apps", action: "connect", app: "Google Docs" });
   assert.deepEqual(routeConsole("/apps Slack", ctx).effect, { kind: "apps", action: "connect", app: "Slack" }, "naming an app connects it");
@@ -75,7 +85,7 @@ test("settings are cleaned and capped, and a present-but-invalid field is refuse
     { address: "0xdef", at: 3, goal: "theirs" },
   ];
   assert.deepEqual(getSettings("0xABC", rows), { style: "deep" });
-  assert.deepEqual(describeSettings({}), ["name    OBS (default)", "style   balanced (default)", "voice   not set", "goal    not set"]);
+  assert.deepEqual(describeSettings({}), ["name    OBS (default)", "style   balanced (default)", "voice   not set", "goal    not set", "model   the default"]);
 });
 
 test("the desk's lines come from the page's own payloads", () => {
@@ -100,6 +110,8 @@ test("the personal agent's instruction carries the rules that are policy, and ne
   assert.match(p, /^You are Ledger, the personal agent of the wallet/);
   assert.match(p, /What you are not: a trading agent/);
   assert.match(p, /that wallet is the one that controls you/);
+  assert.match(p, /\/model picks the model you run on/);
+  assert.match(p, /\/credits shows their balance/);
   assert.ok(!/exact execution|discreet settlement|trading agent on Robinhood/.test(p), "the house desk's temperament does not leak into a personal agent");
   assert.match(p, /do not correct them back to "OBS"/);
   assert.match(p, /You do not hold or move this person's funds/);
