@@ -37,6 +37,8 @@ export interface Rails {
   maxCandidates: number;
   candidateMaxHoldH: number;
   candidateFloorPct: number;
+  /** After a scale-out banked profit, the rest leaves this far under its cost; zero disables. */
+  candidateRemainderFloorPct: number;
   candidateVolumeDropPct: number;
   /** The trader's exits on a launch token: take part off at a gain, trail the rest off its peak once armed. */
   candidateTakeProfitPct: number;

@@ -1053,6 +1053,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
             const r = await withdrawEth(a, routed.effect.all ? "all" : (routed.effect.amount ?? 0), now);
             if (!r.ok) { json(res, 200, { ok: false, effect: "none", lines: [r.reason], suggest: ["/wallet", "/withdraw all"] }); return; }
             const left = await agentBalanceEth(a).catch(() => null);
+            void refreshPersona(a);
             json(res, 200, { ok: true, effect: "agentWallet", lines: [`Sent ${r.amount.toFixed(5)} ETH back to your wallet. ${r.explorerUrl}`, ...(left != null ? [`Your agent's wallet holds ${left.toFixed(5)} ETH now.`] : [])], suggest: ["/wallet", "/agent"] });
             return;
           }
@@ -1101,6 +1102,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           const lines = followLines(book, now);
           if (act === "start") lines.unshift(startedLive ? `Your agent is on, LIVE. It trades real ETH from its own wallet at $${state.sizeUsd} a trade, following Agent OBS.` : wasOn && state.mode === "paper" ? `Your agent was already on; $${state.sizeUsd} a trade from here.` : "Your agent is on, on paper. Fund its wallet and /start again to trade live.");
           if (act === "size") lines.unshift(`$${state.sizeUsd} a trade from here.`);
+          // The agent's own instruction carries its standing: refreshed now that it changed.
+          if (act !== "show") void refreshPersona(a);
           json(res, 200, { ok: true, effect: "follow", lines, follow: { on: state.on, sizeUsd: state.sizeUsd, mode: state.mode, since: state.since }, suggest: state.on ? ["/agent", "/status", "/stop"] : ["/start", "/status"] });
           return;
         }
@@ -1211,6 +1214,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const r = await verifyFunding(String(b.txHash ?? ""), address, now);
       if (!r.ok) { json(res, 409, { ok: false, reason: r.reason }); return; }
       const balance = await agentBalanceEth(address).catch(() => null);
+      void refreshPersona(address);
       json(res, 200, { ok: true, already: r.already, amount: r.row.amount, usd: r.row.usd, balance });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;

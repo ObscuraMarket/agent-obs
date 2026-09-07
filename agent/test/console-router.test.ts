@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { routeConsole, suggest, HELP_ALL, TOUR, VOCAB, VIEWS } from "../src/cli/router.ts";
 import { sanitizeSettings, sanitizeName, getSettings, describeSettings } from "../src/desk/userSettings.ts";
 import { statusLines, positionsLines, thoughtsLines, swapsLines } from "../src/desk/deskConsole.ts";
-import { personaFor, agentIdForWallet, deEmDash, isMissingSession, DENIED_TOOLS } from "../src/desk/userAgents.ts";
+import { personaFor, agentIdForWallet, deEmDash, isMissingSession, DENIED_TOOLS, standingLine } from "../src/desk/userAgents.ts";
 
 test("a person's agent is denied the gateway's shell, files, web, self-editing and admin tools, and keeps its memory", () => {
   for (const t of ["exec", "file_write", "web_search", "web_fetch", "instruction_update", "session_send", "schedule_create", "user_role_set"]) assert.ok(DENIED_TOOLS.includes(t), t);
@@ -143,7 +143,15 @@ test("the desk's lines come from the page's own payloads", () => {
 test("the personal agent's instruction carries the rules that are policy, and never an em dash", () => {
   const p = personaFor("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", { name: "Ledger", style: "concise", voice: "dry", goal: "learn the desk" });
   assert.match(p, /^You are Ledger, the personal agent of the wallet/);
-  assert.match(p, /What you are not: a trading agent/);
+  assert.match(p, /How you trade: you are a trading agent in one specific way\. You follow Agent OBS/);
+  assert.match(p, /their trading agent: from a wallet of your own you follow the house desk/);
+  assert.ok(!/not a trading agent/.test(p), "it is their trading agent, and says so");
+  // Its standing, written in when it changes: on, live, size, wallet, the latest doings.
+  const on = standingLine({ on: true, mode: "live", sizeUsd: 10, since: Date.UTC(2026, 8, 7, 22, 3), wallet: "0xbdbFcBE13330DC9195B8C1809e436c17A057374B", recent: ["bought LENNY with 0.0040 ETH"] });
+  assert.match(on, /^Right now: you are ON since 22:03 UTC, LIVE, trading real ETH from your own wallet, \$10 a trade, following Agent OBS\. Your wallet is 0xbdbF.*Lately: bought LENNY with 0\.0040 ETH\./);
+  assert.match(standingLine({ on: false, mode: "paper", sizeUsd: 100, since: null, wallet: null, recent: [] }), /^Right now: you are OFF \(paper when on, \$100 a trade\); \/start turns you on\./);
+  const withStanding = personaFor("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", { name: "Ledger" }, { apps: false, gate: "allowlist" }, { on: true, mode: "paper", sizeUsd: 50, since: null, wallet: null, recent: [] });
+  assert.match(withStanding, /Right now: you are ON, on paper, \$50 a trade, following Agent OBS\./);
   assert.match(p, /that wallet is the one that controls you/);
   assert.match(p, /\/model picks the model you run on/);
   assert.match(p, /\/credits shows their balance/);

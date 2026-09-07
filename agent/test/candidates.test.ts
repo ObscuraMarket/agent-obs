@@ -4,7 +4,8 @@ import { parseFeed, deriveTickSpacing, poolIdFor, curvePoolIdFor, exitSignal, ex
 
 test("after a scale-out banked profit, the rest leaves at cost: sold whole once it is under the remainder floor", () => {
   const r = { candidateMaxHoldH: 24, candidateFloorPct: 30, candidateVolumeDropPct: 100, candidateTakeProfitPct: 100, candidateTakeProfitShare: 0.3, candidateTrailArmPct: 20, candidateTrailPct: 20, candidateRemainderFloorPct: 5, tapeRolloverExit: false };
-  const paid = { ageH: 3, hourly: [], peakPnlPct: 22, tookProfit: true, tapeTrend: "holding" as const, tapeBuyPressurePct: 0 };
+  // The peak stays under the trail's arm level (20%), so the trail is not what sells here; the remainder floor is.
+  const paid = { ageH: 3, hourly: [], peakPnlPct: 15, tookProfit: true, tapeTrend: "holding" as const, tapeBuyPressurePct: 0 };
   const v = exitVerdict({ ...paid, pnlPct: -6 }, r);
   assert.equal(v?.kind, "floor");
   assert.match(v?.reason ?? "", /the rest leaves at cost: down 6\.0% after the scale-out banked its profit \(the 5% remainder floor\)/);
