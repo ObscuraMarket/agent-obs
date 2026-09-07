@@ -904,6 +904,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         case "wallet":
           json(res, 200, { ok: true, ...base, effect: "wallet", ...routed.effect });
           return;
+        case "view":
+          json(res, 200, { ok: true, ...base, effect: "view", view: routed.effect.view });
+          return;
         case "chat":
           if (!standing.eligible) {
             json(res, 200, { ok: false, effect: "none", lines: [`your agent unlocks at ${standing.required} verified swaps from this wallet; you have ${standing.swaps}.`, `a swap is one line, signed by your wallet, paid to your address.`], suggest: ["/swap 0.05 ETH USDG", "/eligible", "/explore"] });

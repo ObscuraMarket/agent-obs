@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { routeConsole, suggest, HELP_ALL, TOUR, VOCAB } from "../src/cli/router.ts";
+import { routeConsole, suggest, HELP_ALL, TOUR, VOCAB, VIEWS } from "../src/cli/router.ts";
 import { sanitizeSettings, sanitizeName, getSettings, describeSettings } from "../src/desk/userSettings.ts";
 import { statusLines, positionsLines, thoughtsLines, eligibleLines } from "../src/desk/deskConsole.ts";
 import { personaFor, agentIdForWallet, deEmDash, isMissingSession } from "../src/desk/userAgents.ts";
@@ -35,6 +35,21 @@ test("a line without a slash is a message to the agent; a slash is a command; a 
   assert.deepEqual(t1.suggest, [TOUR[0].tryIt, "/explore 2"]);
   assert.deepEqual(routeConsole("/explore 99", ctx).suggest, [TOUR[TOUR.length - 1].tryIt]);
   for (const v of VOCAB) assert.ok(!routeConsole(`/${v}`, ctx).effect || true);
+});
+
+test("the app's pages are console views: one command opens each beside the console, /close puts it away", () => {
+  for (const v of VIEWS) {
+    const r = routeConsole(`/${v}`, ctx);
+    assert.deepEqual(r.effect, { kind: "view", view: v });
+    assert.equal(r.lines.length, 1, `${v} says what opened`);
+    assert.ok(r.suggest?.includes("/close"), `${v} offers /close`);
+    assert.ok(!r.error);
+  }
+  assert.deepEqual(routeConsole("/app", ctx).effect, { kind: "view", view: "trade" }, "the Trade page's own route name still opens it");
+  assert.deepEqual(routeConsole("/close", ctx).effect, { kind: "view", view: null });
+  assert.deepEqual(routeConsole("/traed", ctx).suggest, ["/trade"]);
+  assert.ok(HELP_ALL.some((l) => l.includes("/referral")) && HELP_ALL.some((l) => l.includes("/close")));
+  for (const v of [...VIEWS, "close"]) assert.ok(VOCAB.includes(v), `${v} is in the vocabulary`);
 });
 
 test("settings are cleaned and capped, and a present-but-invalid field is refused rather than dropped", () => {

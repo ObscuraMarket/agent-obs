@@ -491,8 +491,14 @@ line is a command. The wallet is the account.
   the line and answers `{ ok, lines[], effect, suggest[] }`. `effect` is
   `none`, `clear`, `desk` (lines from the same payloads the page reads),
   `read`, `settings` (with the merged `settings`), `chat` (with `text`: the
-  page streams it), or `wallet` (with `action` and the pair: the page's wallet
-  does it). A guest may read the desk, take the tour and quote; shaping the
+  page streams it), `wallet` (with `action` and the pair: the page's wallet
+  does it), or `view` (with `view`: `trade`, `rewards`, `cards`, `referral`,
+  `yield`, or null for `/close`; the page opens that page of the site beside
+  the console, from the components the site's module provides under
+  `CONSOLE_VIEWS` in `obs-desk.service.ts`, which the relay wires up). Those
+  five left the header on September 7: it lists Console, Agent, Docs and
+  Roadmap, and the pages keep their routes for deep links.
+  A guest may read the desk, take the tour and quote; shaping the
   agent, standing and chat need the bearer. `suggest` entries are literal
   lines to submit, rendered as one-tap chips.
 - `POST /api/obs/my-agent/ensure` (bearer): provisions the wallet's own agent

@@ -1,7 +1,7 @@
 <!-- The OBS console at /console: one surface for talking to your agent and for shaping it, next to the desk's
      read-only commands and your own wallet's swaps. A line is a message to your agent; a slash line is a command.
      The desk routes every command; the page streams the chat, signs nothing, and holds no key. -->
-<div class="obs-console">
+<div class="obs-console" [class.obs-console--split]="view">
   <div class="cli" (click)="focusInput()">
     <div class="cli__bar">
       <span class="cli__dot" [class.on]="agentState === 'ready' || agentState === 'thinking'" [class.warn]="agentState === 'locked'" aria-hidden="true"></span>
@@ -44,4 +44,14 @@
       <input #cmd class="cli__input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" [placeholder]="placeholder" (keydown)="onKey($event)" (input)="hint = []" [disabled]="agentState === 'provisioning'" aria-label="OBS console input">
     </form>
   </div>
+
+  <!-- One of the site's own pages, opened by a view command (/trade, /rewards, /cards, /referral, /yield) beside the
+       console; the site's module supplies the component, this page only hosts it. -->
+  <section class="cli__view" [class.cli__view--open]="view" [attr.aria-label]="view ? view + ' view' : null">
+    <div class="cli__view-bar">
+      <span class="cli__view-title">/{{ view }}</span>
+      <button type="button" class="cli__chip cli__chip--cmd" (click)="runLine('/close')" [disabled]="busy">/close</button>
+    </div>
+    <div class="cli__view-body"><ng-container #viewHost></ng-container></div>
+  </section>
 </div>

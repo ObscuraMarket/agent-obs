@@ -9,6 +9,18 @@ import { STYLES, DEFAULT_NAME, type UserSettings } from "../desk/userSettings.ts
 
 export type DeskCommand = "status" | "positions" | "thoughts" | "research" | "watch" | "reads";
 
+/** The site's own pages the console opens beside itself, one command each. They left the header for this; their routes stay for deep links. */
+export type ConsoleView = "trade" | "rewards" | "cards" | "referral" | "yield";
+export const VIEWS: ConsoleView[] = ["trade", "rewards", "cards", "referral", "yield"];
+const VIEW_ALIAS: Record<string, ConsoleView> = { app: "trade", exchange: "trade", reward: "rewards", card: "cards", refer: "referral", referrals: "referral" };
+const VIEW_LINE: Record<ConsoleView, string> = {
+  trade: "trade: Obscura's swap, beside the console. the same routes and the same privacy as the Trade page had; /close puts it away.",
+  rewards: "rewards: your cashback in tokenized stocks, beside the console. /close puts it away.",
+  cards: "cards: the Obscura card, beside the console. /close puts it away.",
+  referral: "referral: the referral waitlist, beside the console. /close puts it away.",
+  yield: "yield is coming soon. its waitlist is open beside the console; /close puts it away.",
+};
+
 export type ConsoleEffect =
   | { kind: "none" }
   | { kind: "clear" }
@@ -18,7 +30,9 @@ export type ConsoleEffect =
   | { kind: "settings"; patch: Record<string, unknown> }
   /** Client-side: the wallet does these. The route only echoes them back. */
   | { kind: "wallet"; action: "connect" | "balance" }
-  | { kind: "wallet"; action: "quote" | "swap"; amount: number; from: string; to: string };
+  | { kind: "wallet"; action: "quote" | "swap"; amount: number; from: string; to: string }
+  /** Client-side: the page opens one of the site's own pages beside the console, or closes it (null). */
+  | { kind: "view"; view: ConsoleView | null };
 
 export interface ConsoleResult {
   lines: string[];
@@ -46,6 +60,7 @@ export const HELP = [
   "",
   "  /explore           a short guided tour, one thing at a time",
   "  /status            what the desk is doing right now",
+  "  /trade /rewards /cards /referral /yield   the app, one view each, beside the console",
   "  /swap 0.05 ETH USDG   a swap from your own wallet, through the pools",
   "  /eligible          your swaps against the bar that unlocks your agent",
   "",
@@ -62,6 +77,13 @@ export const HELP_ALL = [
   "    /voice <text>      how it should sound: dry, warm, blunt, your call",
   "    /goal <text>       what you want it working toward",
   "    /reset <field>     clear one setting back to default",
+  "",
+  "  the app (opened beside the console; /close puts it away)",
+  "    /trade             swap through Obscura's routes",
+  "    /rewards           your cashback in tokenized stocks",
+  "    /cards             the Obscura card",
+  "    /referral          the referral waitlist",
+  "    /yield             coming soon; its waitlist",
   "",
   "  the desk (live, read only)",
   "    /status /positions /thoughts [n] /research [n] /watch /reads",
@@ -154,7 +176,12 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       if (!f || !(f in fields)) return err([`usage: /reset <${Object.keys(fields).join(" | ")}>`]);
       return ok([], { kind: "settings", patch: fields[f] });
     }
+    case "close":
+    case "back":
+      return ok(["closed."], { kind: "view", view: null }, ["/trade", "/help"]);
     default: {
+      const view = VIEWS.includes(cmd as ConsoleView) ? (cmd as ConsoleView) : VIEW_ALIAS[cmd];
+      if (view) return ok([VIEW_LINE[view]], { kind: "view", view }, [...VIEWS.filter((v) => v !== view).slice(0, 2).map((v) => `/${v}`), "/close"]);
       const desk = DESK.includes(cmd as DeskCommand) ? (cmd as DeskCommand) : DESK_ALIAS[cmd];
       if (desk) {
         const n = /^\d+$/.test(arg) ? Number(arg) : undefined;
@@ -166,7 +193,7 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
   }
 }
 
-export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "eligible", "connect", "balance", "quote", "swap", ...DESK];
+export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "eligible", "connect", "balance", "quote", "swap", ...VIEWS, "close", ...DESK];
 
 /** PURE: one near miss for a typo, by edit distance, only when it is actually close. */
 export function suggest(cmd: string): string[] {

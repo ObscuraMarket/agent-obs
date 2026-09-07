@@ -1,6 +1,6 @@
-import { AfterViewInit, Component, ElementRef, NgZone, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, Inject, NgZone, Type, ViewChild, ViewContainerRef } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
-import { ObsDeskService, ObsConsoleQuote, ObsEligibility, ObsCliReply, ObsSession, ObsUserSettings } from '../../service/obs-desk.service';
+import { ObsDeskService, ObsConsoleQuote, ObsEligibility, ObsCliReply, ObsSession, ObsUserSettings, CONSOLE_VIEWS } from '../../service/obs-desk.service';
 
 type LineKind = 'input' | 'command' | 'output' | 'error' | 'agent' | 'system';
 interface CliLine { kind: LineKind; text: string; streaming?: boolean; suggest?: string[]; }
@@ -9,7 +9,7 @@ type Status = 'guest' | 'connected' | 'signing' | 'signed-in';
 type AgentState = 'idle' | 'locked' | 'provisioning' | 'ready' | 'thinking' | 'error';
 
 /** Completion vocabulary, kept in step with the desk's router. */
-const COMMANDS = ['help', 'explore', 'clear', 'whoami', 'name', 'style', 'voice', 'goal', 'reset', 'eligible', 'connect', 'balance', 'quote', 'swap', 'status', 'positions', 'thoughts', 'research', 'watch', 'reads'];
+const COMMANDS = ['help', 'explore', 'clear', 'whoami', 'name', 'style', 'voice', 'goal', 'reset', 'eligible', 'connect', 'balance', 'quote', 'swap', 'trade', 'rewards', 'cards', 'referral', 'yield', 'close', 'status', 'positions', 'thoughts', 'research', 'watch', 'reads'];
 const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['name', 'goal', 'voice', 'style'], help: ['all'] };
 const SESSION_KEY = 'obs-console-session';
 
@@ -23,6 +23,8 @@ const SESSION_KEY = 'obs-console-session';
 export class ConsoleComponent implements AfterViewInit {
   @ViewChild('screen') screen?: ElementRef<HTMLDivElement>;
   @ViewChild('cmd') cmd?: ElementRef<HTMLInputElement>;
+  /** Where a view command renders one of the site's own pages, beside the console. */
+  @ViewChild('viewHost', { read: ViewContainerRef }) viewHost?: ViewContainerRef;
 
   lines: CliLine[] = [];
   hint: string[] = [];
@@ -36,6 +38,8 @@ export class ConsoleComponent implements AfterViewInit {
   elig: ObsEligibility | null = null;
   settings: ObsUserSettings = {};
   busy = false;
+  /** The site page open beside the console (trade, rewards, cards, referral, yield), or none. */
+  view: string | null = null;
 
   private history: string[] = [];
   private histAt = -1;
@@ -45,7 +49,7 @@ export class ConsoleComponent implements AfterViewInit {
   private static readonly CHAIN_HEX = '0x1237';
   private static readonly EXPLORER = 'https://robinhoodchain.blockscout.com';
 
-  constructor(private obs: ObsDeskService, private zone: NgZone, title: Title, meta: Meta) {
+  constructor(private obs: ObsDeskService, private zone: NgZone, @Inject(CONSOLE_VIEWS) private views: Record<string, Type<unknown>>, title: Title, meta: Meta) {
     title.setTitle('Obscura - OBS Console');
     meta.updateTag({ name: 'description', content: 'The OBS console: talk to your own agent, read the desk, quote and swap from your own wallet.' });
   }
@@ -115,6 +119,7 @@ export class ConsoleComponent implements AfterViewInit {
     if (!el) { return; }
     if (ev.key === 'Tab') { ev.preventDefault(); const c = this.complete(el.value); el.value = c.value; this.hint = c.options; return; }
     if (ev.key === 'l' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); this.lines = []; return; }
+    if (ev.key === 'Escape' && this.view) { ev.preventDefault(); void this.runLine('/close'); return; }
     if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
       const r = this.recall(ev.key === 'ArrowUp' ? -1 : 1);
       if (r !== null) { ev.preventDefault(); el.value = r; }
@@ -192,6 +197,7 @@ export class ConsoleComponent implements AfterViewInit {
       if (data.effect === 'clear') { this.lines = []; return; }
       if (data.effect === 'chat' && typeof data.text === 'string') { await this.chat(data.text, true); return; }
       if (data.effect === 'wallet' && data.ok) { await this.walletEffect(data); return; }
+      if (data.effect === 'view') { this.applyView(data); return; }
       if (data.effect === 'settings' && data.ok && data.settings) { this.settings = data.settings; this.agentName = this.settings.name || (this.agentState === 'ready' ? 'OBS' : this.agentName); }
       if (data.eligibility) { this.elig = data.eligibility; }
       const kind: LineKind = data.ok === false ? 'error' : 'output';
@@ -205,6 +211,33 @@ export class ConsoleComponent implements AfterViewInit {
       this.busy = false;
       setTimeout(() => this.focusInput(), 0);
     }
+  }
+
+  // ---- the app, beside the console ---------------------------------------------------
+
+  /**
+   * A view command: open one of the site's own pages beside the console, or close it. The desk names the view;
+   * the site's module supplies the component (CONSOLE_VIEWS), so this page never imports a page it does not own.
+   */
+  private applyView(data: ObsCliReply): void {
+    const name = data.view ?? null;
+    const lines: CliLine[] = (Array.isArray(data.lines) ? data.lines : []).map((t) => ({ kind: 'output' as LineKind, text: t }));
+    if (name === null) { this.closeView(); this.print(lines); return; }
+    const cls = this.views[name];
+    if (!cls) { this.print([{ kind: 'error', text: 'the ' + name + ' view is not in this build of the site.' }]); return; }
+    const host = this.viewHost;
+    if (!host) { this.print([{ kind: 'error', text: 'no room for a view here.' }]); return; }
+    host.clear();
+    host.createComponent(cls);
+    this.view = name;
+    const printed = lines.length ? lines : [{ kind: 'output' as LineKind, text: name + ' is open beside the console.' }];
+    if (data.suggest?.length) { printed[printed.length - 1].suggest = data.suggest.map(String); }
+    this.print(printed);
+  }
+
+  closeView(): void {
+    this.viewHost?.clear();
+    this.view = null;
   }
 
   // ---- the wallet is the account ---------------------------------------------------

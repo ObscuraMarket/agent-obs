@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, InjectionToken, Type } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../environments/environment';
@@ -391,10 +391,19 @@ export interface ObsLinkReply { ok: boolean; error?: string; session?: ObsSessio
 export interface ObsCliReply {
   ok: boolean; lines?: string[]; effect?: string; suggest?: string[]; text?: string;
   action?: string; amount?: number; from?: string; to?: string; settings?: ObsUserSettings; eligibility?: ObsEligibility;
+  /** A view effect: which of the site's pages to open beside the console, or null to close it. */
+  view?: string | null;
 }
 export interface ObsUserSettings { name?: string; style?: 'concise' | 'balanced' | 'deep'; voice?: string; goal?: string; }
 export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; eligibility?: ObsEligibility; }
 export interface ObsHistoryTurn { role: string; content: string; ts: string; }
+
+/**
+ * The site's own pages the console can open beside itself, by command name: trade, rewards, cards, referral,
+ * yield. The site's module provides the map from its components (the relay wires it); this repo's build provides
+ * none, so a view command here says the view is not in this build.
+ */
+export const CONSOLE_VIEWS = new InjectionToken<Record<string, Type<unknown>>>('obs.console.views', { providedIn: 'root', factory: () => ({}) });
 
 
 @Injectable({ providedIn: 'root' })
