@@ -2,11 +2,26 @@
 // the operator's minimums: read on chain at sign-in and again, cached ten minutes, whenever the agent is reached, so
 // a wallet that sold up loses its agent within the cache. Guests still read the desk and open the app's pages;
 // the gate is on the agent, the account and the credits. OBS_CONSOLE_GATE=off opens the door to everyone.
+// The operator's list (OBS_CONSOLE_ALLOWLIST, wallet addresses) is always let in, holdings or not; with
+// OBS_CONSOLE_GATE=allowlist the list is the only way in, for the first users before the door opens to holders.
 import { ASSETS } from "./assets.ts";
 import { readTokenBalance } from "./signer.ts";
 import { OBS_CONTRACT, AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "../config.ts";
 
-export const gateOn = (env: NodeJS.ProcessEnv = process.env): boolean => (env.OBS_CONSOLE_GATE ?? "on") !== "off";
+export type GateMode = "on" | "allowlist" | "off";
+/** PURE: how the door is kept. "on" is holders (and the list); "allowlist" is the list only; "off" is everyone. */
+export function gateMode(env: NodeJS.ProcessEnv = process.env): GateMode {
+  const m = (env.OBS_CONSOLE_GATE ?? "on").trim().toLowerCase();
+  return m === "off" ? "off" : m === "allowlist" ? "allowlist" : "on";
+}
+export const gateOn = (env: NodeJS.ProcessEnv = process.env): boolean => gateMode(env) !== "off";
+/** PURE: the operator's list, lower-cased addresses; commas, spaces or newlines between them, anything else ignored. */
+export function allowlist(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  return new Set((env.OBS_CONSOLE_ALLOWLIST ?? "").split(/[\s,;]+/).map((s) => s.trim().toLowerCase()).filter((s) => /^0x[0-9a-f]{40}$/.test(s)));
+}
+export const allowlisted = (address: string, env: NodeJS.ProcessEnv = process.env): boolean => allowlist(env).has(address.trim().toLowerCase());
+/** PURE: what an uninvited wallet is told while the door is list-only. */
+export const NOT_INVITED = "The console is open to invited wallets for now. This wallet is not on the list yet.";
 /** Whole tokens. Either token clears the gate on its own. */
 export const minObs = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CONSOLE_MIN_OBS ?? 1000) || 0);
 export const minAobs = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CONSOLE_MIN_AOBS ?? 1000) || 0);
@@ -19,6 +34,8 @@ export interface HolderVerdict {
   minAobs: number;
   /** What to tell the person when the door is closed. */
   reason?: string;
+  /** In on the operator's list, whatever the wallet holds. */
+  invited?: boolean;
 }
 
 /** PURE: does this wallet hold enough of either token. */
@@ -34,10 +51,17 @@ export function holderVerdict(obs: number, aobs: number, needObs: number, needAo
 const cache = new Map<string, { at: number; verdict: HolderVerdict }>();
 const CACHE_MS = 10 * 60 * 1000;
 
-/** The wallet's standing at the door, read on chain, cached ten minutes; open when the gate is off. */
-export async function holderGate(address: string, now = Date.now()): Promise<HolderVerdict> {
-  if (!gateOn()) return { ok: true, obs: 0, aobs: 0, minObs: 0, minAobs: 0 };
+/**
+ * The wallet's standing at the door: open when the gate is off, in when on the operator's list, else read on chain
+ * and cached ten minutes; list-only while the gate is set to allowlist. The server answers a closed door with the
+ * code not_holder in every case, which the page already knows; the reason says which door it was.
+ */
+export async function holderGate(address: string, now = Date.now(), env: NodeJS.ProcessEnv = process.env): Promise<HolderVerdict> {
+  const mode = gateMode(env);
+  if (mode === "off") return { ok: true, obs: 0, aobs: 0, minObs: 0, minAobs: 0 };
   const a = address.toLowerCase();
+  if (allowlisted(a, env)) return { ok: true, obs: 0, aobs: 0, minObs: minObs(env), minAobs: minAobs(env), invited: true };
+  if (mode === "allowlist") return { ok: false, obs: 0, aobs: 0, minObs: minObs(env), minAobs: minAobs(env), reason: NOT_INVITED };
   const hit = cache.get(a);
   if (hit && now - hit.at < CACHE_MS) return hit.verdict;
   const chain = ASSETS["ETH@robinhood"];
@@ -45,7 +69,7 @@ export async function holderGate(address: string, now = Date.now()): Promise<Hol
     readTokenBalance(chain, OBS_CONTRACT as `0x${string}`, a as `0x${string}`),
     readTokenBalance(chain, AGENT_TOKEN as `0x${string}`, a as `0x${string}`),
   ]);
-  const verdict = holderVerdict(Number(obsRaw) / 1e18, Number(aobsRaw) / 1e18, minObs(), minAobs());
+  const verdict = holderVerdict(Number(obsRaw) / 1e18, Number(aobsRaw) / 1e18, minObs(env), minAobs(env));
   cache.set(a, { at: now, verdict });
   return verdict;
 }

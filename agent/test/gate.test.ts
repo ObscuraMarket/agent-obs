@@ -1,6 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holderVerdict, gateOn, minObs, minAobs } from "../src/desk/gate.ts";
+import { holderVerdict, gateOn, minObs, minAobs, gateMode, allowlist, allowlisted, holderGate, NOT_INVITED } from "../src/desk/gate.ts";
+
+const A = "0x1111111111111111111111111111111111111111";
+const B = "0x2222222222222222222222222222222222222222";
+
+test("the operator's list lets a wallet in whatever it holds, and is the only way in while the gate is list-only", async () => {
+  const env = { OBS_CONSOLE_ALLOWLIST: `${A.toUpperCase().replace("0X", "0x")}, ${B}\n not-an-address` } as NodeJS.ProcessEnv;
+  assert.deepEqual([...allowlist(env)], [A, B], "commas, spaces and newlines between addresses; anything else ignored");
+  assert.equal(allowlisted(A.toUpperCase().replace("0X", "0x"), env), true, "case does not matter");
+  assert.equal(allowlisted("0x3333333333333333333333333333333333333333", env), false);
+  assert.deepEqual([gateMode({} as NodeJS.ProcessEnv), gateMode({ OBS_CONSOLE_GATE: "Allowlist" } as NodeJS.ProcessEnv), gateMode({ OBS_CONSOLE_GATE: "off" } as NodeJS.ProcessEnv)], ["on", "allowlist", "off"]);
+  assert.equal(gateOn({ OBS_CONSOLE_GATE: "allowlist" } as NodeJS.ProcessEnv), true, "list-only is still a gate");
+  // On the list: in without a chain read, in either mode.
+  const invited = await holderGate(A, 0, env);
+  assert.deepEqual([invited.ok, invited.invited], [true, true]);
+  const listOnly = { ...env, OBS_CONSOLE_GATE: "allowlist" } as NodeJS.ProcessEnv;
+  assert.equal((await holderGate(B, 0, listOnly)).ok, true);
+  // Not on the list while list-only: told so, no chain read.
+  const out = await holderGate("0x3333333333333333333333333333333333333333", 0, listOnly);
+  assert.deepEqual([out.ok, out.reason], [false, NOT_INVITED]);
+  assert.equal((await holderGate("0x3333333333333333333333333333333333333333", 0, { OBS_CONSOLE_GATE: "off" } as NodeJS.ProcessEnv)).ok, true, "off is everyone");
+});
 
 test("the door opens for a wallet holding enough OBS or enough AOBS, and says what it needs otherwise", () => {
   assert.equal(holderVerdict(1000, 0, 1000, 1000).ok, true, "OBS alone clears it");
