@@ -87,7 +87,15 @@ export class ConsoleComponent implements AfterViewInit {
   /** The command menu that opens as soon as a line starts with "/". */
   menu: CommandHelp[] = [];
   menuAt = 0;
-  readonly quick = QUICK;
+  /** What the desk offers right now, read once from its status: Apps stay hidden until Composio is switched on there, and the door's wording follows its gate. */
+  appsOn = true;
+  gate: 'on' | 'allowlist' | 'off' = 'on';
+  get quick(): Array<{ label: string; line: string }> { return this.appsOn ? QUICK : QUICK.filter((q) => q.line !== '/apps'); }
+  /** The welcome card's third line: who gets an agent by connecting, as the door stands today. */
+  get inviteLine(): string {
+    const who = this.gate === 'allowlist' ? 'For invited wallets' : this.gate === 'off' ? 'For everyone' : 'For OBS and AOBS holders';
+    return who + ': connect your wallet and get a basic agent you can talk to and train here. The wallet you connect is the one that controls it.';
+  }
 
   private history: string[] = [];
   private histAt = -1;
@@ -104,6 +112,8 @@ export class ConsoleComponent implements AfterViewInit {
 
   ngAfterViewInit(): void {
     if (this.siteWallet) { this.watchSiteWallet(); } else { void this.silentReconnect(); }
+    // What the desk offers today, so the page does not show a door or a button that is not there yet.
+    this.obs.status().subscribe({ next: (s) => { const c = s.console; if (c) { this.appsOn = c.apps !== false; this.gate = c.gate ?? 'on'; } }, error: () => undefined });
     setTimeout(() => this.focusInput(), 0);
   }
 
@@ -217,7 +227,7 @@ export class ConsoleComponent implements AfterViewInit {
     const v = el?.value ?? '';
     if (!v.startsWith('/') || /\s/.test(v)) { this.menu = []; return; }
     const stem = v.slice(1).toLowerCase();
-    this.menu = COMMAND_HELP.filter((c) => c.cmd.startsWith(stem)).slice(0, 8);
+    this.menu = COMMAND_HELP.filter((c) => c.cmd.startsWith(stem) && (this.appsOn || c.cmd !== 'apps')).slice(0, 8);
     this.menuAt = 0;
   }
 

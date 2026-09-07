@@ -181,7 +181,8 @@ a.cli__chip--link:hover { background: rgba(184, 255, 61, 0.1); }
   .cli__title { font-size: 18px; }
   .cli__menu-item { grid-template-columns: 96px 1fr; }
   .cli__menu-usage { display: none; }
-  .cli__send { display: none; }
+  /* The Send button stays on a phone: the keyboard's Send key is one way, this is the other. */
+  .cli__send { padding: 6px 10px; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cli__caret { animation: none; }

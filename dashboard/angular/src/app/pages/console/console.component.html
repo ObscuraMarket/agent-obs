@@ -26,7 +26,7 @@
           </button>
           <button type="button" class="cli__card" (click)="runLine('/connect')" [disabled]="busy || status === 'signing'">
             <span class="cli__card-title">{{ status === 'signed-in' ? 'Meet your agent' : 'Get your own agent' }}</span>
-            <span class="cli__card-text">For OBS and AOBS holders: connect your wallet and get a basic agent you can talk to and train here. The wallet you connect is the one that controls it.</span>
+            <span class="cli__card-text">{{ inviteLine }}</span>
           </button>
         </div>
         <p class="cli__welcome-note">Or type a question below. Type / to see every command, explained.</p>
@@ -87,7 +87,7 @@
 
     <form class="cli__input-row" (submit)="submit($event)">
       <span class="cli__prompt" aria-hidden="true">&gt;</span>
-      <input #cmd class="cli__input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" [placeholder]="placeholder" (keydown)="onKey($event)" (input)="onInput()" [disabled]="agentState === 'provisioning'" aria-label="OBS console input">
+      <input #cmd class="cli__input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" enterkeyhint="send" [placeholder]="placeholder" (keydown)="onKey($event)" (input)="onInput()" [disabled]="agentState === 'provisioning'" aria-label="OBS console input">
       <button type="submit" class="cli__send" [disabled]="busy" aria-label="Send">Send</button>
     </form>
   </div>

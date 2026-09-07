@@ -39,6 +39,22 @@ test("a line without a slash is a message to the agent; a slash is a command; a 
   for (const v of VOCAB) assert.ok(!routeConsole(`/${v}`, ctx).effect || true);
 });
 
+test("the help and the tour speak for the door as it is, and apps say they are coming until they are switched on", () => {
+  const off = { ...ctx, apps: false };
+  assert.ok(!routeConsole("/help", off).lines.join("\n").includes("/apps"), "no /apps line while apps are off");
+  assert.ok(!routeConsole("/help all", off).lines.join("\n").includes("Your apps"), "no apps section while apps are off");
+  assert.ok(routeConsole("/help", ctx).lines.join("\n").includes("/apps"), "missing means on");
+  const coming = routeConsole("/apps connect Slack", off);
+  assert.deepEqual([coming.effect, coming.error], [{ kind: "none" }, undefined]);
+  assert.match(coming.lines[0], /Apps are coming later/);
+  assert.equal(routeConsole("/apps", ctx).effect.kind, "apps", "on, the route handles it");
+  const invited = routeConsole("/help", { ...ctx, gate: "allowlist" }).lines.join("\n");
+  assert.ok(invited.includes("Connect an invited wallet") && !invited.includes("holding OBS"), "list-only: the door says invited");
+  assert.ok(routeConsole("/help", { ...ctx, gate: "off" }).lines.join("\n").includes("Connect your wallet and get"), "open: no condition named");
+  assert.match(routeConsole("/explore 5", { ...ctx, gate: "allowlist" }).lines.join("\n"), /Connect an invited wallet and you get a basic agent/);
+  assert.deepEqual(routeConsole("/help", ctx).lines, HELP_ALL.length ? routeConsole("/help", { ...ctx, gate: "on", apps: true }).lines : [], "the default door is holders with apps on");
+});
+
 test("the app's pages are console views: one command opens each beside the console, /close puts it away", () => {
   for (const v of VIEWS) {
     const r = routeConsole(`/${v}`, ctx);

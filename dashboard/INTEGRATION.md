@@ -115,9 +115,16 @@ never zero.
   "decisions": { "post": 9, "hold": 5 },
   "token": { "contract": "0xfe242d1da8fd04f6a1f80b6d3d807b02e062ad4e", "site": "https://obscura.market" },
   "limits": { "maxTweetChars": 280 },
+  "console": { "gate": "on", "apps": false, "credits": false, "freeCredits": 100 },
   "at": 1788260000000
 }
 ```
+`console` says what the console offers right now: `gate` (`on`: holders of
+OBS or AOBS and the operator's allowlist; `allowlist`: the list only, for the
+first users; `off`: everyone), `apps` (Composio switched on), `credits`
+(buying credits is on, a treasury is set) and `freeCredits` (the grant a new
+wallet gets). The console page reads it once: it hides the Apps button and
+the `/apps` menu entry while apps are off, and words its door from `gate`.
 The response also carries `rails`: the limits every swap is checked against
 and what is used, `{ tradingOn, maxSwapUsd, maxOpenOrders, gasReserveEth,
 openOrders, allowedAssets, allowedPartners, allowedChains }`. `allowedChains`

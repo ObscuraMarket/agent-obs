@@ -42,6 +42,8 @@ export interface ObsStatus {
   limits: { maxTweetChars: number };
   rails?: ObsRails;
   wallet?: ObsWalletLink | null;
+  /** What the console offers today: how its door is kept, and whether apps and credit purchases are switched on. */
+  console?: { gate: 'on' | 'allowlist' | 'off'; apps: boolean; credits: boolean; freeCredits: number };
   at: number;
 }
 

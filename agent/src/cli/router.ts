@@ -53,6 +53,10 @@ export interface ConsoleContext {
   signedIn: boolean;
   /** Swaps this wallet has made through the console; shown, never a gate. */
   swaps: number;
+  /** Whether apps (Composio) are switched on here: the help and /apps say "coming" until they are. Missing means on. */
+  apps?: boolean;
+  /** How the door is kept, for the wording: holders (on), the operator's list only (allowlist), or everyone (off). */
+  gate?: "on" | "allowlist" | "off";
 }
 
 const ok = (lines: string[], effect: ConsoleEffect = { kind: "none" }, suggest?: string[]): ConsoleResult => (suggest?.length ? { lines, effect, suggest } : { lines, effect });
@@ -61,22 +65,36 @@ const err = (lines: string[], suggest?: string[]): ConsoleResult => (suggest?.le
 const DESK: DeskCommand[] = ["status", "positions", "thoughts", "research", "watch", "reads"];
 const DESK_ALIAS: Record<string, DeskCommand> = { book: "positions", thought: "thoughts", log: "research", live: "watch", read: "reads" };
 
-export const HELP = [
-  "Type a message to talk to your agent, or start a line with / for a command.",
-  "",
-  "  /explore           A short tour, one step at a time",
-  "  /status            What the desk is doing right now",
-  "  /trade /rewards /cards /yield   Open a page of the app beside the console",
-  "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
-  "  /connect           Connect a wallet holding OBS or AOBS and get an agent of your own to talk to and train",
-  "  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent",
-  "  /model             Pick the model your agent runs on, any of them",
-  "  /credits           Your credits, and how to add some with ETH, USDG, AOBS or a tokenized stock",
-  "",
-  "  /help all          Every command",
-];
+type Door = Pick<ConsoleContext, "apps" | "gate">;
 
-export const HELP_ALL = [
+/** PURE: what connecting gets you, as the door stands: holders, the operator's list, or anyone. */
+export const connectLine = (gate: ConsoleContext["gate"]): string =>
+  gate === "allowlist" ? "Connect an invited wallet and get an agent of your own to talk to and train"
+  : gate === "off" ? "Connect your wallet and get an agent of your own to talk to and train"
+  : "Connect a wallet holding OBS or AOBS and get an agent of your own to talk to and train";
+
+/** PURE: the short help, worded for the door as it is; the /apps line only while apps are switched on. */
+export function helpLines(door: Door = {}): string[] {
+  return [
+    "Type a message to talk to your agent, or start a line with / for a command.",
+    "",
+    "  /explore           A short tour, one step at a time",
+    "  /status            What the desk is doing right now",
+    "  /trade /rewards /cards /yield   Open a page of the app beside the console",
+    "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
+    `  /connect           ${connectLine(door.gate)}`,
+    ...(door.apps === false ? [] : ["  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent"]),
+    "  /model             Pick the model your agent runs on, any of them",
+    "  /credits           Your credits, and how to add some with ETH, USDG, AOBS or a tokenized stock",
+    "",
+    "  /help all          Every command",
+  ];
+}
+export const HELP = helpLines();
+
+/** PURE: every command; the apps section only while apps are switched on. */
+export function helpAllLines(door: Door = {}): string[] {
+  return [
   "Every command. Anything without a slash is a message to your agent.",
   "",
   "  Your agent (it belongs to the wallet you connected; that wallet controls it. Train it here:)",
@@ -89,11 +107,13 @@ export const HELP_ALL = [
   "    /model [name]      Pick the model it runs on, from every model OpenRouter serves; /models <search> finds one",
   "    /credits           Your balance; /credits buy 10 USDG adds credits (also ETH, AOBS, or a tokenized stock like NVDA)",
   "",
+  ...(door.apps === false ? [] : [
   "  Your apps (your agent gets their tools, and asks you before it acts in one)",
   "    /apps              What's connected, and what can be",
   "    /apps connect <app>     Connect one: Slack, Linear, X, Gmail, Google Docs, Sheets, Calendar, Notion, GitHub",
   "    /apps disconnect <app>  Take one away",
   "",
+  ]),
   "  The app (opens beside the console; /close puts it away)",
   "    /trade             Swap through Obscura's routes",
   "    /rewards           Your cashback in tokenized stocks",
@@ -114,16 +134,22 @@ export const HELP_ALL = [
   "    /explore /clear /help",
   "",
   "  Talking to your agent is free, and so is every command.",
-];
+  ];
+}
+export const HELP_ALL = helpAllLines();
 
-/** The tour: what this is, whether to take its word, how to check, then the parts that need a wallet. */
-export const TOUR: Array<{ title: string; lines: string[]; tryIt: string }> = [
-  { title: "This is a live desk", lines: ["Agent OBS trades from its own wallet on Robinhood Chain and thinks out loud.", "Every cycle it records what it read, what it made of it, and what it decided."], tryIt: "/status" },
-  { title: "Read it, don't take its word", lines: ["Every number on the page comes from a read the desk made. The thoughts are its own words;", "the research log is what it read between cycles."], tryIt: "/thoughts 2" },
-  { title: "Quote through the pools", lines: ["The desk quotes the pools directly, where every swap on this chain settles, and shows", "the app's Relay route beside it, so you can see the spread for yourself."], tryIt: "/quote 0.05 ETH USDG" },
-  { title: "Swap from your own wallet", lines: ["Your wallet signs, the swap pays your address in the same transaction, and the desk", "reads it off the chain. Nothing is ever held for you."], tryIt: "/swap 0.05 ETH USDG" },
-  { title: "An agent of your own", lines: ["Connect a wallet holding OBS or AOBS and you get a basic agent, like any other assistant,", "that you train right here: name it, set its style and voice, tell it what you want. It remembers", "your conversation and belongs to the wallet you connected, which controls it. It does not trade for you."], tryIt: "/connect" },
-];
+/** PURE: the tour: what this is, whether to take its word, how to check, then the parts that need a wallet. The last step is worded for the door. */
+export function tourFor(door: Door = {}): Array<{ title: string; lines: string[]; tryIt: string }> {
+  const who = door.gate === "allowlist" ? "Connect an invited wallet" : door.gate === "off" ? "Connect your wallet" : "Connect a wallet holding OBS or AOBS";
+  return [
+    { title: "This is a live desk", lines: ["Agent OBS trades from its own wallet on Robinhood Chain and thinks out loud.", "Every cycle it records what it read, what it made of it, and what it decided."], tryIt: "/status" },
+    { title: "Read it, don't take its word", lines: ["Every number on the page comes from a read the desk made. The thoughts are its own words;", "the research log is what it read between cycles."], tryIt: "/thoughts 2" },
+    { title: "Quote through the pools", lines: ["The desk quotes the pools directly, where every swap on this chain settles, and shows", "the app's Relay route beside it, so you can see the spread for yourself."], tryIt: "/quote 0.05 ETH USDG" },
+    { title: "Swap from your own wallet", lines: ["Your wallet signs, the swap pays your address in the same transaction, and the desk", "reads it off the chain. Nothing is ever held for you."], tryIt: "/swap 0.05 ETH USDG" },
+    { title: "An agent of your own", lines: [`${who} and you get a basic agent, like any other assistant,`, "that you train right here: name it, set its style and voice, tell it what you want. It remembers", "your conversation and belongs to the wallet you connected, which controls it. It does not trade for you."], tryIt: "/connect" },
+  ];
+}
+export const TOUR = tourFor();
 
 const list = (xs: readonly string[]) => xs.join(" | ");
 
@@ -143,16 +169,17 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       return err(["Type /help to see what you can do."], ["/help"]);
     case "help":
     case "?":
-      if (arg.toLowerCase() === "all") return ok(HELP_ALL);
-      return ok(HELP, { kind: "none" }, ["/explore", "/status", ctx.signedIn ? "/whoami" : "/connect"]);
+      if (arg.toLowerCase() === "all") return ok(helpAllLines(ctx));
+      return ok(helpLines(ctx), { kind: "none" }, ["/explore", "/status", ctx.signedIn ? "/whoami" : "/connect"]);
     case "clear":
       return ok([], { kind: "clear" });
     case "explore":
     case "tour": {
-      const step = Math.max(1, Math.min(TOUR.length, parseInt(arg, 10) || 1));
-      const t = TOUR[step - 1];
-      const last = step >= TOUR.length;
-      return ok([`(${step}/${TOUR.length}) ${t.title}`, ``, ...t.lines, ...(last ? [``, `That's the tour. /help has the full list whenever you want it.`] : [])], { kind: "none" }, last ? [t.tryIt] : [t.tryIt, `/explore ${step + 1}`]);
+      const tour = tourFor(ctx);
+      const step = Math.max(1, Math.min(tour.length, parseInt(arg, 10) || 1));
+      const t = tour[step - 1];
+      const last = step >= tour.length;
+      return ok([`(${step}/${tour.length}) ${t.title}`, ``, ...t.lines, ...(last ? [``, `That's the tour. /help has the full list whenever you want it.`] : [])], { kind: "none" }, last ? [t.tryIt] : [t.tryIt, `/explore ${step + 1}`]);
     }
     case "whoami":
     case "settings":
@@ -211,6 +238,8 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
     }
     case "apps":
     case "integrations": {
+      // Composio is not switched on here yet: say so plainly rather than sending the effect to a route that will.
+      if (ctx.apps === false) return ok(["Apps are coming later: Slack, Linear, X, Gmail and Google Docs will connect to your agent right here. Nothing to set up yet."], { kind: "none" }, ["/help", "/model"]);
       const [sub, ...restWords] = arg.split(/\s+/);
       const s2 = (sub ?? "").toLowerCase();
       const app = restWords.join(" ").trim();

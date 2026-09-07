@@ -53,9 +53,9 @@ import { refreshModel, modelFor, personaFor, approveTool, ensureUserAgent, strea
 import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
-import { holderGate, forgetHolder } from "./desk/gate.ts";
+import { holderGate, forgetHolder, gateMode } from "./desk/gate.ts";
 import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL } from "./desk/models.ts";
-import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
+import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, freeUsd, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
 // Public exposure needs manners: a per-address budget on requests and a cap
@@ -433,6 +433,8 @@ function statusPayload(now: number): Record<string, unknown> {
     rails: railsSummary(railsFromEnv(), d.book.trades, now),
     // The desk's own wallet is public on purpose: every balance and every settlement is checkable there.
     wallet: WALLET_ADDRESS ? { address: WALLET_ADDRESS, explorerUrl: `${EXPLORER_URL}/address/${WALLET_ADDRESS}` } : null,
+    // What the console offers today, so the page shows no door or button that is not there yet.
+    console: { gate: gateMode(), apps: appsOn(), credits: creditsOn(), freeCredits: Math.round(freeUsd() * CREDITS_PER_USD) },
   };
 }
 
@@ -897,7 +899,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       if (line.length > 2000) { json(res, 400, { ok: false, lines: ["That's too long for one line."] }); return; }
       const standing = address ? consoleStanding(address) : { address: "", swaps: 0, recent: [] };
       const before = address ? getSettings(address) : {};
-      const routed = routeConsole(line, { settings: before, signedIn: !!address, swaps: standing.swaps });
+      const routed = routeConsole(line, { settings: before, signedIn: !!address, swaps: standing.swaps, apps: appsOn(), gate: gateMode() });
       const base = { lines: routed.lines, suggest: routed.suggest };
       const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps" || routed.effect.kind === "credits" || (routed.effect.kind === "model" && routed.effect.action === "set");
       if (needsWallet && !address) {
