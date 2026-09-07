@@ -128,6 +128,7 @@ export async function ensureUserAgent(address: string): Promise<EnsureResult> {
   }
   await applyModel(gw, agentId, address);
   await writePersona(gw, agentId, address);
+  await denyTools(gw, agentId).catch((e) => console.error(`[my-agent] tool policy for ${agentId} not applied: ${e instanceof Error ? e.message : String(e)}`));
   ensuredAt.set(agentId, Date.now());
   return { agentId, ready: true, created };
 }
@@ -157,6 +158,30 @@ export async function refreshModel(address: string): Promise<void> {
   if (!gw) return;
   await ensureUserAgent(address);
   await applyModel(gw, agentIdForWallet(address), address);
+}
+
+/**
+ * The gateway hands every agent its whole tool belt: a shell, files on the gateway box, the web, its own
+ * instructions, other users, sessions, schedules. A person's chat agent gets none of that: a denied tool never
+ * reaches the model, so it cannot rewrite itself, run anything, or wander the web (which is also what made it
+ * think out loud before answering). Memory stays: that is how it learns. Apps come through their own MCP server,
+ * gated by their own approval policy.
+ */
+export const DENIED_TOOLS = [
+  "exec", "file_read", "file_write", "file_edit", "file_list", "file_stat", "file_delete",
+  "web_search", "web_fetch", "instruction_update",
+  "user_list", "user_identity_link", "user_identity_unlink", "user_role_set", "user_merge", "identity_link_request", "identity_link_confirm",
+  "session_list", "session_read", "session_summary", "session_send",
+  "schedule_list", "schedule_create", "schedule_update", "schedule_delete",
+];
+const toolsDenied = new Set<string>();
+
+async function denyTools(gw: GatewayClient, agentId: string): Promise<void> {
+  if (toolsDenied.has(agentId)) return;
+  for (const tool of DENIED_TOOLS) {
+    await gw.upsertPolicy(agentId, { resourceType: "tool", resourceKey: tool, effect: "deny", grants: [{ type: "any" }] });
+  }
+  toolsDenied.add(agentId);
 }
 
 async function writePersona(gw: GatewayClient, agentId: string, address: string): Promise<void> {

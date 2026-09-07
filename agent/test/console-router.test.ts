@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { routeConsole, suggest, HELP_ALL, TOUR, VOCAB, VIEWS } from "../src/cli/router.ts";
 import { sanitizeSettings, sanitizeName, getSettings, describeSettings } from "../src/desk/userSettings.ts";
 import { statusLines, positionsLines, thoughtsLines, swapsLines } from "../src/desk/deskConsole.ts";
-import { personaFor, agentIdForWallet, deEmDash, isMissingSession } from "../src/desk/userAgents.ts";
+import { personaFor, agentIdForWallet, deEmDash, isMissingSession, DENIED_TOOLS } from "../src/desk/userAgents.ts";
+
+test("a person's agent is denied the gateway's shell, files, web, self-editing and admin tools, and keeps its memory", () => {
+  for (const t of ["exec", "file_write", "web_search", "web_fetch", "instruction_update", "session_send", "schedule_create", "user_role_set"]) assert.ok(DENIED_TOOLS.includes(t), t);
+  for (const t of DENIED_TOOLS) assert.ok(!t.startsWith("memory_"), "memory stays");
+});
 
 const ctx = { settings: {}, signedIn: false, swaps: 1 };
 
