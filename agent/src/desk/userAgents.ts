@@ -145,7 +145,9 @@ async function applyModel(gw: GatewayClient, agentId: string, address: string): 
     await gw.putAgentConfig(agentId, {
       ...current,
       workspace_root: typeof current.workspace_root === "string" ? current.workspace_root : `/agents/${agentId}`,
-      model: { ...curModel, provider: process.env.OBS_USER_MODEL_PROVIDER || "openrouter", model: modelFor(address), max_tokens: MAX_TOKENS },
+      // Thinking off, said explicitly: with the gateway's default unset, a fast model thought out loud inside its
+      // reply ("The user is asking..."); off is what answered cleanly and fastest straight against the provider.
+      model: { ...curModel, provider: process.env.OBS_USER_MODEL_PROVIDER || "openrouter", model: modelFor(address), max_tokens: MAX_TOKENS, thinking: "off" },
     });
   } catch (e) {
     console.error(`[my-agent] config for ${agentId} not applied: ${e instanceof Error ? e.message : String(e)}`);
