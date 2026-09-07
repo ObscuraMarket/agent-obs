@@ -24,6 +24,7 @@ test("a line without a slash is a message to the agent; a slash is a command; a 
   assert.deepEqual(routeConsole("/style deep", ctx).effect, { kind: "settings", patch: { style: "deep" } });
   assert.equal(routeConsole("/style loud", ctx).error, true);
   assert.deepEqual(routeConsole("/reset goal", ctx).effect, { kind: "settings", patch: { goal: "" } });
+  assert.deepEqual(routeConsole("/reset model", ctx).effect, { kind: "settings", patch: { model: "" } }, "back to the default model");
   const typo = routeConsole("/statsu", ctx);
   assert.equal(typo.error, true);
   assert.deepEqual(typo.suggest, ["/status"]);
@@ -132,6 +133,14 @@ test("the personal agent's instruction carries the rules that are policy, and ne
   assert.ok(!/exact execution|discreet settlement|trading agent on Robinhood/.test(p), "the house desk's temperament does not leak into a personal agent");
   assert.match(p, /do not correct them back to "OBS"/);
   assert.match(p, /You do not hold or move this person's funds/);
+  // The persona teaches only what the console offers: no /apps while apps are off, and the door as the gate keeps it.
+  const closed = personaFor("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", { name: "Ledger" }, { apps: false, gate: "allowlist" });
+  assert.ok(!closed.includes("/apps"), "no /apps command while apps are off");
+  assert.match(closed, /Apps: none yet/);
+  assert.match(closed, /open to invited wallets for now/);
+  const open = personaFor("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", { name: "Ledger" }, { apps: true, gate: "on" });
+  assert.match(open, /\/apps connect <app>/);
+  assert.match(open, /OBS and AOBS holders/);
   assert.match(p, /never sign anything/);
   assert.match(p, /Never invent positions, prices or performance/);
   assert.match(p, /No em dashes, ever/);

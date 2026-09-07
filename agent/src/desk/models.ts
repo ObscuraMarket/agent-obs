@@ -16,7 +16,9 @@ export interface ModelInfo {
 
 const CATALOG_URL = "https://openrouter.ai/api/v1/models";
 const CATALOG_TTL_MS = 60 * 60 * 1000;
-export const DEFAULT_MODEL = process.env.OBS_USER_MODEL_ID || "deepseek/deepseek-v4-flash-0731";
+// A model that answers at once: Gemini 2.5 flash finishes a console turn in about a second, where a model that
+// reasons before it writes (DeepSeek V4 flash, 2026-09-07) took three to seven. A turn costs under half a credit.
+export const DEFAULT_MODEL = process.env.OBS_USER_MODEL_ID || "google/gemini-2.5-flash";
 const FEATURED = (process.env.OBS_MODELS_FEATURED || "anthropic/claude-opus-5,openai/gpt-6-astra,google/gemini-3.8-flash,deepseek/deepseek-v4-flash-0731,x-ai/grok-4.6,meta-llama/llama-4-maverick").split(",").map((s) => s.trim()).filter(Boolean);
 
 let cache: { at: number; models: ModelInfo[] } | null = null;

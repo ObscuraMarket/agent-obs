@@ -215,7 +215,7 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       return ok([], { kind: "settings", patch: { goal: arg } });
     case "reset": {
       const f = arg.toLowerCase();
-      const fields: Record<string, Record<string, unknown>> = { name: { name: "" }, goal: { goal: "" }, voice: { voice: "" }, style: { style: "balanced" } };
+      const fields: Record<string, Record<string, unknown>> = { name: { name: "" }, goal: { goal: "" }, voice: { voice: "" }, style: { style: "balanced" }, model: { model: "" } };
       if (!f || !(f in fields)) return err([`Put a setting back to the default: /reset ${Object.keys(fields).join(", /reset ")}`]);
       return ok([], { kind: "settings", patch: fields[f] });
     }
