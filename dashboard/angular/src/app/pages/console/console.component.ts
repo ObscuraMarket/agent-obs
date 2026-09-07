@@ -18,6 +18,10 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'cards', what: 'Open Cards' },
   { cmd: 'yield', what: 'Open Yield (coming soon)' },
   { cmd: 'connect', what: 'Connect your wallet and get your own agent' },
+  { cmd: 'start', what: 'Turn your trading agent on: it follows Agent OBS\'s trades at your size, paper for now', usage: '/start 100' },
+  { cmd: 'stop', what: 'Turn your trading agent off' },
+  { cmd: 'size', what: 'What your agent puts into each entry', usage: '/size 150', args: true },
+  { cmd: 'agent', what: 'Your trading agent\'s book: on or off, what it holds, what it made' },
   { cmd: 'apps', what: 'Connect Slack, Linear, X, Gmail, Google Docs and more to your agent', usage: '/apps connect Slack' },
   { cmd: 'model', what: 'Pick the model your agent runs on, any of them', usage: '/model claude' },
   { cmd: 'models', what: 'Find a model by name', usage: '/models gemini', args: true },
@@ -47,7 +51,7 @@ const COMMANDS = COMMAND_HELP.map((c) => c.cmd);
 const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['name', 'goal', 'voice', 'style'], help: ['all'] };
 /** The buttons that stay under the transcript: the whole app and the desk, in plain words, no command to learn. */
 const QUICK: Array<{ label: string; line: string }> = [
-  { label: 'Status', line: '/status' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
+  { label: 'Status', line: '/status' }, { label: 'My agent', line: '/agent' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
   { label: 'Yield', line: '/yield' }, { label: 'Apps', line: '/apps' }, { label: 'Model', line: '/model' }, { label: 'Credits', line: '/credits' }, { label: 'Help', line: '/help' },
 ];
 const SESSION_KEY = 'obs-console-session';

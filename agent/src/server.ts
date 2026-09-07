@@ -54,6 +54,8 @@ import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 import { holderGate, forgetHolder, gateMode } from "./desk/gate.ts";
+import { followState, readFollow, recordFollow, checkSize, followBook, followLines } from "./desk/follow.ts";
+import type { Prices } from "./desk/book.ts";
 import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL } from "./desk/models.ts";
 import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, freeUsd, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
 
@@ -901,7 +903,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const before = address ? getSettings(address) : {};
       const routed = routeConsole(line, { settings: before, signedIn: !!address, swaps: standing.swaps, apps: appsOn(), gate: gateMode() });
       const base = { lines: routed.lines, suggest: routed.suggest };
-      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps" || routed.effect.kind === "credits" || (routed.effect.kind === "model" && routed.effect.action === "set");
+      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps" || routed.effect.kind === "credits" || routed.effect.kind === "follow" || (routed.effect.kind === "model" && routed.effect.action === "set");
       if (needsWallet && !address) {
         json(res, 200, { ok: false, effect: "none", lines: ["Connect your wallet first. It's your account here and the wallet that controls your agent: one signature, no transaction."], suggest: ["/connect"] });
         return;
@@ -1002,6 +1004,31 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         case "desk":
           json(res, 200, { ok: true, lines: await deskLines(routed.effect.command, routed.effect.n, now), effect: "desk" });
           return;
+        case "follow": {
+          // The wallet's own trading agent: it follows the desk at the wallet's size, on paper for now. One row per
+          // command; the book is the desk's own accounting on the mirrored trades, marked at the desk's prices.
+          const a = address as string;
+          const deskMax = railsFromEnv().maxSwapUsd;
+          let state = followState(readFollow(), a);
+          const act = routed.effect.action;
+          const wasOn = state.on;
+          if (act === "start" || act === "size") {
+            const size = routed.effect.sizeUsd != null ? checkSize(routed.effect.sizeUsd, deskMax) : { sizeUsd: state.sizeUsd };
+            if ("error" in size) { json(res, 200, { ok: false, lines: [size.error], effect: "follow", suggest: ["/agent"] }); return; }
+            state = recordFollow(a, act, size.sizeUsd, now);
+          } else if (act === "stop") {
+            if (!wasOn) { json(res, 200, { ok: true, lines: ["Your agent is already off."], effect: "follow", suggest: ["/start", "/agent"] }); return; }
+            state = recordFollow(a, "stop", undefined, now);
+          }
+          const p = await pnlPayload(1, now, false);
+          const book = followBook(deskFromDisk().book.trades, state, (p.prices as Prices | undefined) ?? {});
+          const lines = followLines(book, now);
+          if (act === "start") lines.unshift(wasOn ? `Your agent was already on; $${state.sizeUsd} a trade from here.` : "Your agent is on.");
+          if (act === "size") lines.unshift(`$${state.sizeUsd} a trade from here.`);
+          if (act === "stop") lines.unshift("Your agent is off.");
+          json(res, 200, { ok: true, effect: "follow", lines, follow: { on: state.on, sizeUsd: state.sizeUsd, mode: state.mode, since: state.since }, suggest: state.on ? ["/agent", "/status", "/stop"] : ["/start", "/status"] });
+          return;
+        }
         case "read":
           if (routed.effect.what === "whoami") { json(res, 200, { ok: true, lines: describeSettings(before), effect: "read" }); return; }
           json(res, 200, { ok: true, lines: swapsLines(standing), effect: "read", standing, ...(standing.swaps ? {} : { suggest: ["/quote 0.05 ETH USDG", "/swap 0.05 ETH USDG"] }) });

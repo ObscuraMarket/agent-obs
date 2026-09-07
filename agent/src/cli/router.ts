@@ -37,7 +37,9 @@ export type ConsoleEffect =
   /** The model the agent runs on: show it, search the catalog, or pick one. */
   | { kind: "model"; action: "show" | "list" | "set"; query?: string }
   /** Credits: the balance, or a payment to sign. */
-  | { kind: "credits"; action: "show" | "buy"; amount?: number; token?: string };
+  | { kind: "credits"; action: "show" | "buy"; amount?: number; token?: string }
+  /** The wallet's own trading agent, which follows the desk: turn it on (with a size), off, resize it, or show its book. */
+  | { kind: "follow"; action: "start" | "stop" | "size" | "show"; sizeUsd?: number };
 
 export interface ConsoleResult {
   lines: string[];
@@ -83,6 +85,7 @@ export function helpLines(door: Door = {}): string[] {
     "  /trade /rewards /cards /yield   Open a page of the app beside the console",
     "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
     `  /connect           ${connectLine(door.gate)}`,
+    "  /start [size]      Turn your trading agent on: it follows every trade Agent OBS makes, at your size, paper for now. /stop, /agent",
     ...(door.apps === false ? [] : ["  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent"]),
     "  /model             Pick the model your agent runs on, any of them",
     "  /credits           Your credits, and how to add some with ETH, USDG, AOBS or a tokenized stock",
@@ -114,6 +117,12 @@ export function helpAllLines(door: Door = {}): string[] {
   "    /apps disconnect <app>  Take one away",
   "",
   ]),
+  "  Your trading agent (it follows Agent OBS: every entry and exit the desk makes, at your size; it never trades on its own)",
+  "    /start [size]      Turn it on, from this moment; paper for now, the same commands when it goes live",
+  "    /stop              Turn it off; it still sells what it holds when the desk does",
+  "    /size <usd>        What it puts into each entry, up to what the desk itself trades",
+  "    /agent             Its book: on or off, what it holds, what it has made",
+  "",
   "  The app (opens beside the console; /close puts it away)",
   "    /trade             Swap through Obscura's routes",
   "    /rewards           Your cashback in tokenized stocks",
@@ -181,6 +190,25 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       const last = step >= tour.length;
       return ok([`(${step}/${tour.length}) ${t.title}`, ``, ...t.lines, ...(last ? [``, `That's the tour. /help has the full list whenever you want it.`] : [])], { kind: "none" }, last ? [t.tryIt] : [t.tryIt, `/explore ${step + 1}`]);
     }
+    case "start":
+    case "on": {
+      if (!arg) return ok([], { kind: "follow", action: "start" });
+      const n = Number(arg.replace(/[$,]/g, ""));
+      if (!Number.isFinite(n)) return err(["Say a size in dollars, or nothing for your current size: /start 100"], ["/start", "/start 100"]);
+      return ok([], { kind: "follow", action: "start", sizeUsd: n });
+    }
+    case "stop":
+    case "off":
+      return ok([], { kind: "follow", action: "stop" });
+    case "size": {
+      const n = Number(arg.replace(/[$,]/g, ""));
+      if (!arg || !Number.isFinite(n)) return err(["Say what your agent puts into each entry, in dollars: /size 100"], ["/size 100", "/agent"]);
+      return ok([], { kind: "follow", action: "size", sizeUsd: n });
+    }
+    case "agent":
+    case "follow":
+    case "trading":
+      return ok([], { kind: "follow", action: "show" });
     case "whoami":
     case "settings":
       return ok([], { kind: "read", what: "whoami" });
@@ -265,7 +293,7 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
   }
 }
 
-export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "model", "models", "credits", "buy", "swaps", "apps", "connect", "balance", "quote", "swap", ...VIEWS, "close", ...DESK];
+export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "model", "models", "credits", "buy", "swaps", "apps", "connect", "balance", "quote", "swap", "start", "stop", "size", "agent", ...VIEWS, "close", ...DESK];
 
 /** PURE: one near miss for a typo, by edit distance, only when it is actually close. */
 export function suggest(cmd: string): string[] {

@@ -25,6 +25,16 @@ test("a line without a slash is a message to the agent; a slash is a command; a 
   assert.equal(routeConsole("/style loud", ctx).error, true);
   assert.deepEqual(routeConsole("/reset goal", ctx).effect, { kind: "settings", patch: { goal: "" } });
   assert.deepEqual(routeConsole("/reset model", ctx).effect, { kind: "settings", patch: { model: "" } }, "back to the default model");
+  // The wallet's trading agent: on, on with a size, off, resize, show; a size that is not a number is one tap from fixed.
+  assert.deepEqual(routeConsole("/start", ctx).effect, { kind: "follow", action: "start" });
+  assert.deepEqual(routeConsole("/start $150", ctx).effect, { kind: "follow", action: "start", sizeUsd: 150 });
+  assert.equal(routeConsole("/start lots", ctx).error, true);
+  assert.deepEqual(routeConsole("/stop", ctx).effect, { kind: "follow", action: "stop" });
+  assert.deepEqual(routeConsole("/size 75", ctx).effect, { kind: "follow", action: "size", sizeUsd: 75 });
+  assert.equal(routeConsole("/size", ctx).error, true);
+  assert.deepEqual(routeConsole("/agent", ctx).effect, { kind: "follow", action: "show" });
+  assert.ok(routeConsole("/help", ctx).lines.join("\n").includes("/start [size]"), "the short help teaches /start");
+  assert.ok(routeConsole("/help all", ctx).lines.join("\n").includes("Your trading agent"), "the full help has the section");
   const typo = routeConsole("/statsu", ctx);
   assert.equal(typo.error, true);
   assert.deepEqual(typo.suggest, ["/status"]);
