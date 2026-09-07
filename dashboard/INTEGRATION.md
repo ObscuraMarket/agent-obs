@@ -512,8 +512,20 @@ available yet.
   A guest may read the desk, take the tour, open the app's pages and quote;
   shaping the agent, `/swaps` and chat need the bearer. `suggest` entries are
   literal lines to submit, rendered as one-tap chips.
+- Apps (Composio; on when the desk has `COMPOSIO_API_KEY`): the `apps` effect
+  answers `/apps` with `lines` (what is connected, what can be) and
+  `/apps connect <app>` with `links: [{ label, url }]`, a sign-in the page
+  opens in a new tab; `/apps disconnect <app>` removes one. The wallet's agent
+  gets the connected apps' tools through the gateway, and any action inside an
+  app waits for the person: the stream sends `{ type: "approval", toolCallId,
+  tool, args }`, the page shows Allow and Deny, and
+  `POST /api/obs/my-agent/approve` `{ toolCallId, approved }` (bearer) answers
+  it; `{ type: "tool", phase: "call" | "result", tool, ok }` reports tool
+  activity and `{ type: "approval_resolved", toolCallId, decision }` closes an
+  approval.
 - `POST /api/obs/my-agent/ensure` (bearer): provisions the wallet's own agent
-  on first sign-in and keeps it configured after; there is no bar to clear.
+  on first sign-in and keeps it configured after (and attaches its apps when
+  apps are on); there is no bar to clear.
   `GET /api/obs/my-agent/history` returns prior turns;
   `GET|POST /api/obs/my-agent/settings` reads and sets `name`, `style`,
   `voice`, `goal`; `POST /api/obs/my-agent/stream` `{ text }` streams the

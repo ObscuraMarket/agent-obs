@@ -32,7 +32,9 @@ export type ConsoleEffect =
   | { kind: "wallet"; action: "connect" | "balance" }
   | { kind: "wallet"; action: "quote" | "swap"; amount: number; from: string; to: string }
   /** Client-side: the page opens one of the site's own pages beside the console, or closes it (null). */
-  | { kind: "view"; view: ConsoleView | null };
+  | { kind: "view"; view: ConsoleView | null }
+  /** The person's apps, through Composio: what is connected, connect one, disconnect one. */
+  | { kind: "apps"; action: "list" | "connect" | "disconnect"; app?: string };
 
 export interface ConsoleResult {
   lines: string[];
@@ -64,6 +66,7 @@ export const HELP = [
   "  /trade /rewards /cards /referral /yield   Open a page of the app beside the console",
   "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
   "  /connect           Connect your wallet and get an agent of your own to talk to and train",
+  "  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent",
   "",
   "  /help all          Every command",
 ];
@@ -78,6 +81,11 @@ export const HELP_ALL = [
   "    /voice <text>      How it should sound: dry, warm, blunt, your call",
   "    /goal <text>       What you want from it",
   "    /reset <field>     Put one setting back to the default",
+  "",
+  "  Your apps (your agent gets their tools, and asks you before it acts in one)",
+  "    /apps              What's connected, and what can be",
+  "    /apps connect <app>     Connect one: Slack, Linear, X, Gmail, Google Docs, Sheets, Calendar, Notion, GitHub",
+  "    /apps disconnect <app>  Take one away",
   "",
   "  The app (opens beside the console; /close puts it away)",
   "    /trade             Swap through Obscura's routes",
@@ -178,6 +186,16 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
       if (!f || !(f in fields)) return err([`Put a setting back to the default: /reset ${Object.keys(fields).join(", /reset ")}`]);
       return ok([], { kind: "settings", patch: fields[f] });
     }
+    case "apps":
+    case "integrations": {
+      const [sub, ...restWords] = arg.split(/\s+/);
+      const s2 = (sub ?? "").toLowerCase();
+      const app = restWords.join(" ").trim();
+      if (!s2 || s2 === "list") return ok([], { kind: "apps", action: "list" });
+      if (s2 === "connect" || s2 === "add" || s2 === "link") return app ? ok([], { kind: "apps", action: "connect", app }) : err(["Which app? /apps connect Slack"], ["/apps"]);
+      if (s2 === "disconnect" || s2 === "remove" || s2 === "unlink") return app ? ok([], { kind: "apps", action: "disconnect", app }) : err(["Which app? /apps disconnect Slack"], ["/apps"]);
+      return ok([], { kind: "apps", action: "connect", app: arg });
+    }
     case "close":
     case "back":
       return ok(["Closed."], { kind: "view", view: null }, ["/trade", "/help"]);
@@ -195,7 +213,7 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
   }
 }
 
-export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "swaps", "connect", "balance", "quote", "swap", ...VIEWS, "close", ...DESK];
+export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "swaps", "apps", "connect", "balance", "quote", "swap", ...VIEWS, "close", ...DESK];
 
 /** PURE: one near miss for a typo, by edit distance, only when it is actually close. */
 export function suggest(cmd: string): string[] {

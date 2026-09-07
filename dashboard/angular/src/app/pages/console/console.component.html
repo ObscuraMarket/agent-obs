@@ -35,17 +35,30 @@
         <p class="cli__cmd" *ngIf="g.kind === 'command'"><span class="cli__cmd-mark" aria-hidden="true">›</span>{{ g.lines[0].text }}</p>
         <div class="cli__row cli__row--me" *ngIf="g.kind === 'input'"><div class="cli__bubble cli__bubble--me">{{ g.lines[0].text }}</div></div>
         <div class="cli__row" *ngIf="g.kind === 'agent'">
-          <div class="cli__bubble cli__bubble--agent">{{ g.lines[0].text }}<span class="cli__caret" *ngIf="g.lines[0].streaming && last" aria-hidden="true"></span></div>
+          <div class="cli__bubble cli__bubble--agent"><ng-container *ngFor="let p of parts(g.lines[0].text)"><a *ngIf="p.url" [href]="p.url" target="_blank" rel="noopener noreferrer">{{ p.t }}</a><ng-container *ngIf="!p.url">{{ p.t }}</ng-container></ng-container><span class="cli__caret" *ngIf="g.lines[0].streaming && last" aria-hidden="true"></span></div>
         </div>
         <div *ngIf="g.kind === 'system'">
           <p class="cli__note">{{ joined(g) }}</p>
-          <div class="cli__suggest" *ngIf="suggestOf(g).length">
+          <!-- The agent asked before acting in one of their apps: what it wants to do, and Allow or Deny. -->
+          <ng-container *ngIf="approvalOf(g) as a">
+            <pre class="cli__approval-args" *ngIf="argsText(a.args)">{{ argsText(a.args) }}</pre>
+            <div class="cli__approval">
+              <ng-container *ngIf="a.decision === 'pending'; else decided">
+                <button type="button" class="cli__chip cli__chip--allow" (click)="approve(a, true)">Allow</button>
+                <button type="button" class="cli__chip cli__chip--deny" (click)="approve(a, false)">Deny</button>
+              </ng-container>
+              <ng-template #decided><span class="cli__decided">{{ a.decision === 'allowed' ? 'Allowed.' : 'Denied.' }}</span></ng-template>
+            </div>
+          </ng-container>
+          <div class="cli__suggest" *ngIf="suggestOf(g).length || linksOf(g).length">
+            <a *ngFor="let l of linksOf(g)" class="cli__chip cli__chip--link" [href]="l.url" target="_blank" rel="noopener noreferrer">{{ l.label }}</a>
             <button type="button" *ngFor="let one of suggestOf(g)" class="cli__chip" [class.cli__chip--cmd]="one.startsWith('/')" (click)="runLine(one)" [disabled]="busy || agentState === 'thinking'" [title]="one">{{ chipLabel(one) }}</button>
           </div>
         </div>
         <div *ngIf="g.kind === 'output' || g.kind === 'error'">
           <pre class="cli__out" [class.cli__out--error]="g.kind === 'error'">{{ joinedLines(g) }}</pre>
-          <div class="cli__suggest" *ngIf="suggestOf(g).length">
+          <div class="cli__suggest" *ngIf="suggestOf(g).length || linksOf(g).length">
+            <a *ngFor="let l of linksOf(g)" class="cli__chip cli__chip--link" [href]="l.url" target="_blank" rel="noopener noreferrer">{{ l.label }}</a>
             <button type="button" *ngFor="let one of suggestOf(g)" class="cli__chip" [class.cli__chip--cmd]="one.startsWith('/')" (click)="runLine(one)" [disabled]="busy || agentState === 'thinking'" [title]="one">{{ chipLabel(one) }}</button>
           </div>
         </div>

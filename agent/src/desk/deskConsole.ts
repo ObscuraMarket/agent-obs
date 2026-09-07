@@ -58,6 +58,15 @@ export function readsLines(r: Any): string[] {
   return out;
 }
 
+/** What is connected, and what can be, in one glance. */
+export function appsLines(apps: Array<{ name: string; connected: boolean }>): string[] {
+  const on = apps.filter((a) => a.connected);
+  const off = apps.filter((a) => !a.connected);
+  const out = [on.length ? `Connected: ${on.map((a) => a.name).join(", ")}.` : "No apps connected yet."];
+  if (off.length) out.push(`You can connect: ${off.map((a) => a.name).join(", ")}.`, "  /apps connect Slack, for example. Your agent then has that app's tools, and asks you before it does anything in it.");
+  return out;
+}
+
 export function swapsLines(e: { swaps: number; recent: Array<{ at: number; from: string; to: string; amountIn: number; amountOut: number | null; txHash: string }> }): string[] {
   const out = [e.swaps ? `${e.swaps} swap${e.swaps === 1 ? "" : "s"} from this wallet through the console, newest first.` : "No swaps from this wallet through the console yet."];
   for (const r of e.recent.slice(0, 5)) out.push(`  ${clock(r.at)}  ${r.amountIn} ${r.from} -> ${r.amountOut != null ? `${r.amountOut} ` : ""}${r.to}  ${r.txHash.slice(0, 10)}...`);

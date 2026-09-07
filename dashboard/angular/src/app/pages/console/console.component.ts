@@ -3,7 +3,8 @@ import { Meta, Title } from '@angular/platform-browser';
 import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, CONSOLE_VIEWS, CONSOLE_WALLET, ConsoleWallet } from '../../service/obs-desk.service';
 
 type LineKind = 'input' | 'command' | 'output' | 'error' | 'agent' | 'system';
-interface CliLine { kind: LineKind; text: string; streaming?: boolean; suggest?: string[]; }
+interface Approval { toolCallId: string; tool: string; args?: unknown; decision: 'pending' | 'allowed' | 'denied'; }
+interface CliLine { kind: LineKind; text: string; streaming?: boolean; suggest?: string[]; links?: Array<{ label: string; url: string }>; approval?: Approval; }
 interface Group { kind: LineKind; lines: CliLine[]; }
 type Status = 'guest' | 'connected' | 'signing' | 'signed-in';
 type AgentState = 'idle' | 'provisioning' | 'ready' | 'thinking' | 'error';
@@ -18,6 +19,7 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'referral', what: 'Open the referral waitlist' },
   { cmd: 'yield', what: 'Open Yield (coming soon)' },
   { cmd: 'connect', what: 'Connect your wallet and get your own agent' },
+  { cmd: 'apps', what: 'Connect Slack, Linear, X, Gmail, Google Docs and more to your agent', usage: '/apps connect Slack' },
   { cmd: 'help', what: 'Every command, explained' },
   { cmd: 'explore', what: 'A short tour, one step at a time' },
   { cmd: 'positions', what: 'What the desk holds' },
@@ -43,7 +45,7 @@ const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'd
 /** The buttons that stay under the transcript: the whole app and the desk, in plain words, no command to learn. */
 const QUICK: Array<{ label: string; line: string }> = [
   { label: 'Status', line: '/status' }, { label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' },
-  { label: 'Referral', line: '/referral' }, { label: 'Yield', line: '/yield' }, { label: 'Help', line: '/help' },
+  { label: 'Referral', line: '/referral' }, { label: 'Yield', line: '/yield' }, { label: 'Apps', line: '/apps' }, { label: 'Help', line: '/help' },
 ];
 const SESSION_KEY = 'obs-console-session';
 
@@ -129,6 +131,40 @@ export class ConsoleComponent implements AfterViewInit {
     const h = m ? COMMAND_HELP.find((c) => c.cmd === m[1]) : null;
     return h ? h.cmd.charAt(0).toUpperCase() + h.cmd.slice(1) : one;
   }
+  linksOf(g: Group): Array<{ label: string; url: string }> { return g.lines[g.lines.length - 1]?.links ?? []; }
+  approvalOf(g: Group): Approval | null { return g.lines[g.lines.length - 1]?.approval ?? null; }
+  /** A message split so that its links open: plain text and http(s) URLs, in order. */
+  parts(text: string): Array<{ t: string; url?: string }> {
+    const out: Array<{ t: string; url?: string }> = [];
+    const re = /https?:\/\/[^\s<>"')\]]+/g;
+    let at = 0;
+    for (const m of text.matchAll(re)) {
+      const i = m.index ?? 0;
+      if (i > at) { out.push({ t: text.slice(at, i) }); }
+      out.push({ t: m[0], url: m[0] });
+      at = i + m[0].length;
+    }
+    if (at < text.length) { out.push({ t: text.slice(at) }); }
+    return out;
+  }
+  /** A tool's name as a person would say it: the app tool's own name, or what the meta tool does. */
+  toolLabel(tool: string): string {
+    const bare = (tool || '').replace(/^mcp__[^_]+(?:_[^_]+)*__/, '').replace(/^mcp__apps-[0-9a-f]+__/, '').replace(/^COMPOSIO_/, '');
+    const meta: Record<string, string> = { MULTI_EXECUTE_TOOL: 'run something in your apps', SEARCH_TOOLS: 'look up the right tools', GET_TOOL_SCHEMAS: 'read what a tool needs', MANAGE_CONNECTIONS: 'manage your app connections', WAIT_FOR_CONNECTIONS: 'wait for your connection' };
+    return meta[bare] ?? bare.toLowerCase().replace(/_/g, ' ');
+  }
+  argsText(a: unknown): string {
+    try { const s = typeof a === 'string' ? a : JSON.stringify(a); return s && s !== '{}' ? s.slice(0, 400) : ''; } catch { return ''; }
+  }
+
+  /** Allow or deny what the agent asked to do in an app. One tap; the turn was waiting for it. */
+  async approve(a: Approval, ok: boolean): Promise<void> {
+    if (a.decision !== 'pending' || !this.token) { return; }
+    a.decision = ok ? 'allowed' : 'denied';
+    try { await this.get(this.obs.myAgentApprove(this.token, a.toolCallId, ok)); }
+    catch (e: any) { this.print([{ kind: 'error', text: 'Couldn\'t send your answer: ' + this.reason(e) }]); }
+  }
+
   get viewLabel(): string { return this.view ? this.view.charAt(0).toUpperCase() + this.view.slice(1) : ''; }
   get statusLine(): string {
     if (this.agentState === 'ready' || this.agentState === 'thinking') { return this.agentName + ' is ready'; }
@@ -246,7 +282,11 @@ export class ConsoleComponent implements AfterViewInit {
 
   private updateLast(patch: Partial<CliLine>): void {
     const last = this.lines[this.lines.length - 1];
-    if (last) { Object.assign(last, patch); }
+    if (last) { this.patch(last, patch); }
+  }
+
+  private patch(line: CliLine, patch: Partial<CliLine>): void {
+    Object.assign(line, patch);
     setTimeout(() => { const el = this.screen?.nativeElement; if (el) { el.scrollTop = el.scrollHeight; } }, 0);
   }
 
@@ -287,6 +327,7 @@ export class ConsoleComponent implements AfterViewInit {
       const out = Array.isArray(data.lines) ? data.lines : [];
       const printed: CliLine[] = out.length ? out.map((t) => ({ kind, text: t })) : [{ kind, text: data.ok === false ? 'That didn\'t work.' : 'Done.' }];
       if (data.suggest?.length) { printed[printed.length - 1].suggest = data.suggest.map(String); }
+      if (data.links?.length) { printed[printed.length - 1].links = data.links; }
       this.print(printed);
     } catch (e: any) {
       this.print([{ kind: 'error', text: 'Something went wrong: ' + this.reason(e) }]);
@@ -518,9 +559,21 @@ export class ConsoleComponent implements AfterViewInit {
     void alreadyPrinted;
     this.agentState = 'thinking';
     this.agentError = null;
-    this.print([{ kind: 'agent', text: '', streaming: true }]);
+    let me: CliLine | null = { kind: 'agent', text: '', streaming: true };
+    this.print([me]);
     const { url, headers } = this.obs.myAgentStream(this.token);
     let acc = '';
+    // Something happened between the agent's words (a tool ran, an approval was asked): its next words start a new bubble.
+    const aside = (line: CliLine) => {
+      if (me && !me.text) { const i = this.lines.indexOf(me); if (i >= 0) { this.lines.splice(i, 1); } }
+      if (me) { me.streaming = false; }
+      me = null; acc = '';
+      this.print([line]);
+    };
+    const say = (text: string) => {
+      if (!me) { me = { kind: 'agent', text: '', streaming: true }; this.print([me]); }
+      this.patch(me, { text, streaming: true });
+    };
     try {
       const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ text }) });
       if (!res.ok || !res.body) {
@@ -539,16 +592,20 @@ export class ConsoleComponent implements AfterViewInit {
         for (const frame of frames) {
           const line = frame.trim();
           if (!line.startsWith('data:')) { continue; }
-          let ev: { type: string; text?: string; message?: string };
+          let ev: { type: string; text?: string; message?: string; phase?: string; tool?: string; ok?: boolean; toolCallId?: string; args?: unknown; decision?: string };
           try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
-          if (ev.type === 'delta') { acc += ev.text ?? ''; this.zone.run(() => this.updateLast({ text: acc, streaming: true })); }
-          else if (ev.type === 'final') { acc = ev.text || acc; this.zone.run(() => this.updateLast({ text: acc, streaming: true })); }
+          if (ev.type === 'delta') { acc += ev.text ?? ''; this.zone.run(() => say(acc)); }
+          else if (ev.type === 'final') { acc = ev.text || acc; this.zone.run(() => say(acc)); }
           else if (ev.type === 'error') { acc = acc || (ev.message || 'your agent could not respond just now'); }
+          else if (ev.type === 'tool' && ev.phase === 'call') { this.zone.run(() => aside({ kind: 'system', text: 'Working in your apps: ' + this.toolLabel(ev.tool ?? '') + '.' })); }
+          else if (ev.type === 'tool' && ev.phase === 'result' && ev.ok === false) { this.zone.run(() => aside({ kind: 'system', text: 'That didn\'t work in the app (' + this.toolLabel(ev.tool ?? '') + ').' })); }
+          else if (ev.type === 'approval') { this.zone.run(() => aside({ kind: 'system', text: this.agentName + ' wants to ' + this.toolLabel(ev.tool ?? '') + '. Allow it?', approval: { toolCallId: ev.toolCallId ?? '', tool: ev.tool ?? '', args: ev.args, decision: 'pending' } })); }
+          else if (ev.type === 'approval_resolved') { this.zone.run(() => { for (const l of this.lines) { if (l.approval && l.approval.toolCallId === ev.toolCallId && l.approval.decision === 'pending') { l.approval.decision = ev.decision === 'approved' ? 'allowed' : 'denied'; } } }); }
         }
       }
-      this.updateLast({ text: acc || 'no reply came back. try again.', streaming: false });
+      if (me || !acc) { say(acc || 'No reply came back. Try again.'); if (me) { (me as CliLine).streaming = false; } }
     } catch (e: any) {
-      this.updateLast({ text: acc || this.reason(e), streaming: false });
+      say(acc || this.reason(e)); if (me) { (me as CliLine).streaming = false; }
       this.agentError = null;
     } finally {
       this.agentState = 'ready';

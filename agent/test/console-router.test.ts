@@ -49,6 +49,12 @@ test("the app's pages are console views: one command opens each beside the conso
   }
   assert.deepEqual(routeConsole("/app", ctx).effect, { kind: "view", view: "trade" }, "the Trade page's own route name still opens it");
   assert.deepEqual(routeConsole("/close", ctx).effect, { kind: "view", view: null });
+  assert.deepEqual(routeConsole("/apps", ctx).effect, { kind: "apps", action: "list" });
+  assert.deepEqual(routeConsole("/apps connect Google Docs", ctx).effect, { kind: "apps", action: "connect", app: "Google Docs" });
+  assert.deepEqual(routeConsole("/apps Slack", ctx).effect, { kind: "apps", action: "connect", app: "Slack" }, "naming an app connects it");
+  assert.deepEqual(routeConsole("/apps disconnect x", ctx).effect, { kind: "apps", action: "disconnect", app: "x" });
+  assert.equal(routeConsole("/apps connect", ctx).error, true);
+  assert.ok(VOCAB.includes("apps"));
   assert.deepEqual(routeConsole("/traed", ctx).suggest, ["/trade"]);
   assert.ok(HELP_ALL.some((l) => l.includes("/referral")) && HELP_ALL.some((l) => l.includes("/close")));
   for (const v of [...VIEWS, "close"]) assert.ok(VOCAB.includes(v), `${v} is in the vocabulary`);

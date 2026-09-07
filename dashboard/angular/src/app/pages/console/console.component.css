@@ -106,6 +106,15 @@
 .cli__chip--cmd { font-family: var(--mono); color: var(--lime); border-color: var(--border); }
 .cli__chip:hover:not(:disabled) { color: var(--text); border-color: var(--lime); background: rgba(184, 255, 61, 0.07); }
 .cli__chip:disabled { opacity: 0.4; cursor: default; }
+/* A link chip opens in a new tab (an app's sign-in); the approval chips answer the agent's question. */
+a.cli__chip--link { text-decoration: none; display: inline-flex; align-items: center; color: var(--lime); border-color: var(--lime); font-weight: 600; }
+a.cli__chip--link:hover { background: rgba(184, 255, 61, 0.1); }
+.cli__approval { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; }
+.cli__chip--allow { color: var(--lime); border-color: var(--lime); font-weight: 700; }
+.cli__chip--deny { color: #f0a0a0; border-color: rgba(255, 107, 107, 0.5); }
+.cli__decided { font-family: var(--body); font-size: 12.5px; color: var(--text-faint); }
+.cli__approval-args { margin: 6px 0 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--text-faint); white-space: pre-wrap; word-break: break-word; }
+.cli__bubble a { color: var(--lime); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 
 .cli__caret { display: inline-block; width: 7px; height: 14px; margin-left: 3px; background: var(--lime); vertical-align: text-bottom; animation: cli-blink 1s steps(2, start) infinite; }
 @keyframes cli-blink { to { visibility: hidden; } }

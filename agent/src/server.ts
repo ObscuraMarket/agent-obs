@@ -49,9 +49,10 @@ import { xLive, xConfigured } from "./social/xClient.ts";
 import { consoleQuote, verifySwap, consoleStanding, isAddress } from "./desk/console.ts";
 import { issueChallenge, linkAccount, verifySession, bearerOf } from "./desk/accounts.ts";
 import { getSettings, updateSettings, sanitizeSettings, describeSettings } from "./desk/userSettings.ts";
-import { ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
+import { approveTool, ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
 import { routeConsole } from "./cli/router.ts";
-import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines } from "./desk/deskConsole.ts";
+import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines } from "./desk/deskConsole.ts";
+import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
 // Public exposure needs manners: a per-address budget on requests and a cap
@@ -683,7 +684,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   const path = url.pathname.replace(/\/+$/, "") || "/";
   // Read-only, with one exception: the console's report of a swap a person sent from their own wallet, which the
   // desk verifies on the chain before it counts anything. Nothing else is written through this API.
-  const WRITES = new Set(["/api/obs/console/swap", "/api/obs/account/challenge", "/api/obs/account/link", "/api/obs/console/cli", "/api/obs/my-agent/ensure", "/api/obs/my-agent/stream", "/api/obs/my-agent/settings"]);
+  const WRITES = new Set(["/api/obs/console/swap", "/api/obs/account/challenge", "/api/obs/account/link", "/api/obs/console/cli", "/api/obs/my-agent/ensure", "/api/obs/my-agent/stream", "/api/obs/my-agent/settings", "/api/obs/my-agent/approve"]);
   if (req.method !== "GET" && !(req.method === "POST" && WRITES.has(path))) {
     json(res, 405, { error: "read-only" });
     return;
@@ -892,7 +893,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const before = address ? getSettings(address) : {};
       const routed = routeConsole(line, { settings: before, signedIn: !!address, swaps: standing.swaps });
       const base = { lines: routed.lines, suggest: routed.suggest };
-      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read";
+      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps";
       if (needsWallet && !address) {
         json(res, 200, { ok: false, effect: "none", lines: ["Connect your wallet first. It's your account here and the wallet that controls your agent: one signature, no transaction."], suggest: ["/connect"] });
         return;
@@ -908,6 +909,35 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         case "view":
           json(res, 200, { ok: true, ...base, effect: "view", view: routed.effect.view });
           return;
+        case "apps": {
+          // The person's apps, through Composio, for the wallet that signed in. Off until the operator sets the key.
+          if (!appsOn()) { json(res, 200, { ok: false, effect: "none", lines: ["Connecting apps isn't switched on here yet."], suggest: ["/help"] }); return; }
+          const a = address as string;
+          const names = allowedToolkits().map(appName).join(", ");
+          try {
+            if (routed.effect.action === "list") {
+              const apps = await listApps(a);
+              json(res, 200, { ok: true, effect: "apps", lines: appsLines(apps), suggest: apps.filter((x) => !x.connected).slice(0, 3).map((x) => `/apps connect ${x.name}`) });
+              return;
+            }
+            const slug = resolveApp(routed.effect.app ?? "");
+            if (!slug) { json(res, 200, { ok: false, effect: "none", lines: [`"${routed.effect.app ?? ""}" isn't an app you can connect here. Try one of: ${names}.`], suggest: ["/apps"] }); return; }
+            const name = appName(slug);
+            if (routed.effect.action === "connect") {
+              const c = await connectApp(a, slug);
+              void ensureApps(a).catch((e) => console.error(`[apps] attach for ${a}: ${e instanceof Error ? e.message : String(e)}`));
+              json(res, 200, { ok: true, effect: "apps", lines: [c.url ? `Connect ${name}: open the link, approve it there, then come back and type /apps.` : `${name} is already connected, or needs no sign-in.`], links: c.url ? [{ label: `Connect ${name}`, url: c.url }] : [], suggest: ["/apps"] });
+              return;
+            }
+            const n = await disconnectApp(a, slug);
+            json(res, 200, { ok: true, effect: "apps", lines: [n ? `${name} disconnected.` : `${name} wasn't connected.`], suggest: ["/apps"] });
+            return;
+          } catch (err) {
+            console.error(`[apps] ${routed.effect.action} for ${a}: ${err instanceof Error ? err.message : String(err)}`);
+            json(res, 200, { ok: false, effect: "none", lines: ["Couldn't reach the apps service just now. Try again in a moment."], suggest: ["/apps"] });
+            return;
+          }
+        }
         case "chat":
           json(res, 200, { ok: true, lines: [], effect: "chat", text: routed.effect.text });
           return;
@@ -936,7 +966,10 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     const address = requireWallet(req, res);
     if (!address) return;
     ensureUserAgent(address)
-      .then((r) => json(res, 200, { ok: true, ...r, name: agentDisplayName(address), settings: getSettings(address) }))
+      .then((r) => {
+        if (appsOn()) void ensureApps(address).catch((e) => console.error(`[apps] attach for ${address}: ${e instanceof Error ? e.message : String(e)}`));
+        json(res, 200, { ok: true, ...r, name: agentDisplayName(address), settings: getSettings(address) });
+      })
       .catch((err) => { console.error(`[my-agent] ensure failed: ${err instanceof Error ? err.message : String(err)}`); json(res, 502, { ok: false, error: "could not reach your agent; try again shortly" }); });
     return;
   }
@@ -963,6 +996,21 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
     return;
   }
+  if (path === "/api/obs/my-agent/approve") {
+    // The person's answer to an approval their agent asked for in the console: a tool call inside one of their apps.
+    res.setHeader("Cache-Control", "no-store");
+    const address = requireWallet(req, res);
+    if (!address) return;
+    readBody(req, 4096).then(async (text) => {
+      let b: Record<string, unknown> = {};
+      try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
+      const toolCallId = typeof b.toolCallId === "string" ? b.toolCallId : "";
+      if (!toolCallId) { json(res, 400, { ok: false, error: "toolCallId is required" }); return; }
+      const resolved = await approveTool(address, toolCallId, b.approved === true);
+      json(res, 200, { ok: true, resolved, approved: b.approved === true });
+    }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
+    return;
+  }
   if (path === "/api/obs/my-agent/stream") {
     // One turn, streamed as server-sent events: one JSON object per data frame. The guards run before the SSE
     // headers, so a refused turn gets a clean JSON error rather than a half-open stream.
@@ -981,7 +1029,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const ac = new AbortController();
       res.on("close", () => ac.abort());
       let idle: ReturnType<typeof setTimeout> | undefined;
-      const arm = () => { clearTimeout(idle); idle = setTimeout(() => ac.abort(), 60_000); };
+      const arm = (ms = 60_000) => { clearTimeout(idle); idle = setTimeout(() => ac.abort(), ms); };
       let deltas = 0;
       try {
         arm();
@@ -991,6 +1039,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           if (ev.type === "text_delta") { deltas++; send({ type: "delta", text: deEmDash(ev.text) }); }
           else if (ev.type === "text_final") send({ type: "final", text: deEmDash(ev.text) });
           else if (ev.type === "error") send({ type: "error", message: (ev as { message?: string }).message ?? "your agent could not respond" });
+          else if (ev.type === "tool_call") send({ type: "tool", phase: "call", tool: ev.tool, toolCallId: ev.toolCallId, args: ev.args });
+          else if (ev.type === "tool_result") send({ type: "tool", phase: "result", tool: ev.tool, toolCallId: ev.toolCallId, ok: !ev.isError });
+          // A tool inside one of their apps waits for them: the page shows Allow and Deny, and the turn waits up to five minutes for the tap.
+          else if (ev.type === "approval_requested") { arm(300_000); send({ type: "approval", requestId: ev.requestId, toolCallId: ev.toolCallId, tool: ev.resourceKey, args: ev.args }); }
+          else if (ev.type === "approval_resolved") send({ type: "approval_resolved", toolCallId: ev.toolCallId, decision: ev.decision });
           else if (ev.type === "agent_end") break;
         }
         send({ type: "done" });

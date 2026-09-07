@@ -393,6 +393,8 @@ export interface ObsCliReply {
   action?: string; amount?: number; from?: string; to?: string; settings?: ObsUserSettings; standing?: ObsStanding;
   /** A view effect: which of the site's pages to open beside the console, or null to close it. */
   view?: string | null;
+  /** Links to open, such as an app's sign-in; rendered as chips that open a new tab. */
+  links?: Array<{ label: string; url: string }>;
 }
 export interface ObsUserSettings { name?: string; style?: 'concise' | 'balanced' | 'deep'; voice?: string; goal?: string; }
 export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; }
@@ -507,6 +509,11 @@ export class ObsDeskService {
   }
 
   /** The stream is read with fetch, because HttpClient buffers; this is the URL and the headers for it. */
+  /** The person's answer to an approval their agent asked for: a tool call inside one of their apps. */
+  myAgentApprove(token: string, toolCallId: string, approved: boolean): Observable<{ ok: boolean; resolved?: boolean }> {
+    return this.http.post<{ ok: boolean; resolved?: boolean }>(`${this.base}/api/obs/my-agent/approve`, { toolCallId, approved }, this.bearer(token));
+  }
+
   myAgentStream(token: string): { url: string; headers: Record<string, string> } {
     return { url: `${this.base}/api/obs/my-agent/stream`, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } };
   }
