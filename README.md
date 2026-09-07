@@ -127,6 +127,10 @@ docs/                the banner
 
 ## Run it
 
+To run your own Agent OBS, start with [QUICKSTART.md](QUICKSTART.md): five
+minutes from a fresh clone to a running page, then paper, then live.
+
+
 The desk is one container: `docker compose up -d --build`. See
 [DEPLOY.md](DEPLOY.md) for the hosted path and [RUNBOOK.md](RUNBOOK.md) for
 running it on a machine you control. Trading stays off until the operator
