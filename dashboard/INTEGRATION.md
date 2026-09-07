@@ -507,9 +507,12 @@ available yet.
   does it), or `view` (with `view`: `trade`, `rewards`, `cards`, `yield`, or
   null for `/close`; the page opens that page of the site beside
   the console, from the components the site's module provides under
-  `CONSOLE_VIEWS` in `obs-desk.service.ts`, which the relay wires up). Those
-  five left the header on September 7: it lists Console, Agent, Docs and
-  Roadmap, and the pages keep their routes for deep links. Signing in uses the
+  `CONSOLE_VIEWS` in `obs-desk.service.ts`, which the relay wires up). The
+  header is the relay's choice: with `CONSOLE_LIVE=yes` those five leave it
+  and it lists Console, Agent, Docs and Roadmap; by default the site keeps
+  its own links (Referral gone) and Console sits first, greyed out with the
+  site's Soon badge, until the console is opened. The route is registered
+  either way, and the pages keep their routes for deep links. Signing in uses the
   wallet the site's own picker connected: the module hands its `WalletService`
   to the console under `CONSOLE_WALLET` (the relay adds it), `/connect <name>`
   picks one when several are installed, and no chain switch is asked for until

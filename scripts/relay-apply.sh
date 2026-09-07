@@ -1,10 +1,14 @@
 #!/bin/bash
 # The relay's mapping, applied to one checkout of the site: our Agent and console pages onto the site's own paths,
-# the console route and declaration registered once, the site's header rewired so Trade, Rewards, Cards
-# and Yield are console views, the five components handed to the console, the docs and the assets. Called by
-# relay-dashboard.sh on a fresh clone, and runnable on any checkout to look at the result or build it:
+# the console route and declaration registered once, the site's header given the console, the five components
+# handed to the console, the docs and the assets. Called by relay-dashboard.sh on a fresh clone, and runnable on
+# any checkout to look at the result or build it:
 #   scripts/relay-apply.sh <site checkout> [source sha]
+# CONSOLE_LIVE=yes rewires the header so Trade, Rewards, Cards and Yield are console views and Console is the
+# first link. The default, no, keeps the site's own links, removes only Referral, and shows Console first, greyed
+# out with the site's Soon treatment, until the user says the console is open. The route is registered either way.
 set -e
+CONSOLE_LIVE="${CONSOLE_LIVE:-no}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SITE="${1:?usage: relay-apply.sh <site checkout> [sha]}"
 SHA="${2:-$(git -C "$ROOT" rev-parse --short HEAD)}"
@@ -109,7 +113,21 @@ fi
 HEADER="$APP/dapp-layout/header/header.component.html"
 HEADER_TS="$APP/dapp-layout/header/header.component.ts"
 HEADER_SPEC="$APP/dapp-layout/header/header.component.spec.ts"
-if [ -f "$HEADER" ] && grep -q 'routerLink="/rewards"' "$HEADER"; then
+if [ -f "$HEADER" ] && grep -q 'routerLink="/rewards"' "$HEADER" && [ "$CONSOLE_LIVE" != "yes" ]; then
+  python3 - "$HEADER" <<'PY'
+import sys, re
+p = sys.argv[1]; s = open(p).read()
+# The referral link goes with its section; every other link stays.
+s = re.sub(r'\n[ \t]*<li><a routerLink="/referral"[^>]*>.*?</a></li>', "", s, count=1, flags=re.S)
+s = re.sub(r'\n[ \t]*<a routerLink="/referral"[^>]*>.*?</a>', "", s, count=1, flags=re.S)
+s = s.replace("\n      <!-- Referral routes to the live waitlist page. -->", "", 1)
+# Console first, greyed out: the site's own Soon treatment without is-live is dimmed and takes no click.
+s = s.replace('      <a routerLink="/app" class="nav-link"', '      <a class="nav-link coming-soon" data-testid="nav-console" aria-disabled="true" title="The OBS console opens soon">\n        <span class="soon-tag">Soon</span>\n        Console\n      </a>\n      <a routerLink="/app" class="nav-link"', 1)
+s = s.replace('          <li><a routerLink="/app" class="nav-menu-link"', '          <li><a class="nav-menu-link coming-soon-mobile" data-testid="mobile-console" aria-disabled="true">\n            <span class="soon-tag-mobile">Soon</span>\n            Console\n          </a></li>\n          <li><a routerLink="/app" class="nav-menu-link"', 1)
+open(p, "w").write(s)
+PY
+fi
+if [ -f "$HEADER" ] && grep -q 'routerLink="/rewards"' "$HEADER" && [ "$CONSOLE_LIVE" = "yes" ]; then
   python3 - "$HEADER" <<'PY'
 import sys, re
 p = sys.argv[1]; s = open(p).read()
@@ -131,7 +149,7 @@ open(p, "w").write(s)
 PY
 fi
 if [ -f "$HEADER_SPEC" ] && grep -q 'nav-rewards' "$HEADER_SPEC"; then
-  cp "$ROOT/dashboard/relay/header.component.spec.ts" "$HEADER_SPEC"
+  if [ "$CONSOLE_LIVE" = "yes" ]; then cp "$ROOT/dashboard/relay/header.component.spec.ts" "$HEADER_SPEC"; else cp "$ROOT/dashboard/relay/header.component.soon.spec.ts" "$HEADER_SPEC"; fi
 fi
 cp "$ROOT/dashboard/angular/src/app/service/obs-desk.service.ts" "$APP/service/obs-desk.service.ts"
 cp "$ROOT/dashboard/INTEGRATION.md" "$DOCS/INTEGRATION.md"
