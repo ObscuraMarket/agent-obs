@@ -119,17 +119,15 @@ never zero.
 }
 ```
 The response also carries `rails`: the limits every swap is checked against
-and what is used, `{ tradingOn, maxSwapUsd, dailySwapUsd, maxOpenOrders,
-gasReserveEth, sentTodayUsd, openOrders, allowedAssets, allowedPartners,
-allowedChains }`. `allowedChains` is the chains both legs of a swap must be
-on, `["robinhood"]`: the desk trades on Robinhood Chain only.
-`sentTodayUsd` is dollars sent into entries in the last 24 hours (exits do
-not count); `entriesToday` and `maxEntriesPerDay` (since September 6) are
-the count of entries in the last 24 hours and its cap, the rule that binds:
-show these as the daily gauge, since the dollar budget is the cap times the
-size and reads oddly beside a smaller wallet; `openOrders`
-counts pending swaps; `allowedPartners` is `null` when any Obscura route may
-be used.
+and what is used, `{ tradingOn, maxSwapUsd, maxOpenOrders, gasReserveEth,
+openOrders, allowedAssets, allowedPartners, allowedChains }`. `allowedChains`
+is the chains both legs of a swap must be on, `["robinhood"]`: the desk
+trades on Robinhood Chain only. `openOrders` counts pending swaps against
+`maxOpenOrders`, the one gauge worth drawing; `allowedPartners` is `null`
+when any Obscura route may be used. Nothing is counted by the day: the
+daily fields (`dailySwapUsd`, `sentTodayUsd`, `entriesToday`,
+`maxEntriesPerDay`) were removed on September 7 and a client must not
+expect them.
 
 `agent.mode`: `live` (posting to X), `draft` (ledger only), `unconfigured`
 (no X keys). `desk.canExecute` is `false` until the execution stage exists;
@@ -477,11 +475,33 @@ inside the same transaction.
   eligibility }` or `409 { ok: false, reason }`. This is the one write on the
   API, and it writes only what the chain confirms.
 
-The console page (`src/app/pages/console/`, route `console`) is the desk's
-command line on the site: the same commands as the `obs` CLI in the
-agent-obs repo (`status`, `positions`, `thoughts`, `research`, `watch`,
-`reads`, `quote`, `swap`, `eligible`). It reads through the endpoints above
-and signs swaps with the visitor's own wallet.
+### The console: `POST /api/obs/account/challenge`, `POST /api/obs/account/link`, `POST /api/obs/console/cli`, `/api/obs/my-agent/*`
+
+The console page (`src/app/pages/console/`, route `console`) is one surface
+for talking to your own agent and for shaping it, beside the desk's read-only
+commands and your wallet's swaps. A line is a message to the agent; a slash
+line is a command. The wallet is the account.
+
+- `POST /api/obs/account/challenge` `{ address }` answers `{ message, nonce }`;
+  the wallet signs the message (`personal_sign`), and
+  `POST /api/obs/account/link` `{ address, nonce, signature }` answers
+  `{ session: { token, address, expiresAt }, eligibility }`. The bearer is
+  good for a week and proves control only; it authorizes no transaction.
+- `POST /api/obs/console/cli` `{ line }` (bearer optional): the desk routes
+  the line and answers `{ ok, lines[], effect, suggest[] }`. `effect` is
+  `none`, `clear`, `desk` (lines from the same payloads the page reads),
+  `read`, `settings` (with the merged `settings`), `chat` (with `text`: the
+  page streams it), or `wallet` (with `action` and the pair: the page's wallet
+  does it). A guest may read the desk, take the tour and quote; shaping the
+  agent, standing and chat need the bearer. `suggest` entries are literal
+  lines to submit, rendered as one-tap chips.
+- `POST /api/obs/my-agent/ensure` (bearer): provisions the wallet's own agent
+  once the wallet is eligible (`OBS_CONSOLE_SWAPS_REQUIRED` verified swaps),
+  else `403 { code: "not_eligible", eligibility }`.
+  `GET /api/obs/my-agent/history` returns prior turns;
+  `GET|POST /api/obs/my-agent/settings` reads and sets `name`, `style`,
+  `voice`, `goal`; `POST /api/obs/my-agent/stream` `{ text }` streams the
+  reply as server-sent events (`delta`, `final`, `error`, `done`).
 
 ## 2b. The skill, for other agents
 

@@ -47,6 +47,11 @@ import { walletBalances } from "./obscura/reads.ts";
 import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL, dataPath } from "./config.ts";
 import { xLive, xConfigured } from "./social/xClient.ts";
 import { consoleQuote, verifySwap, eligibility, isAddress } from "./desk/console.ts";
+import { issueChallenge, linkAccount, verifySession, bearerOf } from "./desk/accounts.ts";
+import { getSettings, updateSettings, sanitizeSettings, describeSettings } from "./desk/userSettings.ts";
+import { ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
+import { routeConsole } from "./cli/router.ts";
+import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, eligibleLines } from "./desk/deskConsole.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
 // Public exposure needs manners: a per-address budget on requests and a cap
@@ -393,7 +398,7 @@ function cors(req: IncomingMessage, res: ServerResponse): void {
     console.log(`[obs] origin refused by OBS_DASHBOARD_ORIGINS: ${origin}`);
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Cache-Control", "public, max-age=30");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
@@ -415,6 +420,51 @@ function readBody(req: IncomingMessage, max: number): Promise<string> {
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
+}
+
+function statusPayload(now: number): Record<string, unknown> {
+  const d = deskFromDisk();
+  return {
+    ...buildStatus(readLedger<PostRow>("x-posts.jsonl"), readLedger<PostRow>("x-replies.jsonl"), readLedger("obs-decisions.jsonl"), { live: xLive(), configured: xConfigured(), now, desk: d.desk }),
+    rails: railsSummary(railsFromEnv(), d.book.trades, now),
+    // The desk's own wallet is public on purpose: every balance and every settlement is checkable there.
+    wallet: WALLET_ADDRESS ? { address: WALLET_ADDRESS, explorerUrl: `${EXPLORER_URL}/address/${WALLET_ADDRESS}` } : null,
+  };
+}
+
+/** The live watch's heartbeat: what it follows block by block, and its last trigger. Live when written in the last half minute. */
+function livePayload(): Record<string, unknown> {
+  const p = dataPath("obs-live.json");
+  if (!existsSync(p)) return { live: false, watching: [] };
+  try {
+    const beat = JSON.parse(readFileSync(p, "utf8")) as { at: number };
+    return { live: Date.now() - Number(beat.at) < 30_000, ...beat };
+  } catch {
+    return { live: false, watching: [] };
+  }
+}
+
+/** The wallet a request proves through its bearer, or null after a 401. */
+function requireWallet(req: IncomingMessage, res: ServerResponse): string | null {
+  const address = verifySession(bearerOf(req.headers.authorization));
+  if (!address) {
+    json(res, 401, { ok: false, error: "sign in with your wallet first" });
+    return null;
+  }
+  return address;
+}
+
+/** The desk's read-only commands as lines, from the same payloads the page reads. */
+async function deskLines(command: string, n: number | undefined, now: number): Promise<string[]> {
+  switch (command) {
+    case "status": return statusLines(statusPayload(now), await pnlPayload(24, now, false));
+    case "positions": return positionsLines(await pnlPayload(24, now, false));
+    case "thoughts": return thoughtsLines(readThoughts(Math.max(1, Math.min(20, n ?? 3))).map(withDigest));
+    case "research": return researchLines(readResearch(Math.max(1, Math.min(50, n ?? 12))));
+    case "watch": return watchLines(livePayload());
+    case "reads": return readsLines(await cachedReads());
+    default: return ["that desk command is not here"];
+  }
 }
 
 const json = (res: ServerResponse, code: number, body: unknown) => {
@@ -633,7 +683,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   const path = url.pathname.replace(/\/+$/, "") || "/";
   // Read-only, with one exception: the console's report of a swap a person sent from their own wallet, which the
   // desk verifies on the chain before it counts anything. Nothing else is written through this API.
-  if (req.method !== "GET" && !(req.method === "POST" && path === "/api/obs/console/swap")) {
+  const WRITES = new Set(["/api/obs/console/swap", "/api/obs/account/challenge", "/api/obs/account/link", "/api/obs/console/cli", "/api/obs/my-agent/ensure", "/api/obs/my-agent/stream", "/api/obs/my-agent/settings"]);
+  if (req.method !== "GET" && !(req.method === "POST" && WRITES.has(path))) {
     json(res, 405, { error: "read-only" });
     return;
   }
@@ -674,13 +725,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/status") {
-    const d = deskFromDisk();
-    json(res, 200, {
-      ...buildStatus(readLedger<PostRow>("x-posts.jsonl"), readLedger<PostRow>("x-replies.jsonl"), readLedger("obs-decisions.jsonl"), { live: xLive(), configured: xConfigured(), now, desk: d.desk }),
-      rails: railsSummary(railsFromEnv(), d.book.trades, now),
-      // The desk's own wallet is public on purpose: every balance and every settlement is checkable there.
-      wallet: WALLET_ADDRESS ? { address: WALLET_ADDRESS, explorerUrl: `${EXPLORER_URL}/address/${WALLET_ADDRESS}` } : null,
-    });
+    json(res, 200, statusPayload(now));
     return;
   }
   if (path === "/api/obs/stream") {
@@ -743,18 +788,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/live") {
-    // The live watch's heartbeat: what it follows block by block, and its last trigger. Live when written in the last half minute.
-    const p = dataPath("obs-live.json");
-    if (!existsSync(p)) {
-      json(res, 200, { live: false, watching: [] });
-      return;
-    }
-    try {
-      const beat = JSON.parse(readFileSync(p, "utf8")) as { at: number };
-      json(res, 200, { live: Date.now() - Number(beat.at) < 30_000, ...beat });
-    } catch {
-      json(res, 200, { live: false, watching: [] });
-    }
+    json(res, 200, livePayload());
     return;
   }
   if (path === "/api/obs/signals") {
@@ -816,13 +850,172 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : "bad request" }));
     return;
   }
+  // ---- the console's account: the wallet is the account -------------------------------------------------------
+  // A person proves control of a wallet by signing a challenge; the bearer that comes back gates their own agent
+  // and their settings. It authorises no transaction and moves no funds.
+  if (path === "/api/obs/account/challenge") {
+    res.setHeader("Cache-Control", "no-store");
+    readBody(req, 1024).then((text) => {
+      let b: Record<string, unknown> = {};
+      try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
+      const c = issueChallenge(b.address, now);
+      if (!c) { json(res, 400, { ok: false, error: "a wallet address is required" }); return; }
+      json(res, 200, { ok: true, ...c });
+    }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
+    return;
+  }
+  if (path === "/api/obs/account/link") {
+    res.setHeader("Cache-Control", "no-store");
+    readBody(req, 4096).then(async (text) => {
+      let b: Record<string, unknown> = {};
+      try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
+      const r = await linkAccount(b, now);
+      if (!r.ok) { json(res, 401, { ok: false, error: r.error }); return; }
+      json(res, 200, { ok: true, session: r.session, eligibility: eligibility(r.session.address) });
+    }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
+    return;
+  }
+  // The console: one typed line in, lines out. The routing is pure (src/cli/router.ts); this is the only place
+  // that acts. Chat is not handled here: it returns an intent and the page streams it, so a conversational turn
+  // keeps one path. Wallet effects come straight back too: the wallet in the browser does those.
+  if (path === "/api/obs/console/cli") {
+    res.setHeader("Cache-Control", "no-store");
+    // A guest may read the desk, take the tour and quote; shaping an agent, standing and chat need the wallet.
+    const address = verifySession(bearerOf(req.headers.authorization));
+    readBody(req, 4096).then(async (text) => {
+      let b: Record<string, unknown> = {};
+      try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
+      const line = typeof b.line === "string" ? b.line : "";
+      if (line.length > 2000) { json(res, 400, { ok: false, lines: ["that is too long for one line."] }); return; }
+      const standing = address ? eligibility(address) : { address: "", swaps: 0, required: Number(process.env.OBS_CONSOLE_SWAPS_REQUIRED ?? 3) || 3, eligible: false, recent: [] };
+      const before = address ? getSettings(address) : {};
+      const routed = routeConsole(line, { settings: before, eligible: standing.eligible, swaps: standing.swaps, required: standing.required });
+      const base = { lines: routed.lines, suggest: routed.suggest };
+      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read";
+      if (needsWallet && !address) {
+        json(res, 200, { ok: false, effect: "none", lines: ["sign in with your wallet first: it is the account here."], suggest: ["/connect"] });
+        return;
+      }
+      switch (routed.effect.kind) {
+        case "none":
+        case "clear":
+          json(res, 200, { ok: !routed.error, ...base, effect: routed.effect.kind });
+          return;
+        case "wallet":
+          json(res, 200, { ok: true, ...base, effect: "wallet", ...routed.effect });
+          return;
+        case "chat":
+          if (!standing.eligible) {
+            json(res, 200, { ok: false, effect: "none", lines: [`your agent unlocks at ${standing.required} verified swaps from this wallet; you have ${standing.swaps}.`, `a swap is one line, signed by your wallet, paid to your address.`], suggest: ["/swap 0.05 ETH USDG", "/eligible", "/explore"] });
+            return;
+          }
+          json(res, 200, { ok: true, lines: [], effect: "chat", text: routed.effect.text });
+          return;
+        case "desk":
+          json(res, 200, { ok: true, lines: await deskLines(routed.effect.command, routed.effect.n, now), effect: "desk" });
+          return;
+        case "read":
+          if (routed.effect.what === "whoami") { json(res, 200, { ok: true, lines: describeSettings(before), effect: "read" }); return; }
+          json(res, 200, { ok: true, lines: eligibleLines(standing), effect: "read", eligibility: standing, ...(standing.eligible ? {} : { suggest: ["/swap 0.05 ETH USDG", "/quote 0.05 ETH USDG"] }) });
+          return;
+        case "settings": {
+          const cleaned = sanitizeSettings(routed.effect.patch);
+          if ("error" in cleaned) { json(res, 200, { ok: false, lines: [cleaned.error], effect: "settings" }); return; }
+          const settings = updateSettings(address as string, cleaned.settings);
+          if (standing.eligible) void refreshPersona(address as string);
+          json(res, 200, { ok: true, lines: describeSettings(settings), effect: "settings", settings });
+          return;
+        }
+      }
+    }).catch((err) => json(res, 400, { ok: false, lines: [err instanceof Error ? err.message : "bad request"] }));
+    return;
+  }
+  // ---- your own agent ----------------------------------------------------------------------------------------
+  if (path === "/api/obs/my-agent/ensure") {
+    res.setHeader("Cache-Control", "no-store");
+    const address = requireWallet(req, res);
+    if (!address) return;
+    const standing = eligibility(address);
+    if (!standing.eligible) { json(res, 403, { ok: false, code: "not_eligible", error: `${standing.required} verified swaps unlock your agent; you have ${standing.swaps}`, eligibility: standing }); return; }
+    ensureUserAgent(address)
+      .then((r) => json(res, 200, { ok: true, ...r, name: agentDisplayName(address), settings: getSettings(address), eligibility: standing }))
+      .catch((err) => { console.error(`[my-agent] ensure failed: ${err instanceof Error ? err.message : String(err)}`); json(res, 502, { ok: false, error: "could not reach your agent; try again shortly" }); });
+    return;
+  }
+  if (path === "/api/obs/my-agent/history") {
+    res.setHeader("Cache-Control", "no-store");
+    const address = requireWallet(req, res);
+    if (!address) return;
+    userAgentHistory(address).then((turns) => json(res, 200, { ok: true, turns })).catch(() => json(res, 200, { ok: true, turns: [] }));
+    return;
+  }
+  if (path === "/api/obs/my-agent/settings") {
+    res.setHeader("Cache-Control", "no-store");
+    const address = requireWallet(req, res);
+    if (!address) return;
+    if (req.method === "GET") { json(res, 200, { ok: true, settings: getSettings(address), name: agentDisplayName(address) }); return; }
+    readBody(req, 4096).then((text) => {
+      let b: unknown = {};
+      try { b = JSON.parse(text); } catch { /* empty body */ }
+      const cleaned = sanitizeSettings(b);
+      if ("error" in cleaned) { json(res, 400, { ok: false, error: cleaned.error }); return; }
+      const settings = updateSettings(address, cleaned.settings);
+      if (eligibility(address).eligible) void refreshPersona(address);
+      json(res, 200, { ok: true, settings, name: agentDisplayName(address) });
+    }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
+    return;
+  }
+  if (path === "/api/obs/my-agent/stream") {
+    // One turn, streamed as server-sent events: one JSON object per data frame. The guards run before the SSE
+    // headers, so a refused turn gets a clean JSON error rather than a half-open stream.
+    const address = requireWallet(req, res);
+    if (!address) return;
+    readBody(req, 4096).then(async (text) => {
+      let b: Record<string, unknown> = {};
+      try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
+      const msg = typeof b.text === "string" ? b.text.trim() : "";
+      if (!msg) { json(res, 400, { ok: false, error: "empty message" }); return; }
+      if (msg.length > 2000) { json(res, 400, { ok: false, error: "message too long (2000 characters at most)" }); return; }
+      const standing = eligibility(address);
+      if (!standing.eligible) { json(res, 403, { ok: false, code: "not_eligible", error: `${standing.required} verified swaps unlock your agent; you have ${standing.swaps}` }); return; }
+      const guard = chatGuard(address, now);
+      if (guard) { json(res, guard.status, { ok: false, error: guard.error }); return; }
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+      const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      const ac = new AbortController();
+      res.on("close", () => ac.abort());
+      let idle: ReturnType<typeof setTimeout> | undefined;
+      const arm = () => { clearTimeout(idle); idle = setTimeout(() => ac.abort(), 60_000); };
+      let deltas = 0;
+      try {
+        arm();
+        const stream = await streamUserAgent(address, msg, ac.signal);
+        for await (const ev of stream) {
+          arm();
+          if (ev.type === "text_delta") { deltas++; send({ type: "delta", text: deEmDash(ev.text) }); }
+          else if (ev.type === "text_final") send({ type: "final", text: deEmDash(ev.text) });
+          else if (ev.type === "error") send({ type: "error", message: (ev as { message?: string }).message ?? "your agent could not respond" });
+          else if (ev.type === "agent_end") break;
+        }
+        send({ type: "done" });
+      } catch (err) {
+        console.error(`[my-agent] stream failed (aborted=${ac.signal.aborted}, deltas=${deltas}): ${err instanceof Error ? err.message : String(err)}`);
+        if (!ac.signal.aborted) send({ type: "error", message: "your agent could not respond just now; try again shortly" });
+      } finally {
+        clearTimeout(idle);
+        res.end();
+        endTurn(address);
+      }
+    }).catch((err) => { endTurn(address); json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }); });
+    return;
+  }
   if (path === "/api/obs/reads") {
     cachedReads()
       .then((r) => json(res, 200, { ...r, block: readsBlock(r) }))
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/eligible?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/eligible?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in

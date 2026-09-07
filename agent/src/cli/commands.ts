@@ -69,7 +69,7 @@ export function parseCli(argv: string[]): CliCommand {
 }
 
 export const HELP: Array<[string, string]> = [
-  ["obs status", "the desk: equity, PnL, entries today, what it holds"],
+  ["obs status", "the desk: equity, PnL, what it holds"],
   ["obs positions", "open positions and the last day's closed trades"],
   ["obs thoughts [n]", "the desk's last decisions, in its own words"],
   ["obs research [n]", "what it read between cycles: launches, tapes, holders"],

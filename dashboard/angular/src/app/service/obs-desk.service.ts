@@ -24,13 +24,8 @@ export interface ObsWalletLink { address: string; explorerUrl: string; }
 export interface ObsRails {
   tradingOn: boolean;
   maxSwapUsd: number;
-  dailySwapUsd: number;
-  /** Entries sent in the trailing 24 hours and the cap; the rule that binds. */
-  entriesToday?: number;
-  maxEntriesPerDay?: number;
   maxOpenOrders: number;
   gasReserveEth: number;
-  sentTodayUsd: number;
   openOrders: number;
   allowedAssets: string[];
   /** null = any Obscura route may be used. */
@@ -388,6 +383,19 @@ export interface ObsEligibility {
   recent: Array<{ at: number; txHash: string; from: string; to: string; amountIn: number; amountOut: number | null }>;
 }
 export interface ObsConsoleSwapReply { ok: boolean; already?: boolean; reason?: string; eligibility?: ObsEligibility; }
+/** `/api/obs/account/challenge` and `/link`: the wallet is the account; a signed challenge mints a week's bearer. */
+export interface ObsChallenge { ok: boolean; message: string; nonce: string; }
+export interface ObsSession { token: string; address: string; expiresAt: number; }
+export interface ObsLinkReply { ok: boolean; error?: string; session?: ObsSession; eligibility?: ObsEligibility; }
+/** `/api/obs/console/cli`: one typed line in, lines out, plus the effect the page applies. */
+export interface ObsCliReply {
+  ok: boolean; lines?: string[]; effect?: string; suggest?: string[]; text?: string;
+  action?: string; amount?: number; from?: string; to?: string; settings?: ObsUserSettings; eligibility?: ObsEligibility;
+}
+export interface ObsUserSettings { name?: string; style?: 'concise' | 'balanced' | 'deep'; voice?: string; goal?: string; }
+export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; eligibility?: ObsEligibility; }
+export interface ObsHistoryTurn { role: string; content: string; ts: string; }
+
 
 @Injectable({ providedIn: 'root' })
 export class ObsDeskService {
@@ -445,6 +453,37 @@ export class ObsDeskService {
 
   consoleEligible(address: string): Observable<ObsEligibility> {
     return this.http.get<ObsEligibility>(`${this.base}/api/obs/console/eligible`, { params: { address } });
+  }
+
+  /** Sign in: the wallet is the account. A challenge to sign, then the signature for a bearer. */
+  accountChallenge(address: string): Observable<ObsChallenge> {
+    return this.http.post<ObsChallenge>(`${this.base}/api/obs/account/challenge`, { address });
+  }
+
+  accountLink(address: string, nonce: string, signature: string): Observable<ObsLinkReply> {
+    return this.http.post<ObsLinkReply>(`${this.base}/api/obs/account/link`, { address, nonce, signature });
+  }
+
+  private bearer(token: string): { headers: { Authorization: string } } {
+    return { headers: { Authorization: `Bearer ${token}` } };
+  }
+
+  /** One typed console line; the desk routes it and answers, or hands back an effect for the page. */
+  cli(token: string, line: string): Observable<ObsCliReply> {
+    return this.http.post<ObsCliReply>(`${this.base}/api/obs/console/cli`, { line }, this.bearer(token));
+  }
+
+  myAgentEnsure(token: string): Observable<ObsEnsureReply> {
+    return this.http.post<ObsEnsureReply>(`${this.base}/api/obs/my-agent/ensure`, {}, this.bearer(token));
+  }
+
+  myAgentHistory(token: string): Observable<{ ok: boolean; turns: ObsHistoryTurn[] }> {
+    return this.http.get<{ ok: boolean; turns: ObsHistoryTurn[] }>(`${this.base}/api/obs/my-agent/history`, this.bearer(token));
+  }
+
+  /** The stream is read with fetch, because HttpClient buffers; this is the URL and the headers for it. */
+  myAgentStream(token: string): { url: string; headers: Record<string, string> } {
+    return { url: `${this.base}/api/obs/my-agent/stream`, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } };
   }
 
   /** Report a swap the person sent; the desk reads it off the chain before it counts. */

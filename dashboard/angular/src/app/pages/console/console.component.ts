@@ -1,62 +1,103 @@
-import { AfterViewInit, Component, ElementRef, NgZone, OnDestroy, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, NgZone, ViewChild } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
-import { ObsDeskService, ObsConsoleQuote, ObsEligibility } from '../../service/obs-desk.service';
+import { ObsDeskService, ObsConsoleQuote, ObsEligibility, ObsCliReply, ObsSession, ObsUserSettings } from '../../service/obs-desk.service';
+
+type LineKind = 'input' | 'command' | 'output' | 'error' | 'agent' | 'system';
+interface CliLine { kind: LineKind; text: string; streaming?: boolean; suggest?: string[]; }
+interface Group { kind: LineKind; lines: CliLine[]; }
+type Status = 'guest' | 'connected' | 'signing' | 'signed-in';
+type AgentState = 'idle' | 'locked' | 'provisioning' | 'ready' | 'thinking' | 'error';
+
+/** Completion vocabulary, kept in step with the desk's router. */
+const COMMANDS = ['help', 'explore', 'clear', 'whoami', 'name', 'style', 'voice', 'goal', 'reset', 'eligible', 'connect', 'balance', 'quote', 'swap', 'status', 'positions', 'thoughts', 'research', 'watch', 'reads'];
+const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['name', 'goal', 'voice', 'style'], help: ['all'] };
+const SESSION_KEY = 'obs-console-session';
 
 /**
- * The OBS console: the desk's command line for a person with their own wallet, at /console. The same commands as
- * the obs CLI in the agent-obs repo. Reads come from the public API; a quote comes from the desk's router on the
- * pools; a swap is signed by the visitor's own wallet (EIP-1193, the provider the browser exposes) and paid to
- * their address in the same transaction, then verified by the desk on the chain and counted toward running their
- * own agent. Nothing here holds a key or sends for anyone.
+ * The OBS console: one surface for talking to your agent and for shaping it, beside the desk's read-only commands
+ * and your own wallet's swaps. A line is a message to your agent; a slash line is a command the desk routes
+ * (src/cli/router.ts there). The page signs a challenge to prove the wallet, signs swaps with it, streams the
+ * agent's reply token by token, and never holds a key.
  */
-@Component({
-  selector: 'app-console',
-  templateUrl: './console.component.html',
-  styleUrls: ['./console.component.css']
-})
-export class ConsoleComponent implements AfterViewInit, OnDestroy {
+@Component({ selector: 'app-console', templateUrl: './console.component.html', styleUrls: ['./console.component.css'] })
+export class ConsoleComponent implements AfterViewInit {
   @ViewChild('screen') screen?: ElementRef<HTMLDivElement>;
   @ViewChild('cmd') cmd?: ElementRef<HTMLInputElement>;
 
-  lines: Array<{ cls: string; text: string }> = [];
+  lines: CliLine[] = [];
+  hint: string[] = [];
   wallet: string | null = null;
   chainId: number | null = null;
+  token: string | null = null;
+  status: Status = 'guest';
+  agentState: AgentState = 'idle';
+  agentName = 'OBS console';
+  agentError: string | null = null;
   elig: ObsEligibility | null = null;
+  settings: ObsUserSettings = {};
   busy = false;
 
   private history: string[] = [];
   private histAt = -1;
   private listening = false;
+  private greeted = false;
   private static readonly CHAIN_ID = 4663;
   private static readonly CHAIN_HEX = '0x1237';
   private static readonly EXPLORER = 'https://robinhoodchain.blockscout.com';
 
   constructor(private obs: ObsDeskService, private zone: NgZone, title: Title, meta: Meta) {
     title.setTitle('Obscura - OBS Console');
-    meta.updateTag({ name: 'description', content: 'The OBS console: read the desk, quote and swap from your own wallet, and unlock your own agent.' });
+    meta.updateTag({ name: 'description', content: 'The OBS console: talk to your own agent, read the desk, quote and swap from your own wallet.' });
   }
 
   ngAfterViewInit(): void {
-    this.print('OBS console. The desk\'s command line: read what it is doing, quote a pair through its router, swap from your own wallet.', 'dim');
-    this.print('Three verified swaps make your wallet eligible to run your own agent. Type help.', 'dim');
+    this.print([{ kind: 'system', text: 'OBS console. the desk\'s command line. read it, quote through its router, swap from your own wallet; three verified swaps unlock an agent of your own.', suggest: ['/explore', '/status', '/connect'] }]);
     void this.silentReconnect();
     setTimeout(() => this.focusInput(), 0);
   }
 
-  ngOnDestroy(): void { /* the provider listeners are harmless after the page is gone */ }
+  // ---- view helpers --------------------------------------------------------
+
+  get groups(): Group[] {
+    const out: Group[] = [];
+    for (const l of this.lines) {
+      const kind: LineKind = l.kind === 'input' && l.text.startsWith('/') ? 'command' : l.kind;
+      const prev = out[out.length - 1];
+      const mergeable = kind === 'output' || kind === 'error' || kind === 'system';
+      if (prev && prev.kind === kind && mergeable) { prev.lines.push(l); } else { out.push({ kind, lines: [l] }); }
+    }
+    return out;
+  }
+
+  get placeholder(): string {
+    if (this.agentState === 'thinking') { return this.agentName + ' is thinking…'; }
+    if (this.agentState === 'ready') { return 'message, or /help'; }
+    if (this.status === 'signed-in') { return '/swap 0.05 ETH USDG unlocks your agent, or /help'; }
+    return '/help, /status, or /connect to sign in';
+  }
+
+  joined(g: Group): string { return g.lines.map((l) => l.text).join(' '); }
+  joinedLines(g: Group): string { return g.lines.map((l) => l.text).join('\n'); }
+  suggestOf(g: Group): string[] { return g.lines[g.lines.length - 1]?.suggest ?? []; }
+  short(address: string): string { return address.slice(0, 6) + '…' + address.slice(-4); }
 
   focusInput(): void {
     const el = this.cmd?.nativeElement;
-    if (el && !this.busy && (typeof window === 'undefined' || !window.getSelection()?.toString())) { el.focus(); }
+    if (el && !el.disabled && (typeof window === 'undefined' || !window.getSelection()?.toString())) { el.focus(); }
   }
 
-  short(address: string): string {
-    return address.slice(0, 6) + '…' + address.slice(-4);
-  }
-
-  onWalletPill(ev: Event): void {
+  onSignInClick(ev: Event): void {
     ev.stopPropagation();
-    void this.run(this.wallet ? 'status' : 'connect');
+    if (this.status !== 'signed-in') { void this.runLine('/connect'); } else { void this.runLine('/eligible'); }
+  }
+
+  pickHint(h: string): void {
+    const el = this.cmd?.nativeElement;
+    if (!el) { return; }
+    const parts = el.value.slice(1).split(/\s+/);
+    el.value = parts.length <= 1 ? '/' + h + ' ' : '/' + [...parts.slice(0, -1), h].join(' ') + ' ';
+    this.hint = [];
+    el.focus();
   }
 
   submit(ev: Event): void {
@@ -65,39 +106,66 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     if (!el) { return; }
     const line = el.value;
     el.value = '';
-    void this.run(line);
+    this.hint = [];
+    void this.runLine(line);
   }
 
   onKey(ev: KeyboardEvent): void {
     const el = this.cmd?.nativeElement;
-    if (!el || !this.history.length) { return; }
-    if (ev.key === 'ArrowUp') { ev.preventDefault(); this.histAt = Math.max(0, this.histAt < 0 ? this.history.length - 1 : this.histAt - 1); el.value = this.history[this.histAt]; }
-    else if (ev.key === 'ArrowDown') { ev.preventDefault(); if (this.histAt < 0) { return; } this.histAt = this.histAt + 1; if (this.histAt >= this.history.length) { this.histAt = -1; el.value = ''; } else { el.value = this.history[this.histAt]; } }
+    if (!el) { return; }
+    if (ev.key === 'Tab') { ev.preventDefault(); const c = this.complete(el.value); el.value = c.value; this.hint = c.options; return; }
+    if (ev.key === 'l' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); this.lines = []; return; }
+    if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+      const r = this.recall(ev.key === 'ArrowUp' ? -1 : 1);
+      if (r !== null) { ev.preventDefault(); el.value = r; }
+    }
   }
 
-  // ---- printing ----------------------------------------------------------
+  private recall(direction: -1 | 1): string | null {
+    const h = this.history;
+    if (!h.length) { return null; }
+    if (this.histAt === -1) { if (direction === 1) { return null; } this.histAt = h.length - 1; return h[this.histAt]; }
+    const next = this.histAt + direction;
+    if (next < 0) { return h[0]; }
+    if (next >= h.length) { this.histAt = -1; return ''; }
+    this.histAt = next;
+    return h[next];
+  }
 
-  private print(text: string, cls = ''): void {
-    this.lines.push({ cls, text });
-    if (this.lines.length > 500) { this.lines.splice(0, this.lines.length - 500); }
+  /** Tab completes the command, and once a command is typed, that command's own values. */
+  private complete(input: string): { value: string; options: string[] } {
+    if (!input.startsWith('/')) { return { value: input, options: [] }; }
+    const parts = input.slice(1).split(/\s+/);
+    if (parts.length <= 1) {
+      const stem = (parts[0] ?? '').toLowerCase();
+      const hits = COMMANDS.filter((c) => c.startsWith(stem));
+      return hits.length === 1 ? { value: '/' + hits[0] + ' ', options: [] } : { value: input, options: hits };
+    }
+    const vals = ARG_VALUES[parts[0].toLowerCase()];
+    if (!vals) { return { value: input, options: [] }; }
+    const stem = (parts[parts.length - 1] ?? '').toLowerCase();
+    const hits = vals.filter((v) => v.startsWith(stem));
+    if (hits.length === 1) { parts[parts.length - 1] = hits[0]; return { value: '/' + parts.join(' '), options: [] }; }
+    return { value: input, options: hits };
+  }
+
+  // ---- printing --------------------------------------------------------------
+
+  private print(incoming: CliLine[]): void {
+    for (const l of this.lines) { if (l.streaming) { l.streaming = false; } }
+    this.lines.push(...incoming);
+    if (this.lines.length > 600) { this.lines.splice(0, this.lines.length - 600); }
     setTimeout(() => { const el = this.screen?.nativeElement; if (el) { el.scrollTop = el.scrollHeight; } }, 0);
   }
 
-  private clock(ts: number): string {
-    const d = new Date(ts);
-    return d.toISOString().slice(11, 16) + 'Z';
-  }
-
-  private usd(v: number | null | undefined, digits = 0): string {
-    return v == null || !isFinite(v) ? 'n/a' : (v < 0 ? '-' : '') + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
-  }
-
-  private pct(v: number | null | undefined): string {
-    return v == null || !isFinite(v) ? 'n/a' : (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+  private updateLast(patch: Partial<CliLine>): void {
+    const last = this.lines[this.lines.length - 1];
+    if (last) { Object.assign(last, patch); }
+    setTimeout(() => { const el = this.screen?.nativeElement; if (el) { el.scrollTop = el.scrollHeight; } }, 0);
   }
 
   private reason(e: any): string {
-    const m = e?.error?.error || e?.error?.reason || e?.data?.message || e?.message || String(e);
+    const m = e?.error?.error || e?.error?.reason || (e?.error?.lines && e.error.lines[0]) || e?.data?.message || e?.message || String(e);
     return String(m).replace(/\s+/g, ' ').slice(0, 220);
   }
 
@@ -105,146 +173,67 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     return new Promise<T>((res, rej) => o.subscribe({ next: res, error: rej }));
   }
 
-  // ---- the grammar, the same as the obs CLI --------------------------------
+  // ---- running a line ----------------------------------------------------------
 
-  private parse(line: string): { kind: string; n?: number; amount?: number; from?: string; to?: string; text?: string } {
-    const t = (line || '').trim().replace(/^obs\s+/i, '');
-    if (!t) { return { kind: 'empty' }; }
-    const [head, ...rest] = t.split(/\s+/);
-    const w = head.toLowerCase();
-    const n = rest[0] && /^\d+$/.test(rest[0]) ? Number(rest[0]) : undefined;
-    switch (w) {
-      case 'help': case '?': return { kind: 'help' };
-      case 'connect': return { kind: 'connect' };
-      case 'disconnect': return { kind: 'disconnect' };
-      case 'status': return { kind: 'status' };
-      case 'positions': case 'book': return { kind: 'positions' };
-      case 'thoughts': case 'thought': return { kind: 'thoughts', n };
-      case 'research': case 'log': return { kind: 'research', n };
-      case 'watch': case 'live': return { kind: 'watch' };
-      case 'reads': case 'read': return { kind: 'reads' };
-      case 'eligible': case 'progress': return { kind: 'eligible' };
-      case 'balance': case 'balances': case 'bal': return { kind: 'balance' };
-      case 'clear': case 'cls': return { kind: 'clear' };
-      case 'quote': case 'swap': {
-        const m = rest.join(' ').match(/^([\d,]*\d(?:\.\d+)?)\s+([A-Za-z0-9]+)\s*(?:->|to|for)?\s+([A-Za-z0-9]+)$/i);
-        const amount = m ? Number(m[1].replace(/,/g, '')) : NaN;
-        if (m && amount > 0) { return { kind: w, amount, from: m[2].toUpperCase(), to: m[3].toUpperCase() }; }
-        return { kind: 'unknown', text: t };
-      }
-      default: return { kind: 'unknown', text: t };
-    }
-  }
-
-  async run(line: string): Promise<void> {
-    const c = this.parse(line);
-    if (c.kind === 'empty') { return; }
-    this.print('obs> ' + line.trim(), 'you');
-    if (this.history[this.history.length - 1] !== line.trim()) { this.history.push(line.trim()); }
+  /** One line, from the input or a tapped chip: same routing, same transcript. */
+  async runLine(raw: string): Promise<void> {
+    const line = raw.trim();
+    if (!line || this.busy) { return; }
+    if (this.history[this.history.length - 1] !== line) { this.history.push(line); }
     this.histAt = -1;
-    if (this.busy) { this.print('still working on the last command', 'warn'); return; }
+    this.print([{ kind: 'input', text: line }]);
     this.busy = true;
     try {
-      switch (c.kind) {
-        case 'help': this.help(); break;
-        case 'clear': this.lines = []; break;
-        case 'connect': await this.connect(); break;
-        case 'disconnect': this.wallet = null; this.elig = null; this.print('disconnected on this page; your wallet keeps its own connection', 'dim'); break;
-        case 'status': await this.status(); break;
-        case 'positions': await this.positions(); break;
-        case 'thoughts': await this.thoughts(c.n ?? 3); break;
-        case 'research': await this.research(c.n ?? 12); break;
-        case 'watch': await this.watch(); break;
-        case 'reads': await this.reads(); break;
-        case 'eligible': await this.eligible(false); break;
-        case 'balance': await this.balance(); break;
-        case 'quote': this.showQuote(await this.fetchQuote(c.amount as number, c.from as string, c.to as string)); break;
-        case 'swap': await this.swap(c.amount as number, c.from as string, c.to as string); break;
-        default: this.print('not a command: ' + c.text + '. Type help.', 'bad');
-      }
+      if (!line.startsWith('/')) { await this.chat(line); return; }
+      const head = line.slice(1).split(/\s+/)[0].toLowerCase();
+      if (head === 'connect') { await this.signIn(); return; }
+      if (head === 'clear' || head === 'cls') { this.lines = []; return; }
+      const data = await this.get<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (e?.error && typeof e.error === 'object' ? e.error : { ok: false, lines: ['could not reach the desk. try again.'] }) as ObsCliReply);
+      if (data.effect === 'clear') { this.lines = []; return; }
+      if (data.effect === 'chat' && typeof data.text === 'string') { await this.chat(data.text, true); return; }
+      if (data.effect === 'wallet' && data.ok) { await this.walletEffect(data); return; }
+      if (data.effect === 'settings' && data.ok && data.settings) { this.settings = data.settings; this.agentName = this.settings.name || (this.agentState === 'ready' ? 'OBS' : this.agentName); }
+      if (data.eligibility) { this.elig = data.eligibility; }
+      const kind: LineKind = data.ok === false ? 'error' : 'output';
+      const out = Array.isArray(data.lines) ? data.lines : [];
+      const printed: CliLine[] = out.length ? out.map((t) => ({ kind, text: t })) : [{ kind, text: data.ok === false ? 'that did not work.' : 'done.' }];
+      if (data.suggest?.length) { printed[printed.length - 1].suggest = data.suggest.map(String); }
+      this.print(printed);
     } catch (e: any) {
-      this.print('failed: ' + this.reason(e), 'bad');
+      this.print([{ kind: 'error', text: 'failed: ' + this.reason(e) }]);
     } finally {
       this.busy = false;
       setTimeout(() => this.focusInput(), 0);
     }
   }
 
-  private help(): void {
-    const rows: Array<[string, string]> = [
-      ['status', 'the desk: equity, PnL, entries today, what it holds'],
-      ['positions', 'open positions and the last day\'s closed trades'],
-      ['thoughts [n]', 'the desk\'s last decisions, in its own words'],
-      ['research [n]', 'what it read between cycles: launches, tapes, holders'],
-      ['watch', 'the live watch: every pool in play right now'],
-      ['reads', 'the chain as the desk reads it: prices, the OBS market'],
-      ['connect', 'your wallet, on Robinhood Chain'],
-      ['balance', 'ETH in your wallet'],
-      ['quote 0.05 ETH USDG', 'what the pools pay, with the app\'s Relay route beside it'],
-      ['swap 0.05 ETH USDG', 'the same, signed by your wallet, paid to your address'],
-      ['eligible', 'your verified swaps against the bar that unlocks your own agent'],
-      ['clear', 'wipe the screen'],
-    ];
-    for (const [k, v] of rows) { this.print(k.padEnd(22) + v, 'dim'); }
-    this.print('Tokens: ETH, USDG, NVDA and any token the desk is watching, by symbol. The same commands run in the repo as the obs CLI.', 'dim');
-  }
-
-  // ---- reads through the public API ----------------------------------------
-
-  private async status(): Promise<void> {
-    const s = await this.get<any>(this.obs.status());
-    const d = s.desk; const r = s.rails;
-    this.print('equity ' + this.usd(d.equityUsd) + '  pnl ' + this.usd(d.pnlUsd) + ' (' + this.pct(d.pnlPct) + ')  capital ' + this.usd(d.netCapitalUsd) + '  last cycle ' + (d.lastThoughtAt ? this.clock(d.lastThoughtAt) : 'n/a'), 'ok');
-    if (r) { this.print('trading ' + (r.tradingOn ? 'on' : 'off') + '  entries today ' + (r.entriesToday ?? '?') + ' of ' + (r.maxEntriesPerDay ?? '?') + '  size ' + this.usd(r.maxSwapUsd) + ' a trade  open orders ' + r.openOrders, 'dim'); }
-    if (s.wallet?.address) { this.print('the desk\'s wallet ' + s.wallet.address + '  ' + s.wallet.explorerUrl, 'dim'); }
-    const p = await this.get<any>(this.obs.pnl(24));
-    const held = (p.positions || []).filter((x: any) => x.asset !== 'ETH');
-    this.print(held.length ? 'holding ' + held.map((x: any) => x.asset + ' ' + this.usd(x.valueUsd) + ' (' + this.pct(x.unrealizedPct) + ')').join(', ') : 'holding nothing but ETH', held.length ? '' : 'dim');
-  }
-
-  private async positions(): Promise<void> {
-    const p = await this.get<any>(this.obs.pnl(24));
-    this.print('positions', 'head');
-    for (const x of p.positions || []) { this.print((x.asset as string).padEnd(10) + this.usd(x.valueUsd, 2).padStart(12) + '  ' + this.pct(x.unrealizedPct).padStart(8) + '  share ' + Math.round((x.share || 0) * 100) + '%'); }
-    const closed = (p.closed || []).slice(0, 10);
-    if (closed.length) {
-      this.print('closed, last 24 hours', 'head');
-      for (const c of closed) { this.print(this.clock(c.closedAt) + '  ' + (c.asset as string).padEnd(10) + this.usd(c.resultUsd, 2).padStart(10) + '  ' + c.heldMin + ' min  ' + c.how, c.resultUsd >= 0 ? 'ok' : 'bad'); }
-    }
-  }
-
-  private async thoughts(n: number): Promise<void> {
-    const t = await this.get<any>(this.obs.thoughts(Math.max(1, Math.min(20, n))));
-    for (const x of (t.items || [])) {
-      this.print(this.clock(x.at) + '  ' + (x.decision?.kind === 'propose-swap' ? 'swap ' + x.decision.amount + ' ' + x.decision.from + ' -> ' + x.decision.to : 'hold'), 'head');
-      for (const l of (x.thoughts || []).slice(0, 4)) { this.print('  ' + l); }
-      if (x.decision?.reason) { this.print('  reason: ' + x.decision.reason, 'dim'); }
-    }
-  }
-
-  private async research(n: number): Promise<void> {
-    const r = await this.get<any>(this.obs.research(Math.max(1, Math.min(50, n))));
-    for (const x of (r.items || []).slice().reverse()) { this.print(this.clock(x.at) + '  ' + (x.kind as string).padEnd(11) + x.line, x.ok === false ? 'bad' : x.ok === true ? 'ok' : ''); }
-  }
-
-  private async watch(): Promise<void> {
-    const l = await this.get<any>(this.obs.live());
-    this.print((l.live ? 'live' : 'not live') + ' at block ' + (l.block ?? '?') + (l.lastTrigger ? '  last trigger: ' + l.lastTrigger : ''), l.live ? 'ok' : 'warn');
-    for (const w of l.watching || []) { this.print((w.symbol as string).padEnd(10) + (w.role as string).padEnd(7) + (w.trend || '').padEnd(14) + (w.why || ''), w.role === 'held' ? 'ok' : ''); }
-    if (!(l.watching || []).length) { this.print('nothing on watch right now', 'dim'); }
-  }
-
-  private async reads(): Promise<void> {
-    const r = await this.get<any>(this.obs.reads());
-    this.print('ETH ' + this.usd(r.prices?.ethUsd, 2) + '  BTC ' + this.usd(r.prices?.btcUsd, 0), 'ok');
-    if (r.token) { this.print('$OBS ' + r.token.address + (r.token.explorerPriceUsd != null ? '  price ' + this.usd(r.token.explorerPriceUsd, 6) : '') + (r.token.holders != null ? '  holders ' + r.token.holders : ''), 'dim'); }
-    if (r.market) { this.print('OBS market: ' + JSON.stringify(r.market).slice(0, 200), 'dim'); }
-  }
-
-  // ---- the wallet ---------------------------------------------------------------
+  // ---- the wallet is the account ---------------------------------------------------
 
   private provider(): any {
     return typeof window !== 'undefined' ? (window as any).ethereum ?? null : null;
+  }
+
+  private readSession(address: string): ObsSession | null {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) { return null; }
+      const s = JSON.parse(raw) as ObsSession;
+      return s.address?.toLowerCase() === address.toLowerCase() && s.token && Date.now() < s.expiresAt ? s : null;
+    } catch { return null; }
+  }
+
+  private storeSession(s: ObsSession | null): void {
+    try { if (s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } else { localStorage.removeItem(SESSION_KEY); } } catch { /* private window */ }
+  }
+
+  private listen(p: any): void {
+    if (this.listening) { return; }
+    this.listening = true;
+    p.on?.('accountsChanged', (a: string[]) => this.zone.run(() => {
+      this.wallet = a?.[0] ?? null; this.token = null; this.elig = null; this.status = this.wallet ? 'connected' : 'guest'; this.agentState = 'idle'; this.agentName = 'OBS console';
+      this.print([{ kind: 'system', text: this.wallet ? 'wallet switched to ' + this.short(this.wallet) + '. sign in again to reach its agent.' : 'wallet disconnected.', suggest: this.wallet ? ['/connect'] : [] }]);
+    }));
+    p.on?.('chainChanged', (c: string) => this.zone.run(() => { this.chainId = parseInt(c, 16); }));
   }
 
   private async silentReconnect(): Promise<void> {
@@ -252,34 +241,16 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     if (!p) { return; }
     try {
       const accs: string[] = await p.request({ method: 'eth_accounts' });
-      if (accs && accs.length) {
-        this.wallet = accs[0];
-        const c: string = await p.request({ method: 'eth_chainId' });
-        this.chainId = parseInt(c, 16);
-        this.listen(p);
-        await this.eligible(true);
-        this.print('wallet ' + this.short(this.wallet) + ' is connected' + (this.chainId === ConsoleComponent.CHAIN_ID ? ' on Robinhood Chain' : ' on chain ' + this.chainId), 'dim');
-      }
+      if (!accs?.length) { return; }
+      this.wallet = accs[0];
+      this.status = 'connected';
+      const c: string = await p.request({ method: 'eth_chainId' });
+      this.chainId = parseInt(c, 16);
+      this.listen(p);
+      const s = this.readSession(this.wallet);
+      if (s) { this.token = s.token; this.status = 'signed-in'; await this.afterSignIn(true); }
+      else { this.print([{ kind: 'system', text: 'wallet ' + this.short(this.wallet) + ' is connected. sign in to reach its agent and its standing.', suggest: ['/connect', '/status'] }]); }
     } catch { /* not connected: fine */ }
-  }
-
-  private listen(p: any): void {
-    if (this.listening) { return; }
-    this.listening = true;
-    p.on?.('accountsChanged', (a: string[]) => this.zone.run(() => { this.wallet = a?.[0] ?? null; this.elig = null; this.print(this.wallet ? 'wallet switched to ' + this.short(this.wallet) : 'wallet disconnected', 'dim'); if (this.wallet) { void this.eligible(true); } }));
-    p.on?.('chainChanged', (c: string) => this.zone.run(() => { this.chainId = parseInt(c, 16); }));
-  }
-
-  private async connect(): Promise<void> {
-    const p = this.provider();
-    if (!p) { this.print('no wallet found in this browser. Install MetaMask or Rabby, or open this page inside your wallet\'s browser.', 'bad'); return; }
-    const accs: string[] = await p.request({ method: 'eth_requestAccounts' });
-    this.wallet = accs?.[0] ?? null;
-    if (!this.wallet) { this.print('the wallet gave no account', 'bad'); return; }
-    await this.ensureChain(p);
-    this.listen(p);
-    this.print('connected ' + this.short(this.wallet) + (this.chainId === ConsoleComponent.CHAIN_ID ? ' on Robinhood Chain' : ' on chain ' + this.chainId + '; switch to Robinhood Chain to swap'), this.chainId === ConsoleComponent.CHAIN_ID ? 'ok' : 'warn');
-    await this.eligible(true);
   }
 
   private async ensureChain(p: any): Promise<void> {
@@ -297,23 +268,141 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     this.chainId = parseInt(after, 16);
   }
 
+  /** Connect, sign the challenge, keep the bearer. The signature proves control; it moves nothing. */
+  private async signIn(): Promise<void> {
+    const p = this.provider();
+    if (!p) { this.print([{ kind: 'error', text: 'no wallet found in this browser. install MetaMask or Rabby, or open this page inside your wallet\'s browser.' }]); return; }
+    const accs: string[] = await p.request({ method: 'eth_requestAccounts' });
+    this.wallet = accs?.[0] ?? null;
+    if (!this.wallet) { this.print([{ kind: 'error', text: 'the wallet gave no account.' }]); return; }
+    this.status = 'connected';
+    this.listen(p);
+    await this.ensureChain(p);
+    const stored = this.readSession(this.wallet);
+    if (stored) { this.token = stored.token; this.status = 'signed-in'; await this.afterSignIn(false); return; }
+    this.status = 'signing';
+    try {
+      const c = await this.get<{ ok: boolean; message: string; nonce: string }>(this.obs.accountChallenge(this.wallet));
+      this.print([{ kind: 'system', text: 'sign the message in your wallet. it proves the wallet is yours and authorizes nothing.' }]);
+      const signature: string = await p.request({ method: 'personal_sign', params: [c.message, this.wallet] });
+      const l = await this.get<{ ok: boolean; error?: string; session?: ObsSession; eligibility?: ObsEligibility }>(this.obs.accountLink(this.wallet, c.nonce, signature));
+      if (!l.ok || !l.session) { throw new Error(l.error || 'sign-in refused'); }
+      this.token = l.session.token;
+      this.storeSession(l.session);
+      this.status = 'signed-in';
+      if (l.eligibility) { this.elig = l.eligibility; }
+      await this.afterSignIn(false);
+    } catch (e: any) {
+      this.status = 'connected';
+      this.print([{ kind: 'error', text: 'not signed in: ' + this.reason(e), suggest: ['/connect'] }]);
+    }
+  }
+
+  /** What happens once the bearer is in hand: standing, then the agent when the bar is cleared. */
+  private async afterSignIn(quiet: boolean): Promise<void> {
+    if (!this.token || !this.wallet) { return; }
+    try {
+      const e = await this.get<ObsEligibility>(this.obs.consoleEligible(this.wallet));
+      this.elig = e;
+    } catch { /* the pill stays as it was */ }
+    if (!this.elig?.eligible) {
+      this.agentState = 'locked';
+      this.agentName = 'OBS console';
+      const left = (this.elig?.required ?? 3) - (this.elig?.swaps ?? 0);
+      this.print([{ kind: 'system', text: 'signed in as ' + this.short(this.wallet) + '. ' + (this.elig?.swaps ?? 0) + ' of ' + (this.elig?.required ?? 3) + ' verified swaps; ' + left + ' more unlock' + (left === 1 ? 's' : '') + ' an agent of your own.', suggest: ['/swap 0.05 ETH USDG', '/quote 0.05 ETH USDG', '/explore'] }]);
+      return;
+    }
+    this.agentState = 'provisioning';
+    this.agentError = null;
+    try {
+      const ensured = await this.get<any>(this.obs.myAgentEnsure(this.token));
+      if (!ensured?.ok) { throw new Error(ensured?.error || 'could not reach your agent'); }
+      this.settings = ensured.settings ?? {};
+      this.agentName = ensured.name || 'OBS';
+      const hist = await this.get<{ ok: boolean; turns: Array<{ role: string; content: string }> }>(this.obs.myAgentHistory(this.token)).catch(() => ({ ok: true, turns: [] }));
+      const prior = (hist.turns ?? []).filter((t) => t.role === 'user' || t.role === 'assistant');
+      if (!this.greeted) {
+        this.greeted = true;
+        this.print([
+          ...prior.map((m) => ({ kind: (m.role === 'user' ? 'input' : 'agent') as LineKind, text: m.content })),
+          prior.length
+            ? { kind: 'system' as LineKind, text: this.agentName + ' is live.', suggest: ['/help'] }
+            : { kind: 'system' as LineKind, text: this.agentName + ' is live and it is yours. it reads the desk and remembers this conversation. talking to it is free.', suggest: ['what is the desk holding right now, and why?', '/explore', '/help'] },
+        ]);
+      } else if (!quiet) {
+        this.print([{ kind: 'system', text: this.agentName + ' is live.', suggest: ['/help'] }]);
+      }
+      this.agentState = 'ready';
+    } catch (e: any) {
+      this.agentState = 'error';
+      this.agentError = this.reason(e);
+    }
+  }
+
+  // ---- chat, streamed ---------------------------------------------------------------
+
+  private async chat(text: string, alreadyPrinted = false): Promise<void> {
+    if (!this.token) { this.print([{ kind: 'system', text: 'sign in with your wallet first: it is the account here.', suggest: ['/connect'] }]); return; }
+    if (this.agentState !== 'ready') {
+      const left = (this.elig?.required ?? 3) - (this.elig?.swaps ?? 0);
+      this.print([{ kind: 'system', text: this.agentState === 'locked' ? 'your agent unlocks at ' + (this.elig?.required ?? 3) + ' verified swaps from this wallet; ' + Math.max(0, left) + ' to go.' : 'your agent is not reachable right now.', suggest: this.agentState === 'locked' ? ['/swap 0.05 ETH USDG', '/eligible'] : ['/connect'] }]);
+      return;
+    }
+    void alreadyPrinted;
+    this.agentState = 'thinking';
+    this.agentError = null;
+    this.print([{ kind: 'agent', text: '', streaming: true }]);
+    const { url, headers } = this.obs.myAgentStream(this.token);
+    let acc = '';
+    try {
+      const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ text }) });
+      if (!res.ok || !res.body) {
+        const j = await res.json().catch(() => null);
+        throw new Error(j?.error || 'your agent could not respond');
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) { break; }
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() ?? '';
+        for (const frame of frames) {
+          const line = frame.trim();
+          if (!line.startsWith('data:')) { continue; }
+          let ev: { type: string; text?: string; message?: string };
+          try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          if (ev.type === 'delta') { acc += ev.text ?? ''; this.zone.run(() => this.updateLast({ text: acc, streaming: true })); }
+          else if (ev.type === 'final') { acc = ev.text || acc; this.zone.run(() => this.updateLast({ text: acc, streaming: true })); }
+          else if (ev.type === 'error') { acc = acc || (ev.message || 'your agent could not respond just now'); }
+        }
+      }
+      this.updateLast({ text: acc || 'no reply came back. try again.', streaming: false });
+    } catch (e: any) {
+      this.updateLast({ text: acc || this.reason(e), streaming: false });
+      this.agentError = null;
+    } finally {
+      this.agentState = 'ready';
+    }
+  }
+
+  // ---- the wallet's own effects: quote, swap, balance ------------------------------------
+
+  private async walletEffect(data: ObsCliReply): Promise<void> {
+    if (data.action === 'balance') { await this.balance(); return; }
+    if (data.action === 'quote') { this.showQuote(await this.fetchQuote(data.amount as number, data.from as string, data.to as string)); return; }
+    if (data.action === 'swap') { await this.swap(data.amount as number, data.from as string, data.to as string); return; }
+    if (data.action === 'connect') { await this.signIn(); }
+  }
+
   private async balance(): Promise<void> {
     const p = this.provider();
-    if (!p || !this.wallet) { this.print('connect first', 'warn'); return; }
+    if (!p || !this.wallet) { this.print([{ kind: 'system', text: 'connect first.', suggest: ['/connect'] }]); return; }
     const hex: string = await p.request({ method: 'eth_getBalance', params: [this.wallet, 'latest'] });
-    this.print(this.short(this.wallet) + ': ' + (Number(BigInt(hex)) / 1e18).toFixed(5) + ' ETH on chain ' + this.chainId, 'ok');
+    this.print([{ kind: 'output', text: this.short(this.wallet) + ': ' + (Number(BigInt(hex)) / 1e18).toFixed(5) + ' ETH on chain ' + this.chainId }]);
   }
-
-  private async eligible(quiet: boolean): Promise<void> {
-    if (!this.wallet) { if (!quiet) { this.print('connect first', 'warn'); } return; }
-    const e = await this.get<ObsEligibility>(this.obs.consoleEligible(this.wallet));
-    this.elig = e;
-    if (quiet && !e.swaps) { return; }
-    this.print(e.swaps + ' of ' + e.required + ' verified swaps' + (e.eligible ? ': eligible. Your agent is yours to run: github.com/ObscuraMarket/agent-obs, QUICKSTART.md' : ''), e.eligible ? 'ok' : '');
-    for (const r of e.recent.slice(0, 5)) { this.print('  ' + this.clock(r.at) + '  ' + r.amountIn + ' ' + r.from + ' -> ' + (r.amountOut != null ? r.amountOut + ' ' : '') + r.to + '  ' + r.txHash.slice(0, 10) + '…', 'dim'); }
-  }
-
-  // ---- quote and swap -------------------------------------------------------------
 
   private fetchQuote(amount: number, from: string, to: string): Promise<ObsConsoleQuote> {
     return this.get<ObsConsoleQuote>(this.obs.consoleQuote(from, to, amount, this.wallet || '0x000000000000000000000000000000000000dEaD'));
@@ -321,15 +410,14 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
 
   private showQuote(q: ObsConsoleQuote): void {
     const cost = q.pool.costPct != null ? ', all in ' + q.pool.costPct.toFixed(2) + '% against the mark' : '';
-    this.print(q.amountIn + ' ' + q.from + ' -> ' + q.pool.amountOut + ' ' + q.to + ' through the pools (' + q.pool.route.join(' then ') + cost + '); floor ' + q.pool.minOut, 'ok');
-    if (q.relay) { this.print(q.relay.amountOut != null ? 'the app\'s Relay route pays ' + q.relay.amountOut + ' ' + q.to + (q.relay.feeUsd != null ? ' with $' + q.relay.feeUsd.toFixed(2) + ' of fees' : '') : 'Relay: ' + (q.relay.error || 'no quote'), 'dim'); }
+    const lines: CliLine[] = [{ kind: 'output', text: q.amountIn + ' ' + q.from + ' -> ' + q.pool.amountOut + ' ' + q.to + ' through the pools (' + q.pool.route.join(' then ') + cost + '); floor ' + q.pool.minOut }];
+    if (q.relay) { lines.push({ kind: 'output', text: q.relay.amountOut != null ? 'the app\'s Relay route pays ' + q.relay.amountOut + ' ' + q.to + (q.relay.feeUsd != null ? ' with $' + q.relay.feeUsd.toFixed(2) + ' of fees' : '') : 'Relay: ' + (q.relay.error || 'no quote') }); }
     const approvals = q.steps.filter((st) => st.id !== 'swap');
-    this.print(approvals.length ? 'your wallet signs ' + (approvals.length + 1) + ' transactions: ' + q.steps.map((st) => st.note).join('; ') : 'one transaction to sign: ' + q.steps[q.steps.length - 1].note, 'dim');
+    lines.push({ kind: 'output', text: approvals.length ? 'your wallet signs ' + (approvals.length + 1) + ' transactions: ' + q.steps.map((st) => st.note).join('; ') : 'one transaction to sign: ' + q.steps[q.steps.length - 1].note, suggest: ['/swap ' + q.amountIn + ' ' + q.from + ' ' + q.to] });
+    this.print(lines);
   }
 
-  private hex(v: string): string {
-    return '0x' + BigInt(v).toString(16);
-  }
+  private hex(v: string): string { return '0x' + BigInt(v).toString(16); }
 
   private async waitReceipt(p: any, hash: string): Promise<{ ok: boolean; status: string }> {
     for (let i = 0; i < 60; i++) {
@@ -342,28 +430,30 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
 
   private async swap(amount: number, from: string, to: string): Promise<void> {
     const p = this.provider();
-    if (!p || !this.wallet) { this.print('connect first: the swap is signed by your wallet', 'warn'); return; }
-    if (this.chainId !== ConsoleComponent.CHAIN_ID) { await this.ensureChain(p); if (this.chainId !== ConsoleComponent.CHAIN_ID) { this.print('switch your wallet to Robinhood Chain first', 'bad'); return; } }
+    if (!p || !this.wallet) { this.print([{ kind: 'system', text: 'connect first: the swap is signed by your wallet.', suggest: ['/connect'] }]); return; }
+    if (this.chainId !== ConsoleComponent.CHAIN_ID) { await this.ensureChain(p); if (this.chainId !== ConsoleComponent.CHAIN_ID) { this.print([{ kind: 'error', text: 'switch your wallet to Robinhood Chain first.' }]); return; } }
     const q = await this.fetchQuote(amount, from, to);
     this.showQuote(q);
     let swapHash: string | null = null;
     for (const st of q.steps) {
-      this.print('sign: ' + st.note, 'warn');
+      this.print([{ kind: 'system', text: 'sign in your wallet: ' + st.note }]);
       const hash: string = await p.request({ method: 'eth_sendTransaction', params: [{ from: this.wallet, to: st.to, data: st.data, value: this.hex(st.value) }] });
-      this.print('sent ' + hash.slice(0, 12) + '…, waiting for the chain', 'dim');
+      this.print([{ kind: 'system', text: 'sent ' + hash.slice(0, 12) + '…, waiting for the chain' }]);
       const r = await this.waitReceipt(p, hash);
-      if (!r.ok) { this.print((st.id === 'swap' ? 'the swap' : 'the approval') + ' did not succeed (' + r.status + '). Nothing else was sent.', 'bad'); return; }
-      if (st.id === 'swap') { swapHash = hash; } else { this.print('approval landed', 'ok'); }
+      if (!r.ok) { this.print([{ kind: 'error', text: (st.id === 'swap' ? 'the swap' : 'the approval') + ' did not succeed (' + r.status + '). nothing else was sent.' }]); return; }
+      if (st.id === 'swap') { swapHash = hash; } else { this.print([{ kind: 'output', text: 'approval landed' }]); }
     }
     if (!swapHash) { return; }
-    this.print('swap landed: ' + ConsoleComponent.EXPLORER + '/tx/' + swapHash, 'ok');
+    this.print([{ kind: 'output', text: 'swap landed: ' + ConsoleComponent.EXPLORER + '/tx/' + swapHash }]);
     const reply: any = await this.get<any>(this.obs.consoleSwap({ address: this.wallet, txHash: swapHash, from: q.from, to: q.to, amountIn: q.amountIn })).catch((e) => e?.error ?? e);
     if (reply?.ok) {
       this.elig = reply.eligibility ?? this.elig;
       const got = reply.swap?.amountOut != null ? ', ' + reply.swap.amountOut + ' ' + q.to + ' arrived' : '';
-      this.print('verified on the chain' + got + '. ' + (reply.eligibility ? reply.eligibility.swaps + ' of ' + reply.eligibility.required + ' swaps' + (reply.eligibility.eligible ? ': eligible. Your agent is yours to run.' : '.') : ''), 'ok');
+      const e = reply.eligibility;
+      this.print([{ kind: 'output', text: 'verified on the chain' + got + '. ' + (e ? e.swaps + ' of ' + e.required + ' swaps' + (e.eligible ? ': eligible.' : '.') : ''), suggest: e?.eligible ? [] : ['/eligible'] }]);
+      if (e?.eligible && this.token && this.agentState !== 'ready') { await this.afterSignIn(false); }
     } else {
-      this.print('the desk could not verify it yet: ' + (reply?.reason || reply?.error || 'no answer') + '. Type eligible in a minute.', 'warn');
+      this.print([{ kind: 'error', text: 'the desk could not verify it yet: ' + (reply?.reason || reply?.error || 'no answer') + '. type /eligible in a minute.', suggest: ['/eligible'] }]);
     }
   }
 }

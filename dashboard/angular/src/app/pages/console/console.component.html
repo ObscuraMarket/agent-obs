@@ -1,30 +1,47 @@
-<!-- The OBS console: the desk's command line for a person with their own wallet. The same commands as the obs CLI in
-     the repo; reads come from the public API, quotes from the desk's router, swaps are signed by the visitor's wallet
-     and count toward running their own agent. -->
-<div class="obs-console" (click)="focusInput()">
-  <header class="bar">
-    <div class="brand">
-      <span class="mark" aria-hidden="true">&gt;_</span>
-      <h1>OBS console</h1>
-      <span class="sub">the desk's command line</span>
+<!-- The OBS console at /console: one surface for talking to your agent and for shaping it, next to the desk's
+     read-only commands and your own wallet's swaps. A line is a message to your agent; a slash line is a command.
+     The desk routes every command; the page streams the chat, signs nothing, and holds no key. -->
+<div class="obs-console">
+  <div class="cli" (click)="focusInput()">
+    <div class="cli__bar">
+      <span class="cli__dot" [class.on]="agentState === 'ready' || agentState === 'thinking'" [class.warn]="agentState === 'locked'" aria-hidden="true"></span>
+      <span class="cli__who">{{ agentName }}</span>
+      <span class="cli__addr">{{ wallet ? short(wallet) : 'not signed in' }}</span>
+      <span class="cli__pill" [class.on]="elig?.eligible" title="Verified swaps from your wallet against the bar that unlocks your own agent">{{ elig ? elig.swaps : 0 }} of {{ elig?.required || 3 }} swaps<ng-container *ngIf="elig?.eligible"> · eligible</ng-container></span>
+      <button type="button" class="cli__signin" (click)="onSignInClick($event)" [disabled]="status === 'signing'">{{ status === 'signed-in' ? 'signed in' : status === 'signing' ? 'signing…' : 'sign in with wallet' }}</button>
+      <a class="cli__link" href="/agent">the desk</a>
     </div>
-    <div class="right">
-      <span class="pill elig" [class.on]="elig?.eligible" title="Verified swaps from your wallet against the bar that unlocks your own agent">{{ elig ? elig.swaps : 0 }} of {{ elig?.required || 3 }} swaps<ng-container *ngIf="elig?.eligible"> · eligible</ng-container></span>
-      <button type="button" class="pill wallet" [class.on]="wallet && chainId === 4663" [class.warn]="wallet && chainId !== 4663" (click)="onWalletPill($event)">
-        <i aria-hidden="true"></i>{{ wallet ? short(wallet) + (chainId === 4663 ? '' : ' · wrong chain') : 'connect wallet' }}
-      </button>
-      <a class="pill link" href="/agent">the desk</a>
-    </div>
-  </header>
 
-  <div class="screen" #screen aria-live="polite">
-    <div class="line" *ngFor="let l of lines" [ngClass]="l.cls">{{ l.text }}</div>
-    <div class="line dim" *ngIf="busy">…</div>
+    <div class="cli__scroll" #screen aria-live="polite">
+      <ng-container *ngFor="let g of groups; let i = index; let last = last">
+        <p class="cli__cmd" *ngIf="g.kind === 'command'"><span class="cli__cmd-mark" aria-hidden="true">›</span>{{ g.lines[0].text }}</p>
+        <div class="cli__row cli__row--me" *ngIf="g.kind === 'input'"><div class="cli__bubble cli__bubble--me">{{ g.lines[0].text }}</div></div>
+        <div class="cli__row" *ngIf="g.kind === 'agent'">
+          <div class="cli__bubble cli__bubble--agent">{{ g.lines[0].text }}<span class="cli__caret" *ngIf="g.lines[0].streaming && last" aria-hidden="true"></span></div>
+        </div>
+        <div *ngIf="g.kind === 'system'">
+          <p class="cli__note">{{ joined(g) }}</p>
+          <div class="cli__suggest" *ngIf="suggestOf(g).length">
+            <button type="button" *ngFor="let one of suggestOf(g)" class="cli__chip" [class.cli__chip--cmd]="one.startsWith('/')" (click)="runLine(one)" [disabled]="busy || agentState === 'thinking'">{{ one }}</button>
+          </div>
+        </div>
+        <div *ngIf="g.kind === 'output' || g.kind === 'error'">
+          <pre class="cli__out" [class.cli__out--error]="g.kind === 'error'">{{ joinedLines(g) }}</pre>
+          <div class="cli__suggest" *ngIf="suggestOf(g).length">
+            <button type="button" *ngFor="let one of suggestOf(g)" class="cli__chip" [class.cli__chip--cmd]="one.startsWith('/')" (click)="runLine(one)" [disabled]="busy || agentState === 'thinking'">{{ one }}</button>
+          </div>
+        </div>
+      </ng-container>
+      <pre class="cli__out cli__out--error" *ngIf="agentError">{{ agentError }}</pre>
+    </div>
+
+    <div class="cli__hint" *ngIf="hint.length">
+      <button type="button" *ngFor="let h of hint" class="cli__hint-item" (click)="pickHint(h)">{{ h }}</button>
+    </div>
+
+    <form class="cli__input-row" (submit)="submit($event)">
+      <span class="cli__prompt" aria-hidden="true">&gt;</span>
+      <input #cmd class="cli__input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" [placeholder]="placeholder" (keydown)="onKey($event)" (input)="hint = []" [disabled]="agentState === 'provisioning'" aria-label="OBS console input">
+    </form>
   </div>
-
-  <form class="input" (submit)="submit($event)">
-    <label class="prompt" for="obs-cmd">obs&gt;</label>
-    <input #cmd id="obs-cmd" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="help" (keydown)="onKey($event)" [disabled]="busy" aria-label="Command">
-    <button type="submit" [disabled]="busy">{{ busy ? 'working' : 'run' }}</button>
-  </form>
 </div>

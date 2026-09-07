@@ -46,7 +46,7 @@ async function status(): Promise<void> {
   const d = s.desk;
   const r = s.rails;
   console.log(`equity ${usd(d.equityUsd)}  pnl ${usd(d.pnlUsd)} (${pct(d.pnlPct)})  capital ${usd(d.netCapitalUsd)}  last cycle ${d.lastThoughtAt ? clock(d.lastThoughtAt) : "n/a"}`);
-  if (r) console.log(`trading ${r.tradingOn ? "on" : "off"}  entries today ${r.entriesToday ?? "?"} of ${r.maxEntriesPerDay ?? "?"}  size ${usd(r.maxSwapUsd)} a trade  open orders ${r.openOrders}`);
+  if (r) console.log(`trading ${r.tradingOn ? "on" : "off"}  size ${usd(r.maxSwapUsd)} a trade  open orders ${r.openOrders} of ${r.maxOpenOrders}`);
   if (s.wallet?.address) console.log(`the desk's wallet ${s.wallet.address}  ${s.wallet.explorerUrl}`);
   const p = await api<any>("/api/obs/pnl?hours=24");
   const held = (p.positions ?? []).filter((x: any) => x.asset !== "ETH");
