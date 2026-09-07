@@ -89,6 +89,7 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     maxCandidates: Number(env.OBS_MAX_CANDIDATES ?? 1),
     candidateMaxHoldH: Number(env.OBS_CANDIDATE_MAX_HOLD_H ?? 8),
     candidateFloorPct: Number(env.OBS_CANDIDATE_FLOOR_PCT ?? 40),
+    candidateRemainderFloorPct: Number(env.OBS_CANDIDATE_REMAINDER_FLOOR_PCT ?? 5),
     candidateVolumeDropPct: Number(env.OBS_CANDIDATE_VOLUME_DROP_PCT ?? 30),
     candidateTakeProfitPct: Number(env.OBS_CANDIDATE_TAKE_PROFIT_PCT ?? 60),
     candidateTakeProfitShare: Number(env.OBS_CANDIDATE_TAKE_PROFIT_SHARE ?? 0.5),

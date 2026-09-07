@@ -649,6 +649,13 @@ export function dynamicPoolSpec(a: Asset): PoolSpec | null {
 export interface ExitRails {
   candidateMaxHoldH: number;
   candidateFloorPct: number;
+  /**
+   * After a scale-out has banked profit, the rest leaves at cost: sold whole once it is this far under its cost
+   * (OBS_CANDIDATE_REMAINDER_FLOOR_PCT, zero disables). The upside stays (the remainder still trails from its peak);
+   * the downside on a trade that already paid is capped. A remainder rode from a +20% scale-out to -20% on
+   * 2026-09-07 with the rollover exit off, turning a win into a loss.
+   */
+  candidateRemainderFloorPct?: number;
   candidateVolumeDropPct: number;
   /** Whether three falling five-minute buckets sell an unpaid trade (OBS_CANDIDATE_TAPE_ROLLOVER_EXIT). Off when the hunt is a multiple in a thin pool, where every hour has such a stretch. */
   tapeRolloverExit?: boolean;
@@ -678,6 +685,9 @@ export interface ExitVerdict {
 export function exitVerdict(input: { ageH: number; pnlPct: number | null; hourly: HourlyStat[]; peakPnlPct?: number | null; tookProfit?: boolean; tapeTrend?: "rising" | "holding" | "rolling over" | "thin" | null; tapeBuyPressurePct?: number | null }, r: ExitRails): ExitVerdict | null {
   if (input.ageH >= r.candidateMaxHoldH) return { kind: "time-stop", share: 1, reason: `held ${input.ageH.toFixed(1)}h, past the ${r.candidateMaxHoldH}h time stop` };
   if (input.pnlPct != null && input.pnlPct <= -r.candidateFloorPct) return { kind: "floor", share: 1, reason: `down ${Math.abs(input.pnlPct).toFixed(1)}%, through the ${r.candidateFloorPct}% floor` };
+  // The rest of a trade that already paid never rides far under its cost: profit was taken, the remainder is free to run, not free to lose.
+  const remainder = r.candidateRemainderFloorPct ?? 0;
+  if (remainder > 0 && input.tookProfit && input.pnlPct != null && input.pnlPct <= -remainder) return { kind: "floor", share: 1, reason: `the rest leaves at cost: down ${Math.abs(input.pnlPct).toFixed(1)}% after the scale-out banked its profit (the ${remainder}% remainder floor)` };
   const h = input.hourly.slice(-3);
   if (h.length === 3) {
     const k = 1 - r.candidateVolumeDropPct / 100;

@@ -2,6 +2,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseFeed, deriveTickSpacing, poolIdFor, curvePoolIdFor, exitSignal, exitVerdict, candidateAsset, dynamicPoolSpec, resolveAny, gradeCandidate, gradeRulesFromEnv, earlyAsCandidate, toMs, isHolding } from "../src/desk/candidates.ts";
 
+test("after a scale-out banked profit, the rest leaves at cost: sold whole once it is under the remainder floor", () => {
+  const r = { candidateMaxHoldH: 24, candidateFloorPct: 30, candidateVolumeDropPct: 100, candidateTakeProfitPct: 100, candidateTakeProfitShare: 0.3, candidateTrailArmPct: 20, candidateTrailPct: 20, candidateRemainderFloorPct: 5, tapeRolloverExit: false };
+  const paid = { ageH: 3, hourly: [], peakPnlPct: 22, tookProfit: true, tapeTrend: "holding" as const, tapeBuyPressurePct: 0 };
+  const v = exitVerdict({ ...paid, pnlPct: -6 }, r);
+  assert.equal(v?.kind, "floor");
+  assert.match(v?.reason ?? "", /the rest leaves at cost: down 6\.0% after the scale-out banked its profit \(the 5% remainder floor\)/);
+  assert.equal(exitVerdict({ ...paid, pnlPct: -4 }, r), null, "within the remainder floor: it rides");
+  assert.equal(exitVerdict({ ...paid, pnlPct: -6, tookProfit: false }, r), null, "no scale-out yet: the ordinary floor at -30% is the only floor");
+  assert.equal(exitVerdict({ ...paid, pnlPct: -6 }, { ...r, candidateRemainderFloorPct: 0 }), null, "zero disables it");
+  assert.equal(exitVerdict({ ...paid, pnlPct: -31 }, { ...r, candidateRemainderFloorPct: 0 })?.kind, "floor", "the ordinary floor still holds");
+});
+
 test("the tape roll-over exit can be switched off for a hunt for a multiple, where every hour has three falling buckets", () => {
   const r = { candidateMaxHoldH: 24, candidateFloorPct: 30, candidateVolumeDropPct: 100, candidateTakeProfitPct: 100, candidateTakeProfitShare: 0.3, candidateTrailArmPct: 50, candidateTrailPct: 30 };
   const unpaid = { ageH: 2, pnlPct: 12, hourly: [], peakPnlPct: 12, tookProfit: false, tapeTrend: "rolling over" as const, tapeBuyPressurePct: 48 };
