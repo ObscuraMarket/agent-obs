@@ -107,8 +107,8 @@ test("candidate rails: probe first, proven sizes up, blacklisted never, one at a
   assert.match((checkCandidate(buy, { proven: false, blacklisted: true }, [], rails) as { reason: string }).reason, /blacklisted/);
   assert.match((checkCandidate(buy, { proven: true, blacklisted: false }, ["HOTDOG"], rails) as { reason: string }).reason, /one launch position at a time/);
   assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, ["BLOKKS"], rails), { ok: true, maxUsd: 5, addOn: false }, "adding to the one held is fine, at the ungraded ceiling");
-  const ctx = { rails, balances: { "ETH@robinhood": 0.4, "BLOKKS@robinhood": 50000 }, nativeOnFromChain: 0.4, openOrders: 1, sentTodayUsd: 99 };
-  assert.deepEqual(checkRails(buy, ctx).ok, false, "a buy at the daily cap with an order open is refused");
+  const ctx = { rails, balances: { "ETH@robinhood": 0.4, "BLOKKS@robinhood": 50000 }, nativeOnFromChain: 0.4, openOrders: 1 };
+  assert.deepEqual(checkRails(buy, ctx).ok, false, "a buy with an order already open is refused");
   const sell: Intent = { from: tok, to: eth, amount: 50000, usd: 300, exit: true };
   assert.deepEqual(checkRails(sell, ctx), { ok: true }, "an exit passes the caps and the open-order limit");
   const off = railsFromEnv({ OBS_TRADING: "on", OBS_CANDIDATES: "off" } as NodeJS.ProcessEnv);
@@ -174,7 +174,7 @@ test("grade caps size the position, the probe comes first, and scaling into a pr
   assert.deepEqual(checkCandidate(buy, { proven: true, blacklisted: false }, ["BLOKKS"], rails, A, 5), { ok: true, maxUsd: 70, addOn: true }, "holding the probe: room to the cap, as a continuation");
   assert.match((checkCandidate(buy, { proven: true, blacklisted: false }, ["BLOKKS"], rails, A, 75) as { reason: string }).reason, /ceiling of \$75/);
   assert.match((checkCandidate(buy, { proven: true, blacklisted: false }, [], rails, { grade: null, capUsd: 0, why: "below the bar: volume rolling over" }) as { reason: string }).reason, /below the bar/);
-  const ctx = { rails, balances: { "ETH@robinhood": 0.4 }, nativeOnFromChain: 0.4, openOrders: 0, sentTodayUsd: 0, now, lastEntryAt: now - 30 * 60e3, entriesToday: 1 };
+  const ctx = { rails, balances: { "ETH@robinhood": 0.4 }, nativeOnFromChain: 0.4, openOrders: 0, now, lastEntryAt: now - 30 * 60e3 };
   assert.deepEqual(checkRails({ from: eth, to: tok, amount: 0.03, usd: 70, capUsd: 75, addOn: true }, ctx), { ok: true }, "a $70 add-on passes under a $75 grade cap, and skips the spacing rule");
   assert.match((checkRails({ from: eth, to: tok, amount: 0.03, usd: 70, capUsd: 75 }, ctx) as { reason: string }).reason, /at least 2h apart/, "a fresh entry is still spaced");
   assert.match((checkRails({ from: eth, to: tok, amount: 0.04, usd: 96, capUsd: 75, addOn: true }, ctx) as { reason: string }).reason, /grade cap of \$75/);

@@ -12,7 +12,6 @@ import type { Trade, TradeStatus } from "./book.ts";
 export interface Rails {
   tradingOn: boolean;
   maxSwapUsd: number;
-  dailySwapUsd: number;
   maxOpenOrders: number;
   gasReserveEth: number;
   /** Lower-cased partner names, or null for any partner Obscura quotes. */
@@ -50,9 +49,8 @@ export interface Rails {
   /** The whole-book brake: once the day's drawdown from its opening mark passes either limit, no new entries until the next UTC day. Exits still run. */
   dailyLossUsd: number;
   dailyLossPct: number;
-  /** Selectivity: entries are spaced and counted. Exits are neither. */
+  /** Selectivity: entries are spaced. Exits are not. Nothing is counted by the day: the desk enters whenever the reads say so, under the loss brake. */
   minHoursBetweenEntries: number;
-  maxEntriesPerDay: number;
   /** A swap must be argued for: this many evidence lines quoting observed figures, and this conviction. */
   minEvidence: number;
   minConviction: number;
@@ -75,7 +73,6 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
   return {
     tradingOn: env.OBS_TRADING === "on",
     maxSwapUsd: Number(env.OBS_MAX_SWAP_USD ?? 25),
-    dailySwapUsd: Number(env.OBS_DAILY_SWAP_USD ?? 100),
     maxOpenOrders: Number(env.OBS_MAX_OPEN_ORDERS ?? 1),
     gasReserveEth: Number(env.OBS_GAS_RESERVE_ETH ?? 0.002),
     allowedPartners: partners.length ? new Set(partners) : null,
@@ -101,7 +98,6 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     dailyLossUsd: Number(env.OBS_DAILY_LOSS_USD ?? 50),
     dailyLossPct: Number(env.OBS_DAILY_LOSS_PCT ?? 5),
     minHoursBetweenEntries: Number(env.OBS_MIN_HOURS_BETWEEN_ENTRIES ?? 2),
-    maxEntriesPerDay: Number(env.OBS_MAX_ENTRIES_PER_DAY ?? 3),
     minEvidence: Number(env.OBS_MIN_EVIDENCE ?? 3),
     minConviction: Number(env.OBS_MIN_CONVICTION ?? 4),
     ethBase: (env.OBS_BASE ?? "eth").toLowerCase() === "eth",
@@ -140,12 +136,9 @@ export interface RailContext {
   /** The book's equity at the start of the UTC day and now, for the whole-book brake. Null when unknown: the brake stays off rather than guessing. */
   dayStartEquityUsd?: number | null;
   equityUsd?: number | null;
-  /** When the last entry (a non-exit swap) was sent, and how many were sent in the last 24h. */
+  /** When the last entry (a non-exit swap) was sent, for the spacing rule. */
   lastEntryAt?: number | null;
-  entriesToday?: number;
   now?: number;
-  /** Dollar value of entries already sent in the trailing 24h (exits do not count). */
-  sentTodayUsd: number;
 }
 
 /** PURE: the whole decision, in order, first failure wins. */
@@ -172,7 +165,6 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
     if (halt) return { ok: false, reason: halt };
     const now = c.now ?? Date.now();
     if (!i.addOn && c.lastEntryAt != null && now - c.lastEntryAt < r.minHoursBetweenEntries * 3600e3) return { ok: false, reason: `the last entry was ${((now - c.lastEntryAt) / 3600e3).toFixed(1)}h ago; entries are at least ${r.minHoursBetweenEntries}h apart` };
-    if ((c.entriesToday ?? 0) >= r.maxEntriesPerDay) return { ok: false, reason: `${c.entriesToday} entries in the last 24h; the limit is ${r.maxEntriesPerDay}` };
   }
   const allowed = (a: Asset) => r.allowedAssets.has(assetKey(a)) || (r.candidatesOn && !!a.candidate);
   if (!allowed(i.from)) return { ok: false, reason: `${assetKey(i.from)} is not on the trade allowlist` };
@@ -183,7 +175,6 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   if (!i.exit) {
     const cap = i.capUsd ?? r.maxSwapUsd;
     if (i.usd > cap) return { ok: false, reason: `$${i.usd.toFixed(2)} exceeds the ${i.capUsd != null ? "grade" : "per-swap"} cap of $${cap}` };
-    if (c.sentTodayUsd + i.usd > r.dailySwapUsd) return { ok: false, reason: `$${(c.sentTodayUsd + i.usd).toFixed(2)} would exceed the daily cap of $${r.dailySwapUsd}` };
     if (c.openOrders >= r.maxOpenOrders) return { ok: false, reason: `${c.openOrders} order(s) already open; the limit is ${r.maxOpenOrders}` };
   }
   const have = c.balances[assetKey(i.from)] ?? 0;
@@ -194,23 +185,6 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
     return { ok: false, reason: `less than the ${r.gasReserveEth} ETH gas reserve on ${i.from.chain}` };
   }
   return { ok: true };
-}
-
-/**
- * PURE: dollars put at risk in the trailing 24h, from the trade ledger (pending or settled, not proposals).
- * Entries only: an exit brings money back and is never blocked by the daily cap, so counting it would spend the
- * budget twice per round trip and halve the day the operator sized.
- */
-export function sentTodayUsd(trades: Trade[], now: number): number {
-  const seen = new Set<string>();
-  let usd = 0;
-  for (const t of [...trades].sort((a, b) => (b.updatedAt ?? b.at) - (a.updatedAt ?? a.at))) {
-    if (seen.has(t.id)) continue;
-    seen.add(t.id);
-    if (t.exit) continue;
-    if ((t.status === "pending" || t.status === "settled") && t.at >= now - 24 * 3600e3) usd += t.from.usd ?? 0;
-  }
-  return usd;
 }
 
 /** PURE: Obscura's order status words -> the ledger's three states. */
@@ -292,18 +266,16 @@ export function dayStartEquity(snapshots: Array<{ at: number; equityUsd: number 
   return today.length ? (today[0].equityUsd as number) : null;
 }
 
-/** PURE: entries (swaps that were not exits) in the last 24h, and when the last one went out. From the latest row per id. */
-export function entryStats(trades: Trade[], now: number): { entriesToday: number; lastEntryAt: number | null } {
+/** PURE: when the last entry (a sent swap that was not an exit) went out, for the spacing rule; null when none has. From the latest row per id. */
+export function lastEntryAt(trades: Trade[]): number | null {
   const seen = new Set<string>();
-  let entriesToday = 0;
-  let lastEntryAt: number | null = null;
+  let last: number | null = null;
   for (const t of [...trades].sort((a, b) => (b.updatedAt ?? b.at) - (a.updatedAt ?? a.at))) {
     if (seen.has(t.id)) continue;
     seen.add(t.id);
     if (t.exit || (t.status !== "pending" && t.status !== "settled")) continue;
-    if (t.at >= now - 24 * 3600e3) entriesToday++;
-    if (lastEntryAt == null || t.at > lastEntryAt) lastEntryAt = t.at;
+    if (last == null || t.at > last) last = t.at;
   }
-  return { entriesToday, lastEntryAt };
+  return last;
 }
 

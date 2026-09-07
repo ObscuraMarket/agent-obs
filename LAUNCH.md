@@ -40,7 +40,7 @@ operator (keys and switches), and the site team (their page and their zone).
   back to ETH. USDG is a hop, never a place to park; the rails refuse a
   swap that would park there.
 - Rails, in code, that the model cannot override: Robinhood Chain only,
-  $25 a swap, $100 a day, one open order, the gas reserve, the cost floor
+  $25 a swap, one open order, the gas reserve, the cost floor
   against the pool mark, the whole-book daily loss brake (entries halt after
   a $50 or 5% drawdown from the day's opening mark; exits never halt).
 - Launch tokens: a $5 probe, a proven sell before size, one at a time;

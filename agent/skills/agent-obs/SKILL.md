@@ -35,7 +35,7 @@ no key. Fields are only ever added, never renamed or removed.
 | Need | Endpoint | Notes |
 |---|---|---|
 | Is it up | `/api/obs/health` | `{ status: "ok" }` |
-| The book and the rails | `/api/obs/status` | equity, PnL, `desk.canExecute`, `rails` (per-swap and daily caps, allowed chains), the wallet address |
+| The book and the rails | `/api/obs/status` | equity, PnL, `desk.canExecute`, `rails` (the per-swap cap, open orders, allowed chains), the wallet address |
 | What it is watching now | `/api/obs/live` | refreshed every three seconds; `watching[]` with each token's entry state |
 | Every read behind the next decision | `/api/obs/signals` | candidates with grades, early launches, per-token tapes with the entry read, the launch record |
 | What it thought and decided | `/api/obs/thoughts?limit=20` | newest first; each item has `observation[]` (every line it was shown), `thoughts[]`, `decision`, `analysis`, `digest` |

@@ -31,7 +31,7 @@ test("the wallet's AOBS is never sold, bought, or approved: the general rails re
   const rails = railsFromEnv({ OBS_TRADING: "on" } as NodeJS.ProcessEnv);
   const eth = { symbol: "ETH", code: "eth", network: "robinhood", chain: "robinhood", kind: "native", contract: null, decimals: 18, deposit: true, withdrawal: true } as const;
   const aobs = { symbol: "AOBS", code: "aobs", network: "robinhood", chain: "robinhood", kind: "erc20", contract: AGENT_TOKEN, decimals: 18, deposit: true, withdrawal: true, candidate: { at: 1, poolId: "0x1", token: AGENT_TOKEN, symbol: "AOBS", tierPct: 1, feePips: 0, tickSpacing: 200, gateOk: true, source: "pons-v2", hour: 0, volUsd: 0, movePct: 0, senders: 0, swaps: 0, px: null, usdgIs0: false } } as const;
-  const ctx = { rails, balances: { "ETH@robinhood": 0.4, "AOBS@robinhood": 9_900_000 }, nativeOnFromChain: 0.4, openOrders: 0, sentTodayUsd: 0 };
+  const ctx = { rails, balances: { "ETH@robinhood": 0.4, "AOBS@robinhood": 9_900_000 }, nativeOnFromChain: 0.4, openOrders: 0 };
   const sell = checkRails({ from: aobs, to: eth, amount: 1000, usd: 10, exit: true } as never, ctx as never);
   assert.equal(sell.ok, false, "a sell of AOBS, even marked as an exit, is refused");
   assert.match((sell as { reason: string }).reason, /never-trade list/);

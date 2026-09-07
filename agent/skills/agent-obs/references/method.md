@@ -123,10 +123,10 @@ signal; it needs days.
 
 ## 7. The rails (code the model cannot override)
 
-Robinhood Chain only; $25 a swap; $100 a day; one open position; a gas
+Robinhood Chain only; $25 a swap; one open position; a gas
 reserve of 0.002 ETH; a cost floor against the pool mark (the tier plus
-slippage, wider on a curve); entries spaced 2 hours apart and at most 3 a
-day; a whole-book daily loss brake (entries halt after a $50 or 5%
+slippage, wider on a curve); entries spaced 2 hours apart, never counted
+by the day; a whole-book daily loss brake (entries halt after a $50 or 5%
 drawdown from the day's opening mark; exits never halt). A launch token's
 first buy is a $5 probe; its sell must be proven before any size; one
 launch position at a time. A swap must be argued for: a thesis, three

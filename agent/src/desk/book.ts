@@ -308,7 +308,8 @@ export function costBasis(flows: CapitalFlow[], trades: Trade[]): CostBasis {
       inFlight.push({ id: t.id, from: t.from, to: t.to, usd: t.from.usd, costUsd: cost });
       continue;
     }
-    const spent = t.from.usd ?? t.to.usd;
+    // What a sell brings back is its ETH leg, priced; the token's marked value on the way out stands in when that leg never was.
+    const spent = t.exit ? (t.to.usd ?? t.from.usd) : (t.from.usd ?? t.to.usd);
     if (cost != null && spent != null) {
       realized[t.from.asset.toUpperCase()] = (realized[t.from.asset.toUpperCase()] ?? 0) + (spent - cost);
       if (!STABLES.has(t.from.asset.toUpperCase())) realizedEvents.push({ at: t.updatedAt ?? t.at, asset: t.from.asset.toUpperCase(), usd: spent - cost, id: t.id });
@@ -404,7 +405,7 @@ export interface ClosedTrade {
   openedAt: number;
   closedAt: number;
   heldMin: number;
-  /** Dollars in on the buy, dollars out on the sell as marked, and the realized result against average cost. */
+  /** Dollars in on the buy, dollars back on the sell (its ETH leg priced, else the token as marked), and the realized result against average cost. */
   inUsd: number | null;
   outUsd: number | null;
   resultUsd: number;
@@ -433,7 +434,7 @@ export function closedTrades(trades: Trade[], events: Array<{ at: number; asset:
       closedAt: sell.updatedAt ?? sell.at,
       heldMin: Math.max(0, Math.round(((sell.updatedAt ?? sell.at) - buy.at) / 60e3)),
       inUsd: buy.from.usd ?? null,
-      outUsd: sell.from.usd ?? null,
+      outUsd: sell.to.usd ?? sell.from.usd ?? null,
       resultUsd: e.usd,
       how: m ? m[1] : "the model",
       tx: sell.settlementTx ?? null,

@@ -65,7 +65,8 @@ Execution is a separate, deliberate step and it is the operator's:
    become orders on the page.
 
 The rails hold either way: Robinhood Chain only, the allowlist, $25 a swap,
-$100 a day, one open order, the gas reserve, and the deposit address check.
+one open order, the gas reserve, and the deposit address check. Nothing is
+counted by the day.
 
 ## Updating
 

@@ -80,7 +80,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   closed: ObsClosedTrade[] = [];
   /** How many tapes the live watch follows, from its last line. */
   watchingCount = 0;
-  entriesLeft: number | null = null;
   walletRows: KvRow[] = [];
   railGauges: RailGauge[] = [];
   railKv: KvRow[] = [];
@@ -478,14 +477,14 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     }
     const held = this.positions.filter((x) => x.asset !== 'ETH').map((x) => x.asset);
     const now = held.length ? `holding ${held.join(', ')}` : `flat${this.watchingCount ? `, watching ${this.watchingCount} tape${this.watchingCount === 1 ? '' : 's'}` : ''}`;
-    out.push({ k: 'Now', v: `${now}${this.entriesLeft != null ? ` · ${this.entriesLeft} entr${this.entriesLeft === 1 ? 'y' : 'ies'} left today` : ''}` });
+    out.push({ k: 'Now', v: now });
     this.summary = out;
   }
 
   /** The positions table's empty row, true to the day: flat is not "nothing yet". */
   get flatLine(): string {
     if (this.closed.length || (this.status?.desk?.trades?.settled ?? 0) > 0) {
-      return `Flat${this.watchingCount ? `, watching ${this.watchingCount} tape${this.watchingCount === 1 ? '' : 's'} for a setup` : ''}${this.entriesLeft != null ? `; ${this.entriesLeft} entr${this.entriesLeft === 1 ? 'y' : 'ies'} left today` : ''}.`;
+      return `Flat${this.watchingCount ? `, watching ${this.watchingCount} tape${this.watchingCount === 1 ? '' : 's'} for a setup` : ''}.`;
     }
     return 'No positions. The desk holds nothing yet.';
   }
@@ -498,15 +497,9 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     const r: ObsRails | undefined = s.rails;
     if (!r) { this.railGauges = []; this.railKv = []; return; }
 
-    // The rule that binds is a count of entries in the trailing 24 hours; the dollar budget is that count times the size,
-    // and shown beside a smaller wallet it read as if the desk could spend more than it has.
-    const entries = r.entriesToday ?? 0, maxEntries = r.maxEntriesPerDay ?? 0;
-    this.entriesLeft = maxEntries > 0 ? Math.max(0, maxEntries - entries) : null;
+    // Nothing is counted by the day: the desk enters whenever the reads say so. The one gauge is what is open now.
     this.buildSummary();
     this.railGauges = [
-      maxEntries > 0
-        ? { label: 'Entries today', used: `${entries} / ${maxEntries}`, blocks: this.blocks(entries, maxEntries, entries >= maxEntries ? 'a' : 'g') }
-        : { label: 'Daily budget', used: `${this.usd(r.sentTodayUsd)} / ${this.usd(r.dailySwapUsd)}`, blocks: this.blocks(r.sentTodayUsd, r.dailySwapUsd, r.sentTodayUsd >= r.dailySwapUsd ? 'a' : 'g') },
       { label: 'Open orders', used: `${r.openOrders} / ${r.maxOpenOrders}`, blocks: this.blocks(r.openOrders, r.maxOpenOrders, 'f') }
     ];
     const assets = r.allowedAssets.map((a) => a.split('@')[0]).filter((a, i, arr) => arr.indexOf(a) === i).join(' ');

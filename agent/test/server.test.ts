@@ -49,11 +49,11 @@ test("the rails summary puts each cap next to what is used, from the latest row 
     { at: now - 600e3, id: "b", status: "pending" as const, from: { asset: "USDG", amount: 20, usd: 20 }, to: { asset: "NVDA", amount: 0.09, usd: 20 }, partner: "y" },
     { at: now - 600e3, id: "c", status: "proposed" as const, from: { asset: "USDG", amount: 20, usd: 20 }, to: { asset: "NVDA", amount: 0.09, usd: 20 }, partner: null },
   ];
-  const r = railsSummary(railsFromEnv({ OBS_MAX_SWAP_USD: "25", OBS_DAILY_SWAP_USD: "100", OBS_MAX_OPEN_ORDERS: "1" }), trades, now);
+  const r = railsSummary(railsFromEnv({ OBS_MAX_SWAP_USD: "25", OBS_MAX_OPEN_ORDERS: "1" }), trades, now);
   assert.equal(r.tradingOn, false);
-  assert.deepEqual([r.maxSwapUsd, r.dailySwapUsd, r.maxOpenOrders], [25, 100, 1]);
+  assert.deepEqual([r.maxSwapUsd, r.maxOpenOrders], [25, 1]);
   assert.equal(r.openOrders, 1, "one pending; the proposal is not an order");
-  assert.ok(r.sentTodayUsd >= 20, `today's sends counted, got ${r.sentTodayUsd}`);
+  assert.ok(!("dailySwapUsd" in r) && !("entriesToday" in r) && !("maxEntriesPerDay" in r) && !("sentTodayUsd" in r), "nothing on the wire is counted by the day");
   assert.ok(r.allowedAssets.includes("USDG@robinhood"));
   assert.equal(r.allowedPartners, null);
 });

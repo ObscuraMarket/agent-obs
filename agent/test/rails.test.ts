@@ -1,14 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkRails, railsFromEnv, baseLeg, sentTodayUsd, mapStatus, partnerAllowed, depositAddressLooksRight, clampToBalance, type Intent, type RailContext, dailyLossHalt, dayStartEquity } from "../src/desk/rails.ts";
+import { checkRails, railsFromEnv, baseLeg, mapStatus, partnerAllowed, depositAddressLooksRight, clampToBalance, type Intent, type RailContext, dailyLossHalt, dayStartEquity } from "../src/desk/rails.ts";
 import { resolveAsset, assetKey } from "../src/desk/assets.ts";
 
 const ETH = resolveAsset("ETH@robinhood")!;
 const USDG = resolveAsset("USDG@robinhood")!;
 // These rails tests exercise the checks, not the default list, so USDG (registered, not routable today) is allowed here explicitly.
 // The basis is on here so the fixture's ETH to USDG swap is the dollar leg, not a park; the ETH-base rule has its own test below.
-const rails = railsFromEnv({ OBS_TRADING: "on", OBS_BASIS: "on", OBS_MAX_SWAP_USD: "25", OBS_DAILY_SWAP_USD: "100", OBS_MAX_OPEN_ORDERS: "1", OBS_GAS_RESERVE_ETH: "0.002", OBS_TRADE_ASSETS: "ETH@eth,USDC@erc20,ETH@robinhood,USDG@robinhood,NVDA@robinhood" } as NodeJS.ProcessEnv);
-const ctx = (over: Partial<RailContext> = {}): RailContext => ({ rails, balances: { "ETH@robinhood": 0.05, "USDG@robinhood": 40 }, nativeOnFromChain: 0.05, openOrders: 0, sentTodayUsd: 0, ...over });
+const rails = railsFromEnv({ OBS_TRADING: "on", OBS_BASIS: "on", OBS_MAX_SWAP_USD: "25", OBS_MAX_OPEN_ORDERS: "1", OBS_GAS_RESERVE_ETH: "0.002", OBS_TRADE_ASSETS: "ETH@eth,USDC@erc20,ETH@robinhood,USDG@robinhood,NVDA@robinhood" } as NodeJS.ProcessEnv);
+const ctx = (over: Partial<RailContext> = {}): RailContext => ({ rails, balances: { "ETH@robinhood": 0.05, "USDG@robinhood": 40 }, nativeOnFromChain: 0.05, openOrders: 0, ...over });
 const intent = (over: Partial<Intent> = {}): Intent => ({ from: ETH, to: USDG, amount: 0.005, usd: 12, ...over });
 
 test("the registry resolves symbols, defaults networks, and refuses strangers", () => {
@@ -42,24 +42,10 @@ test("the rails pass a small, funded, allowlisted swap and refuse everything els
   assert.match(no({ from: resolveAsset("USDG@robinhood")!, to: resolveAsset("NVDA@robinhood")!, amount: 1 }, { rails: { ...rails, allowedAssets: new Set(["ETH@robinhood"]) } }), /allowlist/);
   assert.match(no({ usd: null }), /unpriced/);
   assert.match(no({ usd: 30 }), /per-swap cap/);
-  assert.match(no({}, { sentTodayUsd: 95 }), /daily cap/);
   assert.match(no({}, { openOrders: 1 }), /already open/);
   assert.match(no({ amount: 0.1 }), /holds 0\.05/);
   assert.match(no({ amount: 0.049 }), /gas reserve/);
   assert.match(no({ from: USDG, to: ETH, amount: 10 }, { nativeOnFromChain: 0.0001 }), /gas reserve on robinhood/);
-});
-
-test("the daily cap counts sent entries once per id, ignores proposals, and never counts an exit", () => {
-  const now = 1_000_000_000_000;
-  const trades = [
-    { at: now - 3600e3, id: "a", status: "pending" as const, from: { asset: "ETH", amount: 0.01, usd: 24 }, to: { asset: "USDG", amount: 0, usd: null }, partner: "x" },
-    { at: now - 3600e3, id: "a", updatedAt: now - 1800e3, status: "settled" as const, from: { asset: "ETH", amount: 0.01, usd: 24 }, to: { asset: "USDG", amount: 23.5, usd: null }, partner: "x" },
-    { at: now - 7200e3, id: "b", status: "proposed" as const, from: { asset: "ETH", amount: 0.01, usd: 24 }, to: { asset: "USDG", amount: 0, usd: null }, partner: null },
-    { at: now - 30 * 3600e3, id: "c", status: "settled" as const, from: { asset: "ETH", amount: 0.01, usd: 24 }, to: { asset: "USDG", amount: 23.5, usd: null }, partner: "x" },
-  ];
-  assert.equal(sentTodayUsd(trades, now), 24);
-  const sell = { at: now - 600e3, id: "d", status: "settled" as const, exit: true, from: { asset: "TOK", amount: 1000, usd: 106 }, to: { asset: "ETH", amount: 0.04, usd: null }, partner: "pool" };
-  assert.equal(sentTodayUsd([...trades, sell], now), 24, "a sell brings money back; it is not spend against the day");
 });
 
 test("Obscura's status words map to the ledger's three states", () => {

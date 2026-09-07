@@ -64,7 +64,7 @@ Owners: **Team** (a decision), **Operator** (keys, switches, Railway),
 - [ ] Arm: `scripts/railway-arm.sh on`. Rerun the preflight; `armed (canExecute)` must read true.
 - [ ] Know the first trade: a $5 probe from ETH into a launch token's pool, one swap; on its exit, two approvals then the sell. Watch it on the Agent page, on `/api/obs/trades`, and in `railway logs -s desk`.
 - [ ] Know the stop: `scripts/railway-arm.sh off` halts entries within a minute; the daily loss brake halts them alone at $50 or 5% down on the day; exits never halt.
-- [ ] Rails at launch, said out loud once: $25 a swap, $100 a day, one open position, $5 probe, a proven sell before size.
+- [ ] Rails at launch, said out loud once: $25 a swap, one open position, $5 probe, a proven sell before size.
 
 ## 3. The first 24 hours
 

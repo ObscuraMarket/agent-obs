@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { priceStats, ratioStats, usSession, figures, evidenceCheck } from "../src/desk/analysis.ts";
 import { parseThoughtReply } from "../src/desk/thoughts.ts";
-import { entryStats, railsFromEnv, checkRails } from "../src/desk/rails.ts";
+import { lastEntryAt, railsFromEnv, checkRails } from "../src/desk/rails.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 
 const H = 3600e3;
@@ -85,17 +85,15 @@ test("the reply parser reads the analysis lines and treats a bare none as absent
   assert.equal(parseThoughtReply("CONVICTION: 9\nDECISION: hold").analysis!.conviction, null, "out of range is not a conviction");
 });
 
-test("entries are spaced and counted; exits are neither", () => {
+test("entries are spaced off the last one sent; exits are not, and nothing is counted by the day", () => {
   const t = (at: number, id: string, status: "settled" | "pending" | "failed", exit = false) => ({ at, id, status, from: { asset: "ETH", amount: 0.01, usd: 24 }, to: { asset: "NVDA", amount: 0.1, usd: 24 }, partner: "pool", ...(exit ? { exit: true } : {}) });
   const trades = [t(now - 30 * H, "old", "settled"), t(now - 5 * H, "a", "settled"), t(now - 3 * H, "b", "settled", true), t(now - 1 * H, "c", "pending"), t(now - 0.5 * H, "d", "failed")];
-  const st = entryStats(trades, now);
-  assert.equal(st.entriesToday, 2, "a and c; the exit and the failure do not count, the old one is out of the day");
-  assert.equal(st.lastEntryAt, now - 1 * H);
-  const rails = railsFromEnv({ OBS_TRADING: "on", OBS_MIN_HOURS_BETWEEN_ENTRIES: "2", OBS_MAX_ENTRIES_PER_DAY: "3", OBS_TRADE_ASSETS: "ETH@robinhood,USDG@robinhood,NVDA@robinhood" } as NodeJS.ProcessEnv);
+  assert.equal(lastEntryAt(trades), now - 1 * H, "the pending one; the exit and the failure do not count");
+  assert.equal(lastEntryAt([]), null);
+  const rails = railsFromEnv({ OBS_TRADING: "on", OBS_MIN_HOURS_BETWEEN_ENTRIES: "2", OBS_TRADE_ASSETS: "ETH@robinhood,USDG@robinhood,NVDA@robinhood" } as NodeJS.ProcessEnv);
   const ETH = resolveAsset("ETH@robinhood")!, NVDA = resolveAsset("NVDA@robinhood")!;
-  const ctx = { rails, balances: { "ETH@robinhood": 0.4, "NVDA@robinhood": 1 }, nativeOnFromChain: 0.4, openOrders: 0, sentTodayUsd: 0, now, lastEntryAt: now - 1 * H, entriesToday: 2 };
+  const ctx = { rails, balances: { "ETH@robinhood": 0.4, "NVDA@robinhood": 1 }, nativeOnFromChain: 0.4, openOrders: 0, now, lastEntryAt: now - 1 * H };
   assert.match((checkRails({ from: ETH, to: NVDA, amount: 0.01, usd: 24 }, ctx) as { reason: string }).reason, /at least 2h apart/);
-  assert.match((checkRails({ from: ETH, to: NVDA, amount: 0.01, usd: 24 }, { ...ctx, lastEntryAt: now - 3 * H, entriesToday: 3 }) as { reason: string }).reason, /limit is 3/);
-  assert.deepEqual(checkRails({ from: ETH, to: NVDA, amount: 0.01, usd: 24 }, { ...ctx, lastEntryAt: now - 3 * H, entriesToday: 2 }), { ok: true });
-  assert.deepEqual(checkRails({ from: NVDA, to: ETH, amount: 1, usd: 24, exit: true }, { ...ctx, entriesToday: 3 }), { ok: true }, "an exit ignores spacing and the count");
+  assert.deepEqual(checkRails({ from: ETH, to: NVDA, amount: 0.01, usd: 24 }, { ...ctx, lastEntryAt: now - 3 * H }), { ok: true }, "spaced out, and the twentieth of the day is as welcome as the first");
+  assert.deepEqual(checkRails({ from: NVDA, to: ETH, amount: 1, usd: 24, exit: true }, ctx), { ok: true }, "an exit ignores spacing");
 });

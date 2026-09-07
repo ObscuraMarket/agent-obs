@@ -9,7 +9,7 @@
 import { appendLedger, readLedger } from "../ledger.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { latestTrades, positions, type Trade, type Prices, type CapitalFlow, type Position } from "./book.ts";
-import { quoteOnChain, encodeSwap, costFloorPct } from "./onchain.ts";
+import { quoteOnChain, encodeSwap, costFloorPct, legUsd, latestEthUsd } from "./onchain.ts";
 import { simulateFromWallet } from "./signer.ts";
 import { WALLET_ADDRESS } from "../config.ts";
 
@@ -68,7 +68,7 @@ export async function paperExecute(i: Intent, c: RailContext, realBalances: Reco
     venue: "pool",
     ...(i.exit ? { exit: true } : {}),
     from: { asset: i.from.symbol, network: i.from.network, amount: i.amount, usd: i.usd },
-    to: { asset: i.to.symbol, network: i.to.network, amount: q.amountOut, usd: q.priceOutUsd != null ? q.amountOut * q.priceOutUsd : null },
+    to: { asset: i.to.symbol, network: i.to.network, amount: q.amountOut, usd: legUsd(i.to, q.amountOut, q.priceOutUsd, latestEthUsd(now)) },
     partner: "pool",
     note: `PAPER${i.exit ? " exit" : ""}: ${q.route.hops.map((h) => h.key).join(" then ")}; ${q.amountOut} ${i.to.symbol} expected${q.costPct != null ? `, cost ${q.costPct.toFixed(2)}% (fees ${q.feePct.toFixed(2)}%)` : ""}; ${sim}`,
     updatedAt: now,

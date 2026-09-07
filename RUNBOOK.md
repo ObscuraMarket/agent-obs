@@ -114,9 +114,9 @@ hostname (`environment.prod.ts` in the site repo, `obsApiUrl`).
 3. `OBS_TRADING=on` in `agent/.env`, then `systemctl restart obs-live obs-api`.
 
 The rails hold either way: Robinhood Chain only, ETH base, one open
-position, $25 a swap and $100 a day by default, a $5 probe with a proven
-sell before size, entries spaced and counted, a daily loss brake, exits the
-model cannot override. The first live trade is a probe.
+position, $25 a swap by default, a $5 probe with a proven sell before size,
+entries spaced, a daily loss brake, exits the model cannot override. Nothing
+is counted by the day. The first live trade is a probe.
 
 ## 9. Day to day
 

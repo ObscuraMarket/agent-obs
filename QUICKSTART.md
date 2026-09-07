@@ -76,7 +76,7 @@ In this order, and not before you have read a few paper cycles:
 
 1. Fund the wallet with ETH on Robinhood Chain, plus a little for gas.
 2. Record the capital: `npm run capital -- deposit ETH 0.1`.
-3. Set the rails in `.env`: size, entries a day, the floor, the profit rules.
+3. Set the rails in `.env`: size, spacing, the floor, the profit rules.
    `.env.example` documents each with its default.
 4. Set `OBS_TRADING=on` and start the desk: `npm run live` and the cycle on a
    timer ([RUNBOOK.md](RUNBOOK.md) section 6, or `docker compose up -d --build`

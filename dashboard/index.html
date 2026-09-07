@@ -609,7 +609,6 @@
       var armed = S.status && S.status.desk && S.status.desk.canExecute;
       el("r-state").textContent = armed ? "execution armed" : r.tradingOn ? "switched on, key missing" : "execution off";
       el("rails").innerHTML =
-        "<div class='rail'><div class='t'><span>Daily budget</span><b class='num'>" + usd(r.sentTodayUsd) + " / " + usd(r.dailySwapUsd) + "</b></div>" + blocks(r.sentTodayUsd, r.dailySwapUsd, r.sentTodayUsd >= r.dailySwapUsd ? "a" : "g") + "</div>" +
         "<div class='rail'><div class='t'><span>Open orders</span><b class='num'>" + r.openOrders + " / " + r.maxOpenOrders + "</b></div>" + blocks(r.openOrders, r.maxOpenOrders, "f") + "</div>" +
         "<ul class='kv' style='margin-top:16px'><li><span class='k'>Per-swap cap</span><span class='v num'>" + usd(r.maxSwapUsd) + "</span></li><li><span class='k'>Gas reserve</span><span class='v num'>" + r.gasReserveEth + " ETH</span></li><li><span class='k'>Assets</span><span class='v'>" + esc(r.allowedAssets.map(function (a) { return a.split("@")[0]; }).filter(function (a, i, arr) { return arr.indexOf(a) === i; }).join(" ")) + "</span></li><li><span class='k'>Partners</span><span class='v'>" + (r.allowedPartners ? esc(r.allowedPartners.join(" ")) : "any Obscura route") + "</span></li></ul>";
       el("r-note").textContent = armed ? "every swap is sized inside these caps and refused in public otherwise" : "observation mode · a swap decision is a proposal until the operator arms execution";

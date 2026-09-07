@@ -13,7 +13,7 @@ import { quoteWatchlist, parseWatchlist, DEFAULT_WATCHLIST } from "../obscura/or
 import { readBook, snapshot, snapshotFromChain, recordSnapshot, recordTrade, latestTrades, boughtSymbols, type Trade, markIsTrustworthy } from "./book.ts";
 import { observationLines, buildThoughtPrompt, parseThoughtReply, guardThoughts, readThoughts, recordThought, decisionUnread, decisionLineOf, type QuoteRead, type Thought } from "./thoughts.ts";
 import { recallForPrompt, remember } from "../journal.ts";
-import { railsFromEnv, tradingArmed, sentTodayUsd, resolveAsset, dayStartEquity, entryStats, baseLeg } from "./rails.ts";
+import { railsFromEnv, tradingArmed, resolveAsset, dayStartEquity, lastEntryAt, baseLeg } from "./rails.ts";
 import { assetKey, type Asset } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates, rememberClose } from "./onchain.ts";
@@ -30,7 +30,7 @@ import { readLaunch, launchLine, launchRulesFromEnv, launchRulesForRecord, type 
 import { autoEntryPick, autoEntryFor } from "./autoentry.ts";
 import { recordResearch } from "./research.ts";
 import { digestThought, shortWhy } from "./digest.ts";
-import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry } from "./trade-memory.ts";
+import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry, readEntries, recordClose, reconcileCloses, ethUsdAt } from "./trade-memory.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
 import { positions } from "./book.ts";
@@ -107,7 +107,7 @@ if (ARMED && readTokens().length) {
     const heldNames = Object.values(dynamicAssets()).filter((a) => boughtForExit.has(a.symbol) && isHolding(chainForExit.bySymbol[a.symbol])).map((a) => a.symbol);
     if (heldNames.length) {
       const exitPrices = await assetPrices([...heldNames, "ETH"], {});
-      const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookForExit.trades, now) }, undefined, now);
+      const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0 }, undefined, now);
       for (const t of exits) console.log(`[desk] forced exit ${t.id} ${t.status}: ${t.note}`);
       for (const t of exits) if (t.status === "settled" || t.status === "pending") soldThisCycle.add(t.from.asset);
     }
@@ -265,7 +265,7 @@ const roundTripCostPct = usdgLeg && usdgLeg.amountOut != null && nvdaPool ? Math
 const basis = ref && nvdaPool ? basisSignal(nvdaPool, ref, roundTripCostPct, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
 // Paper exits: a paper-held launch token past its rails is sold on paper, before the model thinks.
 if (PAPER && chain && heldDyn.length) {
-  const ctxP = { rails: railsFromEnv(), balances: chain.byKey, nativeOnFromChain: chain.byKey["ETH@robinhood"] ?? null, openOrders: 0, sentTodayUsd: sentTodayUsd(bookTrades, now) };
+  const ctxP = { rails: railsFromEnv(), balances: chain.byKey, nativeOnFromChain: chain.byKey["ETH@robinhood"] ?? null, openOrders: 0 };
   const exits = await exitCandidates(chain.bySymbol, prices, ctxP, feed, now, (i, c, t) => paperExecute(i, c, real?.bySymbol ?? {}, t), paperTrades);
   for (const t of exits) console.log(`[desk] paper exit ${t.id}: ${t.note}`);
 }
@@ -363,6 +363,13 @@ for (const [sym, a] of inPlay) {
       tapes.push(`Launch ${sym}: not read (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`);
     }
   }
+}
+// The record is held against the ledger before he reads it: a close once written off an unpriced ETH leg, or on top
+// of an earlier round trip in the same token, is replaced by what its own buys and sells say. Nothing to do once they agree.
+if (!DRY) {
+  const fixes = reconcileCloses(readCloses(), bookTrades, readEntries(), ethUsdAt(readPrices(), prices.ETH ?? reads.prices.ethUsd ?? null), now);
+  for (const f of fixes) recordClose(f);
+  if (fixes.length) console.log(`[desk] trade memory: ${fixes.length} close${fixes.length === 1 ? "" : "s"} recomputed from the trade ledger: ${fixes.map((f) => `${f.symbol} ${f.realizedUsd >= 0 ? "+" : "-"}$${Math.abs(f.realizedUsd).toFixed(2)}`).join(", ")}`);
 }
 // What he learned: the launch record, and the closest past trades to the setups in play.
 const closes = readCloses();
@@ -469,10 +476,9 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
       balances: chain?.byKey ?? {},
       nativeOnFromChain: chain ? (chain.byKey[`ETH@${from.network === "erc20" ? "eth" : from.network}`] ?? null) : null,
       openOrders: open.filter((t) => t.status === "pending").length,
-      sentTodayUsd: sentTodayUsd(bookTrades, now),
       dayStartEquityUsd: dayStartEquity(book.snapshots, now),
       equityUsd: mark.equityUsd,
-      ...entryStats(bookTrades, now),
+      lastEntryAt: lastEntryAt(bookTrades),
       now,
     };
     // A swap must be argued for. An exit of a held position is exempt: leaving is never blocked on paperwork.
@@ -519,8 +525,7 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
           recordEntry({ at: now, symbol: to.symbol, token: to.contract ?? "", source: e?.source ?? feed.candidates.find((x) => x.symbol === to.symbol)?.source ?? "unknown", grade: graded.get(to.symbol)?.grade ?? null, tierPct: to.candidate.tierPct, ignitedAfterMin: e?.ignitedAfterMin ?? null, via: to.candidate.curve ? "curve" : "side pool", usd: intentUsd ?? 0, reason: parsed.analysis?.thesis || decision.reason || "", paper: PAPER });
         }
         if (from.candidate && isExit && r.trade.status === "settled" && amt >= (chain?.bySymbol[from.symbol] ?? amt) * 0.999) {
-          const p = pos.find((x) => x.asset === from.symbol);
-          rememberClose(from.symbol, from.contract ?? "", bookTrades.filter((t) => t.to.asset === from.symbol && t.status === "settled").map((t) => t.at).sort()[0] ?? now, p?.costUsd ?? null, (p?.realizedUsd ?? 0) + (r.trade.to.usd ?? 0) - (p?.costUsd ?? 0), null, "model", PAPER, now);
+          rememberClose(from.symbol, from.contract ?? "", [...bookTrades, r.trade], ethUsdAt(readPrices(), prices.ETH ?? reads.prices.ethUsd ?? null), null, "model", PAPER, now);
         }
         decision = { ...decision, from: assetKey(from), to: assetKey(to), reason: `${decision.reason || "executing"}; ${PAPER ? `paper: swapped ${amt} ${from.symbol} for ${r.trade.to.amount} ${to.symbol} at full size, nothing sent` : r.trade.venue === "pool" ? `swapped ${amt} ${from.symbol} on chain, ${r.trade.status}` : `sent ${amt} ${from.symbol} via ${r.trade.partner}`}` };
       } else {

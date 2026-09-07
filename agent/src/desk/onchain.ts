@@ -22,7 +22,7 @@ import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
 import { readTape, tapeStats } from "./tape.ts";
-import { readEntries, recordClose } from "./trade-memory.ts";
+import { readEntries, recordClose, positionSpans, closeFromSpan, entryForSpan, closeRow, ethUsdAt, type TradeClose } from "./trade-memory.ts";
 import { positions } from "./book.ts";
 import type { QuoteRead } from "./thoughts.ts";
 
@@ -280,6 +280,19 @@ export type OnChainResult = { ok: true; trade: Trade } | { ok: false; reason: st
 const balanceOf = (a: Asset): Promise<bigint> => (a.kind === "native" ? readNativeBalance(a) : readTokenBalance(a, a.contract as `0x${string}`));
 
 /** The lane: rails, route, quote, floor, encode, simulate, approvals, send, receipt, the row. */
+/** The desk's latest ETH price from its own samples, within three hours: for a leg the route cannot price, an ETH leg on a route that never passes the ETH/USDG pool. */
+export function latestEthUsd(now = Date.now()): number | null {
+  const s = readPrices().filter((x) => x.symbol === "ETH" && now - x.at <= 3 * 3600e3).sort((a, b) => b.at - a.at)[0];
+  return s ? s.priceUsd : null;
+}
+
+/** PURE: a leg's dollar value: the route's price when it has one, else ETH at the desk's own price, else unpriced. A trade row with an unpriced ETH leg once read as a full loss in the desk's memory. */
+export function legUsd(asset: Asset, amount: number, routePriceUsd: number | null, ethUsd: number | null): number | null {
+  if (routePriceUsd != null) return amount * routePriceUsd;
+  if (asset.symbol === "ETH" && ethUsd != null) return amount * ethUsd;
+  return null;
+}
+
 export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()): Promise<OnChainResult> {
   // The last check before anything is signed, independent of the rails object handed in: a never-trade contract on
   // either leg is refused here even if a caller built its own rails.
@@ -288,6 +301,7 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   if (!gate.ok) return { ok: false, reason: gate.reason };
   const q = await quoteOnChain(i.from, i.to, i.amount);
   if (!q) return { ok: false, reason: `no pool route from ${assetKey(i.from)} to ${assetKey(i.to)}, or the pools did not answer` };
+  const ethUsd = latestEthUsd(now);
   const floor = costFloorPct(i, c.rails.minFillRatio);
   if (!i.exit && q.costPct != null && q.costPct > floor) return { ok: false, reason: `the pool route costs ${q.costPct.toFixed(2)}% against the mark; the floor is ${floor.toFixed(1)}%` };
   const deadline = BigInt(Math.floor(now / 1000) + 20 * 60);
@@ -317,8 +331,8 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     status: "pending",
     venue: "pool",
     ...(i.exit ? { exit: true } : {}),
-    from: { asset: i.from.symbol, network: i.from.network, amount: amountIn, usd: i.usd },
-    to: { asset: i.to.symbol, network: i.to.network, amount: q.amountOut, usd: q.priceOutUsd != null ? q.amountOut * q.priceOutUsd : null },
+    from: { asset: i.from.symbol, network: i.from.network, amount: amountIn, usd: i.usd ?? legUsd(i.from, amountIn, q.priceInUsd, ethUsd) },
+    to: { asset: i.to.symbol, network: i.to.network, amount: q.amountOut, usd: legUsd(i.to, q.amountOut, q.priceOutUsd, ethUsd) },
     partner: "pool",
     note: `${q.route.hops.map((h) => h.key).join(" then ")} on chain; expected ${q.amountOut} ${i.to.symbol}, floor ${q.minOut}${q.costPct != null ? `, route cost ${q.costPct.toFixed(2)}% (fees ${q.feePct.toFixed(2)}%)` : ""}${approvals.length ? `; approvals ${approvals.join(", ")}` : ""}`,
   };
@@ -352,7 +366,7 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     updatedAt: Date.now(),
     settlementTx: hash,
     explorerUrl,
-    to: { ...base.to, amount: got, usd: q.priceOutUsd != null ? got * q.priceOutUsd : null },
+    to: { ...base.to, amount: got, usd: legUsd(i.to, got, q.priceOutUsd, ethUsd) },
     note: `${base.note}; received ${got} ${i.to.symbol}`,
   };
   recordTrade(settled);
@@ -432,7 +446,7 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
       const row: Trade = { ...r.trade, to: { ...r.trade.to, usd: toUsd }, note: `exit (${v.kind}), ${v.reason}; ${r.trade.note ?? ""}` };
       if (exec === executeOnChain) recordTrade(row);
       out.push(row);
-      if (v.share >= 1) rememberClose(a.symbol, a.contract ?? "", firstBuy, p?.costUsd ?? null, (p?.realizedUsd ?? 0) + (row.to.usd ?? 0) - (p?.costUsd ?? 0), peakPnlPct, v.kind, exec !== executeOnChain, now);
+      if (v.share >= 1) rememberClose(a.symbol, a.contract ?? "", [...allTrades, row], ethUsdAt(readPrices(), prices.ETH ?? null), peakPnlPct, v.kind, exec !== executeOnChain, now);
     } else if ("trade" in r && r.trade) out.push(r.trade);
     else console.error(`[desk] exit of ${a.symbol} refused: ${r.reason}`);
   }
@@ -464,27 +478,18 @@ export async function poolQuotes(legs: Array<{ from: Asset; to: Asset; amount: n
   return out;
 }
 
-/** A closed launch trade into the desk's memory, from its recorded entry and the exit that closed it. */
-export function rememberClose(symbol: string, token: string, enteredAt: number, costUsd: number | null, realizedUsd: number, peakPct: number | null, exitKind: string, paper: boolean, now = Date.now()): void {
-  const entry = readEntries().filter((e) => e.symbol === symbol && e.paper === paper).sort((a, b) => b.at - a.at)[0];
-  const usdIn = costUsd ?? entry?.usd ?? 0;
-  recordClose({
-    at: now,
-    symbol,
-    token,
-    source: entry?.source ?? "unknown",
-    grade: entry?.grade ?? null,
-    tierPct: entry?.tierPct ?? 0,
-    ignitedAfterMin: entry?.ignitedAfterMin ?? null,
-    via: entry?.via ?? "unknown",
-    enteredAt: entry?.at ?? enteredAt,
-    holdH: (now - (entry?.at ?? enteredAt)) / 3600e3,
-    usdIn,
-    realizedUsd,
-    realizedPct: usdIn > 0 ? (realizedUsd / usdIn) * 100 : null,
-    peakPct,
-    exitKind,
-    paper,
-  });
+/**
+ * A closed launch trade into the desk's memory: its result computed from its own buys and sells in the ledger
+ * (the sell that just closed it included), its setup from the entry the desk recorded for that span.
+ */
+export function rememberClose(symbol: string, token: string, trades: Trade[], ethAt: (at: number) => number | null, peakPct: number | null, exitKind: string, paper: boolean, now = Date.now()): TradeClose | null {
+  const mine = trades.filter((t) => String(t.id).startsWith("paper-") === paper);
+  const last = positionSpans(mine, symbol).at(-1);
+  if (!last) return null;
+  const span = { ...last, exitedAt: last.exitedAt ?? now };
+  const entry = entryForSpan(readEntries(), span, paper, now);
+  const row = closeRow(span, entry, closeFromSpan(span, ethAt, now, entry?.usd ?? null), token, peakPct, exitKind, paper, now);
+  recordClose(row);
+  return row;
 }
 

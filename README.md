@@ -19,7 +19,7 @@ reasoning, its trades and its book as they happen.
    its tape, who holds it, and how it was launched.
 3. **Argues.** The model writes a case with a thesis, evidence quoting the
    numbers it read, an invalidation, and a conviction.
-4. **Rails decide.** Size, spacing, daily caps, an allowlist, a never-trade
+4. **Rails decide.** Size, spacing, an allowlist, a never-trade
    list, and a gas reserve. A trade the model wants and the rails refuse is not
    sent, and the refusal is published.
 5. **Rules exit.** A floor, a trailing stop, a partial take-profit, a sell

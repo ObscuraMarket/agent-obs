@@ -321,7 +321,12 @@ Paper trades count, marked as paper. When a like setup is in play the
 closest past trades are recalled into the observation, and the launch
 record as a whole (closed trades, wins and losses, realized, average hold,
 by grade and by exit) rides with them, so the second launch of a kind is
-traded with the first one in mind.
+traded with the first one in mind. A close is computed from the position's
+own buys and sells in the trade ledger (the ETH that came back, priced at
+ETH's price at the time, against the ETH that went out), never from the
+book's running realized on the token, and the record is held against the
+ledger every cycle: a row the ledger contradicts is replaced by a corrected
+one that names the row it retires (`reconcileCloses`).
 
 **The bar.** Not every candidate is worth a probe and few are worth size,
 so each is graded in code from its row, its hourly trail and its pool's
@@ -335,7 +340,7 @@ ordinary size ($25). GRADE C is probe only ($5). Volume rolling over or a
 deeper bleed is below the bar and cannot be bought at all. The first buy of
 any token is always the probe; a proven token scales to its grade cap on a
 later cycle as a continuation, which skips the entry spacing but not the
-count, the daily caps or the brake. The observation names each candidate's
+brake. The observation names each candidate's
 grade, cap and reason, and the prompt tells him to spend a thesis on A and
 B only.
 
@@ -352,9 +357,10 @@ THESIS, at least three EVIDENCE lines each quoting a figure that appears
 in the observation (two distinct figures at least), an INVALIDATION, and
 CONVICTION of 4 or 5 (`OBS_MIN_EVIDENCE`, `OBS_MIN_CONVICTION`); anything
 less is recorded as a hold with the shortfall stated. Entries are also
-spaced (`OBS_MIN_HOURS_BETWEEN_ENTRIES`, default 2) and counted
-(`OBS_MAX_ENTRIES_PER_DAY`, default 3); exits are neither. The argument
-rides in the thought row (`analysis`) and the terminal shows it.
+spaced (`OBS_MIN_HOURS_BETWEEN_ENTRIES`, default 2); exits are not. Nothing
+is counted by the day: the desk enters whenever the reads say so, and the
+loss brake is what stops a bad one. The argument rides in the thought row
+(`analysis`) and the terminal shows it.
 
 **The basis trade** (`obscura/stockRef.ts`, `desk/analysis.ts`). The
 desk's bread and butter, and the one edge that repeats most days: NVDA's
@@ -408,8 +414,7 @@ names exactly the allowlisted keys and states the chain rule;
 (`OBS_QUOTE_WATCHLIST`) covers the same legs so every cycle sees them. In order, the rails
 refuse: trading off; same asset; either side off the allowlist; a from-leg
 Obscura will not accept or a to-leg it will not pay out; an unpriced
-from-leg; more than `OBS_MAX_SWAP_USD` (default $25); more than
-`OBS_DAILY_SWAP_USD` in the trailing 24h (default $100); an order already
+from-leg; more than `OBS_MAX_SWAP_USD` (default $25); an order already
 open (`OBS_MAX_OPEN_ORDERS`, default 1); a balance short of the amount; a
 send that would breach the gas reserve. Then: quote the pair the way the app
 does, confirm the from-chain RPC answers a balance read through the very
