@@ -4,10 +4,10 @@
 // so the two direct paths read the same identity, rules, soul and knowledge the gateway holds; the desk prompt
 // itself carries every rule of the trade. The X jobs still speak only through the gateway's copywriter persona.
 // Nothing here is silent: a model that cannot answer returns the reason, and the cycle prints it in red.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GatewayClient } from "@openhermit/sdk";
-import { AGENT_ID, ROOT_DIR } from "../config.ts";
+import { AGENT_ID, ROOT_DIR, dataPath } from "../config.ts";
 
 export interface Reply {
   text: string | null;
@@ -131,27 +131,82 @@ async function direct(c: Exclude<Choice, { kind: "gateway" }>, system: string, p
   }
 }
 
+/**
+ * A persona on the gateway, ready to think. Each think opens its own session: the prompt already carries the desk's
+ * memory (its last thoughts and its journal), so a shared session that kept every past prompt in the model's
+ * context only made every think longer and dearer. OBS_GATEWAY_SESSION=shared keeps the old one session.
+ */
+function gatewayModel(gw: GatewayClient, agentId: string, name: string, env: Env = process.env): Model {
+  return {
+    kind: "gateway",
+    name,
+    async think(prompt) {
+      const sessionId = (env.OBS_GATEWAY_SESSION ?? "fresh") === "shared" ? "desk-cycle" : `desk-${Date.now()}`;
+      await gw.agent(agentId).openSession({ sessionId, source: { kind: "api", interactive: true, type: "direct" } }).catch(() => {});
+      try {
+        const r = await gw.agent(agentId).postMessageSync(sessionId, { text: prompt }, { timeout: TIMEOUT_MS });
+        return { text: r.text ?? null, ...(r.error ? { error: r.error } : {}) };
+      } catch (e) {
+        return { text: null, error: reasonOf(e) };
+      }
+    },
+  };
+}
+
+/** PURE: the persona a fast tick thinks through, on a cheaper model, or null when the operator switched it off. */
+export function tickChoice(env: Env = process.env): { agentId: string; model: string } | null {
+  const model = (env.OBS_TICK_MODEL ?? "deepseek/deepseek-v4-flash-0731").trim();
+  if (!model || model.toLowerCase() === "off") return null;
+  return { agentId: env.OBS_TICK_AGENT_ID || `${AGENT_ID}-fast`, model };
+}
+
+const TICK_MARKER = "obs-tick-persona.json";
+
+/**
+ * The fast persona on the gateway: the same identity, rules, soul and knowledge as the desk's, on the cheaper model,
+ * created if missing and refreshed when a file or the model changed (a marker in the data dir says what was last
+ * written, since every tick is its own process).
+ */
+export async function ensureTickPersona(gw: GatewayClient, choice: { agentId: string; model: string }, root = ROOT_DIR, env: Env = process.env): Promise<void> {
+  const files: Array<[string, string]> = [];
+  for (const key of ["identity", "rules", "soul", "knowledge"]) {
+    const f = join(root, "personality", "obs", `${key}.md`);
+    if (!existsSync(f)) continue;
+    const text = readFileSync(f, "utf8").replace(/^#\s+\w+\s*\n/, "").trim();
+    if (text && !text.includes("\u2014")) files.push([key, text]);
+  }
+  const stamp = JSON.stringify({ agentId: choice.agentId, model: choice.model, sizes: files.map(([k, t]) => [k, t.length]) });
+  const marker = dataPath(TICK_MARKER);
+  try { if (existsSync(marker) && readFileSync(marker, "utf8") === stamp) return; } catch { /* rewrite below */ }
+  const existing = new Set((await gw.listAgents()).map((a) => a.agentId));
+  if (!existing.has(choice.agentId)) await gw.createAgent({ agentId: choice.agentId, name: "OBS (fast tick)", sandbox: null, ownerUserId: env.OBS_OWNER_USER_ID || undefined });
+  const current = (await gw.getAgentConfig(choice.agentId)) as Record<string, unknown>;
+  const curModel = (current.model ?? {}) as Record<string, unknown>;
+  await gw.putAgentConfig(choice.agentId, { ...current, workspace_root: typeof current.workspace_root === "string" ? current.workspace_root : `/agents/${choice.agentId}`, model: { ...curModel, provider: env.OBS_USER_MODEL_PROVIDER || "openrouter", model: choice.model, max_tokens: MAX_TOKENS } });
+  for (const [key, text] of files) await gw.setInstruction(choice.agentId, key, text);
+  writeFileSync(marker, stamp);
+}
+
+/** The model a fast entry tick thinks through, when the gateway is the desk's model and a tick model is set; else null and the tick keeps the main persona. */
+export async function tickModelFromEnv(env: Env = process.env): Promise<Model | null> {
+  const c = modelChoice(env);
+  const t = tickChoice(env);
+  if (!c || c.kind !== "gateway" || !t) return null;
+  const gw = new GatewayClient({ baseUrl: c.baseUrl, token: c.token });
+  try {
+    await ensureTickPersona(gw, t, ROOT_DIR, env);
+  } catch (e) {
+    console.error(`[desk] the fast persona is not ready (${reasonOf(e)}); thinking through ${AGENT_ID}`);
+    return null;
+  }
+  return gatewayModel(gw, t.agentId, `the gateway, persona ${t.agentId} on ${t.model}`, env);
+}
+
 /** The model the environment names, ready to think, or null with the reason in noModelWhy(). */
 export function modelFromEnv(env: Env = process.env, fetchFn: Fetch = fetch, persona: () => string = () => personaText()): Model | null {
   const c = modelChoice(env);
   if (!c) return null;
-  if (c.kind === "gateway") {
-    const gw = new GatewayClient({ baseUrl: c.baseUrl, token: c.token });
-    return {
-      kind: "gateway",
-      name: `the gateway, persona ${AGENT_ID}`,
-      async think(prompt) {
-        const sessionId = "desk-cycle";
-        await gw.agent(AGENT_ID).openSession({ sessionId, source: { kind: "api", interactive: true, type: "direct" } }).catch(() => {});
-        try {
-          const r = await gw.agent(AGENT_ID).postMessageSync(sessionId, { text: prompt }, { timeout: TIMEOUT_MS });
-          return { text: r.text ?? null, ...(r.error ? { error: r.error } : {}) };
-        } catch (e) {
-          return { text: null, error: reasonOf(e) };
-        }
-      },
-    };
-  }
+  if (c.kind === "gateway") return gatewayModel(new GatewayClient({ baseUrl: c.baseUrl, token: c.token }), AGENT_ID, `the gateway, persona ${AGENT_ID}`, env);
   const system = persona();
   return { kind: c.kind, name: `${c.kind === "anthropic" ? "Anthropic" : c.url} ${c.model}`, think: (prompt) => direct(c, system, prompt, fetchFn) };
 }

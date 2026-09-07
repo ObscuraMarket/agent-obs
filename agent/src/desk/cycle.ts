@@ -5,7 +5,7 @@
 // through Obscura from the desk's own wallet; otherwise it is recorded as a
 // proposal. Meant to run on a timer (launchd, see scripts/). DRY_RUN=1 runs
 // the model call and writes nothing, and never executes.
-import { modelFromEnv, noModelWhy } from "./model.ts";
+import { modelFromEnv, noModelWhy, tickModelFromEnv } from "./model.ts";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { AGENT_ID, DRY, dataPath } from "../config.ts";
 import { liveReads, assetPrices, walletBalances } from "../obscura/reads.ts";
@@ -27,7 +27,7 @@ import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry
 import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, contractsAmong, explorerHolders, holderReadFromList, withoutWalletCount, type HolderRead } from "./holders.ts";
 import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
 import { readLaunch, launchLine, launchRulesFromEnv, launchRulesForRecord, type LaunchRead } from "./launch.ts";
-import { autoEntryPick, autoEntryFor } from "./autoentry.ts";
+import { autoEntryPick, autoEntryFor, entryVeto } from "./autoentry.ts";
 import { recordResearch } from "./research.ts";
 import { digestThought, shortWhy } from "./digest.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry, readEntries, recordClose, reconcileCloses, ethUsdAt } from "./trade-memory.ts";
@@ -78,7 +78,7 @@ const VENUE: "pool" | "obscura" = (process.env.OBS_VENUE ?? "pool").toLowerCase(
 const BASIS_ON = (process.env.OBS_BASIS ?? "off") === "on";
 
 // The model: the gateway, an Anthropic key, or an OpenAI-shape endpoint, whichever the environment names.
-const model = modelFromEnv();
+let model = modelFromEnv();
 if (!model) {
   console.error(`[desk] no model configured: ${noModelWhy()}`);
   process.exit(1);
@@ -98,6 +98,8 @@ if (!DRY) {
 // What the rails sold at the top of this cycle: the wallet read below is cached and may still show it, and a token
 // sold seconds ago must not be described as held in the same breath.
 const soldThisCycle = new Set<string>();
+/** The launch tokens held right now, from the chain read the exits used; a fast tick asks the rails with it before it thinks. */
+let heldNow: string[] = [];
 if (ARMED && readTokens().length) {
   const readsForExit = await liveReads();
   const chainForExit = readsForExit.wallet ? walletBalances(readsForExit.wallet) : null;
@@ -105,6 +107,7 @@ if (ARMED && readTokens().length) {
     const bookForExit = readBook();
     const boughtForExit = boughtSymbols(bookForExit.trades);
     const heldNames = Object.values(dynamicAssets()).filter((a) => boughtForExit.has(a.symbol) && isHolding(chainForExit.bySymbol[a.symbol])).map((a) => a.symbol);
+    heldNow = heldNames;
     if (heldNames.length) {
       const exitPrices = await assetPrices([...heldNames, "ETH"], {});
       const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0 }, undefined, now);
@@ -120,6 +123,8 @@ if (ARMED && readTokens().length) {
 // base, never the top of a run). Otherwise it leaves quietly, saying which
 // launches it skipped and why. Forced exits above ran regardless. The
 // 30-minute desk cycle is unchanged and still reads everything.
+/** True on a fast tick that is about to think because a token gave an entry: the reads made the call, the write-up may be cheap. */
+let fastEntryTick = false;
 if (process.env.OBS_TICK === "fast" && !DRY) {
   if (process.env.OBS_LIVE_TRIGGER) console.log(`[desk] live trigger: ${process.env.OBS_LIVE_TRIGGER}`);
   const feedNow = readFeed(now);
@@ -157,6 +162,17 @@ if (process.env.OBS_TICK === "fast" && !DRY) {
     }
   }
   const holding = readTokens().length > 0;
+  // The rails first: an entry the rails would refuse is not worth a think. The tick leaves, or carries on as a held review.
+  if (probeable) {
+    const r0 = railsFromEnv();
+    const bookNow = readBook();
+    const veto = entryVeto({ symbol: probeable, held: heldNow, maxCandidates: r0.maxCandidates, lastEntryAt: lastEntryAt(bookNow.trades), minHoursBetweenEntries: r0.minHoursBetweenEntries, openOrders: latestTrades(bookNow.trades).filter((t) => t.status === "pending").length, maxOpenOrders: r0.maxOpenOrders, now });
+    if (veto) {
+      console.log(`[desk] fast tick: ${probeable} has an entry, but the rails would refuse it (${veto}); no model call`);
+      probeable = null;
+      if (!holding) process.exit(0);
+    }
+  }
   if (!probeable && !holding) {
     console.log(`[desk] fast tick: nothing in play${skipped.length ? ` (${skipped.join(", ")}: no entry on the tape)` : ""}, no model call`);
     process.exit(0);
@@ -165,13 +181,20 @@ if (process.env.OBS_TICK === "fast" && !DRY) {
   // writes a review of a position every OBS_HELD_THINK_MIN minutes, not every look; a tape that breaks still thinks at once.
   const trigger = process.env.OBS_LIVE_TRIGGER ?? "";
   const plainReview = trigger === "" || /^held /.test(trigger);
-  const heldThinkMin = Number(process.env.OBS_HELD_THINK_MIN ?? 10);
+  const heldThinkMin = Number(process.env.OBS_HELD_THINK_MIN ?? 15);
   const lastWrite = readThoughts(1)[0];
   if (!probeable && holding && plainReview && lastWrite && (now - lastWrite.at) / 60000 < heldThinkMin) {
     console.log(`[desk] fast tick: held review, the exits were checked; the last write-up was ${((now - lastWrite.at) / 60000).toFixed(0)}m ago and the next comes at ${heldThinkMin}m, no model call`);
     process.exit(0);
   }
   console.log(`[desk] fast tick: ${probeable ? `${probeable} has an entry (${entryWhy})` : "a launch token is held"}, thinking`);
+  fastEntryTick = !!probeable;
+}
+// An entry tick thinks through the fast persona when one is configured: the reads made the call, the write-up is
+// cheap. A held review, an exit and the 30-minute cycle keep the strong one.
+if (fastEntryTick) {
+  const tick = await tickModelFromEnv();
+  if (tick) { model = tick; console.log(`[desk] thinking through ${tick.name}`); }
 }
 
 // Cadence floor, before any model call.

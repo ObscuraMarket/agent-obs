@@ -24,6 +24,31 @@ export interface AutoEntry {
   line: string;
 }
 
+/** What a fast tick knows before it spends a think: what is held, when the last entry went, what is open. */
+export interface VetoInput {
+  symbol: string;
+  held: string[];
+  maxCandidates: number;
+  lastEntryAt: number | null;
+  minHoursBetweenEntries: number;
+  openOrders: number;
+  maxOpenOrders: number;
+  now: number;
+}
+
+/**
+ * PURE: why the rails would refuse a new entry in this token right now, or null. A fast tick that has an entry on
+ * the tape asks this before it thinks: a think the rails would veto anyway is a model call for nothing. Adding to
+ * a token already held is a continuation the rails may allow, so it is never vetoed here.
+ */
+export function entryVeto(i: VetoInput): string | null {
+  if (i.held.includes(i.symbol)) return null;
+  if (i.held.length >= i.maxCandidates) return `already holding ${i.held.join(", ")}; ${i.maxCandidates} launch position${i.maxCandidates === 1 ? "" : "s"} at a time`;
+  if (i.lastEntryAt != null && i.now - i.lastEntryAt < i.minHoursBetweenEntries * 3600e3) return `the last entry was ${((i.now - i.lastEntryAt) / 60e3).toFixed(0)} min ago; entries are at least ${i.minHoursBetweenEntries}h apart`;
+  if (i.openOrders >= i.maxOpenOrders) return `${i.openOrders} order(s) already open; the limit is ${i.maxOpenOrders}`;
+  return null;
+}
+
 /** PURE: the first graded, unheld candidate that passed every read, in board order; null when none did. */
 export function autoEntryPick(reads: AutoEntryReads[]): AutoEntryReads | null {
   return reads.find((r) => r.grade && !r.held && r.entryOk && r.holdersOk && r.launchOk !== false) ?? null;
