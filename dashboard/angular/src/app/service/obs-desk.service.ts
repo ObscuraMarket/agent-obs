@@ -440,6 +440,11 @@ export class ObsDeskService {
 
   constructor(private http: HttpClient) { probeObsApiUrl(); }
 
+  /** `/api/obs/console/door?address=`: whether this wallet may use the console, the same door sign-in uses. The site's header lights the Console link with it. */
+  door(address: string): Observable<{ ok: boolean; open: boolean; mode?: string; reason?: string }> {
+    return this.http.get<{ ok: boolean; open: boolean; mode?: string; reason?: string }>(`${this.base}/api/obs/console/door`, { params: { address } });
+  }
+
   status(): Observable<ObsStatus> {
     return this.http.get<ObsStatus>(`${this.base}/api/obs/status`);
   }

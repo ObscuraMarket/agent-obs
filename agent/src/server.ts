@@ -740,6 +740,17 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     json(res, 200, statusPayload(now));
     return;
   }
+  if (path === "/api/obs/console/door") {
+    // Whether a wallet may use the console: the same door sign-in uses, so the site's header can light the link for
+    // an invited wallet and keep it greyed for everyone else. A read, cached like the gate itself.
+    res.setHeader("Cache-Control", "no-store");
+    const address = url.searchParams.get("address") ?? "";
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) { json(res, 200, { ok: true, open: false, mode: gateMode() }); return; }
+    holderGate(address, now)
+      .then((g) => json(res, 200, { ok: true, open: g.ok, mode: gateMode(), ...(g.ok ? {} : { reason: g.reason }) }))
+      .catch(() => json(res, 200, { ok: true, open: false, mode: gateMode() }));
+    return;
+  }
   if (path === "/api/obs/stream") {
     const limit = Number(url.searchParams.get("limit") ?? 12);
     stream(req, res, Number.isFinite(limit) && limit > 0 ? Math.min(limit, 50) : 12);

@@ -121,13 +121,37 @@ p = sys.argv[1]; s = open(p).read()
 s = re.sub(r'\n[ \t]*<li><a routerLink="/referral"[^>]*>.*?</a></li>', "", s, count=1, flags=re.S)
 s = re.sub(r'\n[ \t]*<a routerLink="/referral"[^>]*>.*?</a>', "", s, count=1, flags=re.S)
 s = s.replace("\n      <!-- Referral routes to the live waitlist page. -->", "", 1)
-# Console first, greyed out: the site's own Soon treatment without is-live is dimmed and takes no click.
-# Idempotent: every Console item already there (a relay before this one, or two of them) is stripped first, so the
-# header carries exactly one whatever main holds when the relay runs.
+# Console first. It follows the connected wallet: a live link when the desk's door lets that wallet in (the header's
+# consoleOpen, from /api/obs/console/door), and otherwise the site's own Soon treatment, dimmed and taking no click.
+# Idempotent: every Console item already there (a relay before this one, in either shape, or two of them) is
+# stripped first, so the header carries exactly one whatever main holds when the relay runs.
+s = re.sub(r'\n[ \t]*<ng-template #mobileConsoleSoon>.*?</ng-template>', "", s, flags=re.S)
+s = re.sub(r'\n[ \t]*<ng-template #consoleSoon>.*?</ng-template>', "", s, flags=re.S)
+s = re.sub(r'\n[ \t]*<li \*ngIf="consoleOpen; else mobileConsoleSoon">.*?</li>', "", s, flags=re.S)
 s = re.sub(r'\n[ \t]*<li><a [^>]*data-testid="mobile-console"[^>]*>.*?</a></li>', "", s, flags=re.S)
 s = re.sub(r'\n[ \t]*<a [^>]*data-testid="nav-console"[^>]*>.*?</a>', "", s, flags=re.S)
-s = s.replace('      <a routerLink="/app" class="nav-link"', '      <a class="nav-link coming-soon" data-testid="nav-console" aria-disabled="true" title="The OBS console opens soon">\n        <span class="soon-tag">Soon</span>\n        Console\n      </a>\n      <a routerLink="/app" class="nav-link"', 1)
-s = s.replace('          <li><a routerLink="/app" class="nav-menu-link"', '          <li><a class="nav-menu-link coming-soon-mobile" data-testid="mobile-console" aria-disabled="true">\n            <span class="soon-tag-mobile">Soon</span>\n            Console\n          </a></li>\n          <li><a routerLink="/app" class="nav-menu-link"', 1)
+desktop = ('      <a *ngIf="consoleOpen; else consoleSoon" routerLink="/console" class="nav-link" data-testid="nav-console" [class.active]="activeLink === \'console\'" (click)="setActiveLink(\'console\')">Console</a>\n'
+           '      <ng-template #consoleSoon><a class="nav-link coming-soon" data-testid="nav-console" aria-disabled="true" title="The OBS console is open to invited wallets; connect one to use it">\n'
+           '        <span class="soon-tag">Soon</span>\n        Console\n      </a></ng-template>\n')
+mobile = ('          <li *ngIf="consoleOpen; else mobileConsoleSoon"><a routerLink="/console" class="nav-menu-link" data-testid="mobile-console" (click)="setActiveLink(\'console\'); toggleMenu()">Console</a></li>\n'
+          '          <ng-template #mobileConsoleSoon><li><a class="nav-menu-link coming-soon-mobile" data-testid="mobile-console" aria-disabled="true">\n'
+          '            <span class="soon-tag-mobile">Soon</span>\n            Console\n          </a></li></ng-template>\n')
+s = s.replace('      <a routerLink="/app" class="nav-link"', desktop + '      <a routerLink="/app" class="nav-link"', 1)
+s = s.replace('          <li><a routerLink="/app" class="nav-menu-link"', mobile + '          <li><a routerLink="/app" class="nav-menu-link"', 1)
+open(p, "w").write(s)
+PY
+fi
+# The header asks the desk's door about the connected wallet, once per connection, and lights the link on yes.
+if [ -f "$HEADER_TS" ] && ! grep -q "consoleOpen" "$HEADER_TS" && [ "$CONSOLE_LIVE" != "yes" ]; then
+  python3 - "$HEADER_TS" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+s = s.replace("import { LanguageService } from 'src/app/service/language.service';", "import { LanguageService } from 'src/app/service/language.service';\nimport { WalletService } from 'src/app/service/wallet.service';\nimport { ObsDeskService } from 'src/app/service/obs-desk.service';\nimport { Subscription } from 'rxjs';", 1)
+s = s.replace("  activeLink = 'trade';", "  activeLink = 'trade';\n  /** The OBS console is for invited wallets: the link goes live when the connected wallet is one, greyed otherwise. */\n  consoleOpen = false;\n  private consoleSub?: Subscription;", 1)
+s = s.replace("    private router: Router\n  ) {", "    private router: Router,\n    private wallet: WalletService,\n    private obs: ObsDeskService\n  ) {", 1)
+s = s.replace("    this.syncActiveLink(this.router.url);\n", "    this.syncActiveLink(this.router.url);\n    // The console link follows the connected wallet: live when the desk's door lets it in, greyed otherwise.\n    this.consoleSub = this.wallet.address$.subscribe((address) => {\n      if (!address) { this.consoleOpen = false; this.cdRef.markForCheck(); return; }\n      this.obs.door(address).subscribe({ next: (d) => { this.consoleOpen = !!d?.open; this.cdRef.markForCheck(); }, error: () => { this.consoleOpen = false; this.cdRef.markForCheck(); } });\n    });\n", 1)
+s = s.replace("['trade', 'rewards', 'referral', 'cards', 'yield', 'agent', 'docs', 'roadmap']", "['trade', 'rewards', 'referral', 'cards', 'yield', 'agent', 'docs', 'roadmap', 'console']", 1)
+s = s.replace("  setActiveLink(link: string) {", "  ngOnDestroy(): void {\n    this.consoleSub?.unsubscribe();\n  }\n\n  setActiveLink(link: string) {", 1)
 open(p, "w").write(s)
 PY
 fi

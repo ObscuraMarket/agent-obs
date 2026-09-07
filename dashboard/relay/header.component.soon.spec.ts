@@ -1,23 +1,31 @@
+import { CommonModule } from '@angular/common';
 import { NO_ERRORS_SCHEMA } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { FormsModule } from '@angular/forms';
 import { RouterTestingModule } from '@angular/router/testing';
 import { TranslateModule } from '@ngx-translate/core';
+import { BehaviorSubject, of } from 'rxjs';
 
 import { HeaderComponent } from './header.component';
 import { LanguageService } from '../../service/language.service';
+import { WalletService } from '../../service/wallet.service';
+import { ObsDeskService } from '../../service/obs-desk.service';
 
 // Relayed from ObscuraMarket/agent-obs with the header change it describes: the referral section is gone, and the
-// OBS console has its place first in the header, greyed out with the site's own Soon treatment until it opens.
-// Trade, Rewards, Cards, Yield, Agent, Docs and Roadmap keep their links.
+// OBS console has its place first in the header. The link follows the connected wallet: live when the desk's door
+// lets that wallet in, greyed out with the site's own Soon treatment otherwise. Trade, Rewards, Cards, Yield,
+// Agent, Docs and Roadmap keep their links.
 describe('HeaderComponent', () => {
   let component: HeaderComponent;
   let fixture: ComponentFixture<HeaderComponent>;
+  const address$ = new BehaviorSubject<string | null>(null);
+  const invited = new Set<string>(['0x1111111111111111111111111111111111111111']);
 
   beforeEach(() => {
+    address$.next(null);
     TestBed.configureTestingModule({
       declarations: [HeaderComponent],
-      imports: [FormsModule, RouterTestingModule, TranslateModule.forRoot()],
+      imports: [CommonModule, FormsModule, RouterTestingModule, TranslateModule.forRoot()],
       providers: [
         {
           provide: LanguageService,
@@ -25,7 +33,9 @@ describe('HeaderComponent', () => {
             initializeLanguage: () => undefined,
             changeLanguage: () => undefined
           }
-        }
+        },
+        { provide: WalletService, useValue: { address$, get address() { return address$.value; } } },
+        { provide: ObsDeskService, useValue: { door: (a: string) => of({ ok: true, open: invited.has(a.toLowerCase()) }) } }
       ],
       schemas: [NO_ERRORS_SCHEMA]
     });
@@ -47,7 +57,7 @@ describe('HeaderComponent', () => {
     expect(texts.join(' ')).not.toContain('Referral');
   });
 
-  it('greys the Console item out on desktop and mobile: no destination, a Soon badge, the coming-soon treatment', () => {
+  it('greys the Console item out with no wallet connected: no destination, a Soon badge, the coming-soon treatment', () => {
     const desktop = root().querySelector('[data-testid="nav-console"]');
     const mobile = root().querySelector('[data-testid="mobile-console"]');
 
@@ -56,9 +66,29 @@ describe('HeaderComponent', () => {
     expect(desktop?.classList).toContain('coming-soon');
     expect(desktop?.classList).not.toContain('is-live');
     expect(mobile?.classList).toContain('coming-soon-mobile');
-    expect(mobile?.classList).not.toContain('is-live');
     expect(desktop?.querySelector('.soon-tag')?.textContent?.trim()).toBe('Soon');
     expect(mobile?.querySelector('.soon-tag-mobile')?.textContent?.trim()).toBe('Soon');
+  });
+
+  it('lights the Console link for a connected wallet the desk lets in, and greys it again when that wallet leaves', () => {
+    address$.next('0x1111111111111111111111111111111111111111');
+    fixture.detectChanges();
+    expect(component.consoleOpen).toBeTrue();
+    expect(root().querySelector('[data-testid="nav-console"]')?.getAttribute('href')).toBe('/console');
+    expect(root().querySelector('[data-testid="mobile-console"]')?.getAttribute('href')).toBe('/console');
+    expect(root().querySelectorAll('.soon-tag, .soon-tag-mobile').length).toBe(2, 'only Yield keeps its badge');
+
+    address$.next(null);
+    fixture.detectChanges();
+    expect(component.consoleOpen).toBeFalse();
+    expect(root().querySelector('[data-testid="nav-console"]')?.getAttribute('href')).toBeNull();
+  });
+
+  it('keeps the Console item greyed for a connected wallet the desk does not let in', () => {
+    address$.next('0x2222222222222222222222222222222222222222');
+    fixture.detectChanges();
+    expect(component.consoleOpen).toBeFalse();
+    expect(root().querySelector('[data-testid="nav-console"]')?.classList).toContain('coming-soon');
   });
 
   it('routes desktop and mobile Trade actions to the application', () => {
@@ -77,13 +107,6 @@ describe('HeaderComponent', () => {
     expect(mobile?.getAttribute('href')).toBe('/yield');
     expect(desktop?.classList).toContain('is-live');
     expect(mobile?.classList).toContain('is-live');
-  });
-
-  it('makes Console the only Soon item without a destination', () => {
-    const dead = Array.from(root().querySelectorAll('.nav-link.coming-soon:not(.is-live)') as NodeListOf<HTMLElement>);
-
-    expect(dead.length).toBe(1);
-    expect(dead[0].getAttribute('data-testid')).toBe('nav-console');
   });
 
   function root(): HTMLElement { return fixture.nativeElement as HTMLElement; }
