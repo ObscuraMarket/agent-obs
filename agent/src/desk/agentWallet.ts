@@ -131,7 +131,8 @@ export async function verifyFunding(hash: string, address: string, now = Date.no
   const wallet = agentWalletAddress(address);
   const eth = ASSETS["ETH@robinhood"];
   const pub = createPublicClient({ chain: viemChain(eth), transport: transport(eth) });
-  const receipt = await pub.getTransactionReceipt({ hash: hash as Hex });
+  let receipt: Awaited<ReturnType<typeof pub.getTransactionReceipt>>;
+  try { receipt = await pub.getTransactionReceipt({ hash: hash as Hex }); } catch { return { ok: false, reason: "that transaction is not on Robinhood Chain yet; give it a moment and try /wallet again" }; }
   if (receipt.status !== "success") return { ok: false, reason: "that transaction did not succeed" };
   const tx = await pub.getTransaction({ hash: hash as Hex });
   const j = judgeFunding({ from: tx.from, to: tx.to ?? null, value: tx.value }, address, wallet);
