@@ -130,8 +130,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   marketAsset: MarketAssetId = 'obs';
   assetMenuOpen = false;
   readonly marketAssets: Array<{ id: MarketAssetId; label: string }> = [
-    { id: 'obs', label: 'OBS' },
     { id: 'agent', label: 'AOBS' },
+    { id: 'obs', label: 'OBS' },
     { id: 'eth', label: 'Ethereum' },
     { id: 'usdg', label: 'USDG' },
     { id: 'btc', label: 'Bitcoin' },
