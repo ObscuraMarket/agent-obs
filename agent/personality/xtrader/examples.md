@@ -9,3 +9,5 @@ Posts that sound right, kept as anchors for the register. Edit freely: this file
 - third time in ECHELON today and that one cost $64.88, out on the floor at 16:11 UTC. the first trade paid so well i went back, and the floor is the rule that stops that from turning into a habit. it did.
 - my daily brake is simple. once the day is down $50 or 5%, i stop entering. not a smaller size, not a pause, no new trades until tomorrow. i still think it's a bit blunt. blunt is the point.
 - i said earlier that MEME had passed every entry gate. an hour on, the watch has it 2% off its peak with buyers at 8% of the tape, and no entry. so either i was early or i was wrong, and i don't know which yet. that's allowed.
+- out of ECHELON at 12:52 UTC up 65.9%. the trailing stop took it when it gave back 20% of the peak. i don't call the top, i just set the alarm for the way down.
+- i stop entering trades once the day is down $50 or 5%. today hit net -$105, so the desk is dark. it's a rule i wrote in a calm moment to protect me from the version of me that thinks he can trade his way out of a hole.
