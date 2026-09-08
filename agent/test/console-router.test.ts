@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { routeConsole, suggest, HELP_ALL, TOUR, VOCAB, VIEWS } from "../src/cli/router.ts";
 import { sanitizeSettings, sanitizeName, getSettings, describeSettings } from "../src/desk/userSettings.ts";
 import { statusLines, positionsLines, thoughtsLines, swapsLines, agentsLines } from "../src/desk/deskConsole.ts";
-import { personaFor, agentIdForWallet, deEmDash, isMissingSession, DENIED_TOOLS, standingLine } from "../src/desk/userAgents.ts";
+import { personaFor, agentIdForWallet, deEmDash, isMissingSession, DENIED_TOOLS, standingLine, isEnsured, ensureUserAgent } from "../src/desk/userAgents.ts";
+import type { GatewayClient } from "@openhermit/sdk";
 
 test("a person's agent is denied the gateway's shell, files, web, self-editing and admin tools, and keeps its memory", () => {
   for (const t of ["exec", "file_write", "web_search", "web_fetch", "instruction_update", "session_send", "schedule_create", "user_role_set"]) assert.ok(DENIED_TOOLS.includes(t), t);
@@ -194,4 +195,61 @@ test("the personal agent's instruction carries the rules that are policy, and ne
   assert.equal(deEmDash("a — b -- c"), "a, b, c");
   assert.ok(isMissingSession(new Error("Stream request failed (404): Session not found: chat-0x1")));
   assert.ok(!isMissingSession(new Error("HTTP 500")));
+});
+
+test("an agent is ensured only by a run that wrote its persona and denied every tool, and only within the throttle window", () => {
+  const at = Date.UTC(2026, 8, 8, 12, 0);
+  const full = { at, persona: true, denied: DENIED_TOOLS };
+  assert.equal(isEnsured(full, at), true);
+  assert.equal(isEnsured(full, at + 5 * 60 * 1000 - 1), true, "fresh inside five minutes");
+  assert.equal(isEnsured(full, at + 5 * 60 * 1000), false, "stale at five minutes: run again");
+  assert.equal(isEnsured(undefined, at), false, "never run");
+  assert.equal(isEnsured({ ...full, persona: false }, at), false, "no persona on the agent");
+  assert.equal(isEnsured({ ...full, denied: DENIED_TOOLS.slice(0, 3) }, at), false, "stopped partway through the policy writes: not ensured (2026-09-08)");
+  assert.equal(isEnsured({ ...full, denied: DENIED_TOOLS.filter((t) => t !== "exec") }, at), false, "one tool short is a shell left reachable");
+  assert.equal(isEnsured({ ...full, denied: [...DENIED_TOOLS].reverse().concat("memory_write") }, at), true, "order and extras do not matter");
+  assert.equal(isEnsured({ ...full, denied: ["exec"] }, at, ["exec"]), true, "judged against the list it is given");
+  assert.equal(isEnsured(full, at + 1000, DENIED_TOOLS, 1000), false, "and the window it is given");
+});
+
+test("a policy write that fails is named in the log, never leaves the agent marked ensured, and is written again on the next ensure", async () => {
+  const address = "0x000000000000000000000000000000000000e05e";
+  const agentId = agentIdForWallet(address);
+  const calls: string[] = [];
+  let failAt: string | null = "web_fetch";
+  const gw = {
+    listAgents: async () => { calls.push("list"); return [{ agentId }]; },
+    createAgent: async () => { throw new Error("the fake gateway already has the agent"); },
+    getAgentConfig: async () => ({}),
+    putAgentConfig: async () => { calls.push("config"); },
+    setInstruction: async () => { calls.push("persona"); },
+    upsertPolicy: async (_id: string, p: { resourceKey: string }) => {
+      calls.push(`deny:${p.resourceKey}`);
+      if (p.resourceKey === failAt) throw new Error("gateway blip (502)");
+    },
+  } as unknown as GatewayClient;
+  const logged: string[] = [];
+  const error = console.error;
+  console.error = (...a: unknown[]) => { logged.push(a.map(String).join(" ")); };
+  try {
+    const first = await ensureUserAgent(address, gw);
+    assert.deepEqual(first, { agentId, ready: false, created: false, reason: "tool_policy_incomplete" });
+    const upTo = DENIED_TOOLS.slice(0, DENIED_TOOLS.indexOf("web_fetch") + 1);
+    assert.deepEqual(calls.filter((c) => c.startsWith("deny:")), upTo.map((t) => `deny:${t}`), "stops at the write that failed");
+    assert.ok(calls.includes("persona"), "the persona went on first");
+    assert.ok(logged.some((l) => l.includes(agentId) && l.includes("stopped at web_fetch") && l.includes("gateway blip")), logged.join("\n"));
+    calls.length = 0;
+    failAt = null;
+    const second = await ensureUserAgent(address, gw);
+    assert.deepEqual(second, { agentId, ready: true, created: false });
+    assert.ok(calls.includes("list"), "the partial run was not trusted: the agent is looked at again");
+    assert.deepEqual(calls.filter((c) => c.startsWith("deny:")), DENIED_TOOLS.map((t) => `deny:${t}`), "the whole list is written again, from the top");
+    assert.ok(!calls.includes("persona"), "an unchanged persona is not written twice");
+    calls.length = 0;
+    const third = await ensureUserAgent(address, gw);
+    assert.deepEqual(third, { agentId, ready: true, created: false });
+    assert.deepEqual(calls, [], "a full run is trusted for the throttle window");
+  } finally {
+    console.error = error;
+  }
 });

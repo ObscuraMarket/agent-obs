@@ -65,7 +65,8 @@ export function standingLine(st: Standing): string {
 const ENSURE_TTL_MS = 5 * 60 * 1000;
 const GATEWAY_TIMEOUT_MS = 120_000;
 const MAX_TOKENS = 1024;
-const ensuredAt = new Map<string, number>();
+/** The last ensure run per agent, as it went; whether it counts is isEnsured's call. */
+const lastRun = new Map<string, EnsureRun>();
 const openedSessions = new Set<string>();
 const personaWritten = new Map<string, string>();
 
@@ -166,13 +167,16 @@ export interface EnsureResult {
   reason?: string;
 }
 
-/** Idempotently provision and keep configured this wallet's agent. Throttled per wallet; safe on every sign-in. */
-export async function ensureUserAgent(address: string): Promise<EnsureResult> {
+/**
+ * Idempotently provision and keep configured this wallet's agent. Throttled per wallet; safe on every sign-in.
+ * Ready means the whole run landed: the persona is on the agent and every listed tool is denied. A run that
+ * stopped partway is reported as not ready and is not trusted for the throttle window, so the next call (the next
+ * message, the next sign-in) writes what is missing.
+ */
+export async function ensureUserAgent(address: string, gw: GatewayClient | null = gateway()): Promise<EnsureResult> {
   const agentId = agentIdForWallet(address);
-  const gw = gateway();
   if (!gw) return { agentId, ready: false, created: false, reason: "gateway_unconfigured" };
-  const last = ensuredAt.get(agentId);
-  if (last && Date.now() - last < ENSURE_TTL_MS) return { agentId, ready: true, created: false };
+  if (isEnsured(lastRun.get(agentId), Date.now())) return { agentId, ready: true, created: false };
   const existing = new Set((await gw.listAgents()).map((a) => a.agentId));
   const created = !existing.has(agentId);
   if (created) {
@@ -181,9 +185,14 @@ export async function ensureUserAgent(address: string): Promise<EnsureResult> {
   }
   await applyModel(gw, agentId, address);
   await writePersona(gw, agentId, address);
-  await denyTools(gw, agentId).catch((e) => console.error(`[my-agent] tool policy for ${agentId} not applied: ${e instanceof Error ? e.message : String(e)}`));
-  ensuredAt.set(agentId, Date.now());
-  return { agentId, ready: true, created };
+  const denied = await denyTools(gw, agentId);
+  // The run is recorded as it went: the persona is on the agent (its write throws when it is not) and these are
+  // the tools the gateway took. Until 2026-09-08 the agent was marked ensured here whatever the policy writes did,
+  // so a gateway blip partway through them left exec and the file tools reachable for the five-minute window.
+  const run: EnsureRun = { at: Date.now(), persona: true, denied };
+  lastRun.set(agentId, run);
+  const ready = isEnsured(run, run.at);
+  return ready ? { agentId, ready, created } : { agentId, ready, created, reason: "tool_policy_incomplete" };
 }
 
 /** The model this wallet chose (or the default) and the output ceiling, set on the agent rather than inherited. Best effort: a gateway whose config shape differs keeps its default, and the agent still answers. */
@@ -231,12 +240,44 @@ export const DENIED_TOOLS = [
 ];
 const toolsDenied = new Set<string>();
 
-async function denyTools(gw: GatewayClient, agentId: string): Promise<void> {
-  if (toolsDenied.has(agentId)) return;
+/** What one ensure run did: when, whether the persona is on the agent, and the tools the gateway confirmed denied. */
+export interface EnsureRun {
+  at: number;
+  persona: boolean;
+  denied: readonly string[];
+}
+
+/**
+ * PURE: is this agent ensured. Only by a run that wrote the persona and denied every tool on the list, and only
+ * within the throttle window; no run, a run that stopped partway through the policy writes, or a stale one is not.
+ * On 2026-09-08 a run that stopped partway was remembered as done, and the agent kept its shell for five minutes.
+ */
+export function isEnsured(run: EnsureRun | undefined, now: number, deny: readonly string[] = DENIED_TOOLS, ttl: number = ENSURE_TTL_MS): boolean {
+  if (!run || !run.persona) return false;
+  if (now - run.at >= ttl) return false;
+  return deny.every((tool) => run.denied.includes(tool));
+}
+
+/**
+ * The policy writes, one tool at a time, returning the tools the gateway took. Remembered for the process only when
+ * the whole list is through; a write that fails stops the run, names the tool in the log, and forgets the agent
+ * so the next ensure writes the list again from the top (the upserts are idempotent).
+ */
+async function denyTools(gw: GatewayClient, agentId: string): Promise<readonly string[]> {
+  if (toolsDenied.has(agentId)) return DENIED_TOOLS;
+  const denied: string[] = [];
   for (const tool of DENIED_TOOLS) {
-    await gw.upsertPolicy(agentId, { resourceType: "tool", resourceKey: tool, effect: "deny", grants: [{ type: "any" }] });
+    try {
+      await gw.upsertPolicy(agentId, { resourceType: "tool", resourceKey: tool, effect: "deny", grants: [{ type: "any" }] });
+      denied.push(tool);
+    } catch (e) {
+      toolsDenied.delete(agentId);
+      console.error(`[my-agent] tool policy for ${agentId} stopped at ${tool} (${denied.length} of ${DENIED_TOOLS.length} denied; the rest on the next ensure): ${e instanceof Error ? e.message : String(e)}`);
+      return denied;
+    }
   }
   toolsDenied.add(agentId);
+  return DENIED_TOOLS;
 }
 
 async function writePersona(gw: GatewayClient, agentId: string, address: string): Promise<void> {
