@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { staleVerdict, cycleVerdict, dueNow, webhookRequest, alertRulesFromEnv, type AlertRow } from "../src/desk/alerts.ts";
+import { staleVerdict, cycleVerdict, dueNow, webhookRequest, alertRulesFromEnv, parseBackupFailure, backupVerdict, BACKUP_FAILED_FILE, type AlertRow } from "../src/desk/alerts.ts";
 
 const T0 = Date.UTC(2026, 8, 8, 1, 0);
 
@@ -22,6 +22,39 @@ test("one alert of a kind per cooldown; another kind is not held back", () => {
   assert.equal(dueNow("stale", rows, T0 + 25 * 60e3, 30), true);
   assert.equal(dueNow("exit", rows, T0, 30), true);
   assert.equal(dueNow("cycle", [], T0, 30), true);
+});
+
+test("a failed backup is raised once per cooldown while its marker stays, and the other kinds are not held back by it", () => {
+  const rows: AlertRow[] = [{ at: T0 - 10 * 60e3, kind: "backup", text: "refused" }];
+  assert.equal(dueNow("backup", rows, T0, 30), false, "the marker is still there ten minutes later; that is the same failure, not a new message");
+  assert.equal(dueNow("backup", rows, T0 + 30 * 60e3, 30), true);
+  assert.equal(dueNow("backup", [], T0, 30), true);
+  assert.equal(dueNow("stale", rows, T0, 30), true);
+});
+
+test("the backup marker is read as the script writes it, and anything else is no marker", () => {
+  assert.equal(BACKUP_FAILED_FILE, "obs-backup-failed.json");
+  const line = `{"at":${T0},"step":"push","error":"! [rejected] main -> main (fetch first) (the pull before it failed too: CONFLICT (content): obs-book.jsonl)"}\n`;
+  assert.deepEqual(parseBackupFailure(line), { at: T0, step: "push", error: "! [rejected] main -> main (fetch first) (the pull before it failed too: CONFLICT (content): obs-book.jsonl)" });
+  assert.deepEqual(parseBackupFailure('{"at":"2026-09-08T01:00:00.000Z","step":" copy ","error":""}'), { at: T0, step: "copy", error: "" }, "an ISO time is taken too, and the step is trimmed");
+  assert.deepEqual(parseBackupFailure('{"step":"commit","error":"nothing"}'), { at: 0, step: "commit", error: "nothing" }, "no time is zero, never a throw");
+  assert.equal(parseBackupFailure(null), null);
+  assert.equal(parseBackupFailure(""), null);
+  assert.equal(parseBackupFailure("{not json"), null);
+  assert.equal(parseBackupFailure('{"at":1,"error":"no step"}'), null, "a marker without a step says nothing a person can act on");
+  assert.equal(parseBackupFailure("[]"), null);
+});
+
+test("a failed backup is worded with its step, its age and what git said; a landed one is nothing", () => {
+  assert.equal(backupVerdict(null, T0), null);
+  assert.equal(
+    backupVerdict({ at: T0 - 7 * 60e3, step: "push", error: "! [rejected] main -> main (fetch first)" }, T0),
+    "the memory backup failed at its push step 7 min ago: ! [rejected] main -> main (fetch first); the ledgers are not leaving this machine until it is fixed (FORCE=1 bash scripts/_obs-backup.sh retries now)",
+  );
+  assert.match(backupVerdict({ at: 0, step: "commit", error: "" }, T0) ?? "", /^the memory backup failed at its commit step at an unknown time: no error text;/);
+  assert.match(backupVerdict({ at: T0 + 60e3, step: "push", error: "x" }, T0) ?? "", /push step 0 min ago/, "a clock ahead of the server is not a negative age");
+  const long = backupVerdict({ at: T0, step: "push", error: "e".repeat(500) }, T0) ?? "";
+  assert.ok(long.includes("e".repeat(300)) && !long.includes("e".repeat(301)), "git's error is cut to what a message can carry");
 });
 
 test("the webhook gets JSON for Discord and Slack and plain text for anything else", () => {

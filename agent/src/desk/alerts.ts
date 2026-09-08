@@ -1,15 +1,21 @@
-// The desk's own alarm. Three things a person must hear about the moment they happen, because each one was
+// The desk's own alarm. Four things a person must hear about the moment they happen, because each one was
 // found late once: the live watch going quiet (a hung loop is a silent hold), a cycle that could not think (the
-// model outage of 2026-09-07 reached only the log), and an exit the chain refused (a position the rails wanted
-// out of and could not sell). An alert is a ledger row, a line in the log, and a post to OBS_ALERT_WEBHOOK when
-// one is set: a Discord or Slack webhook, or an ntfy topic, by the URL's host. The same kind is raised once per
-// cooldown, so a long outage is one message, not one a minute. The health route carries the latest alerts, so an
-// outside uptime check can read "stale" off it without any of this.
+// model outage of 2026-09-07 reached only the log), an exit the chain refused (a position the rails wanted
+// out of and could not sell), and the memory backup failing (a refused push was silent and, once the memory
+// repo had diverged, permanent, 2026-09-08). An alert is a ledger row, a line in the log, and a post to
+// OBS_ALERT_WEBHOOK when one is set: a Discord or Slack webhook, or an ntfy topic, by the URL's host. The same
+// kind is raised once per cooldown, so a long outage is one message, not one a minute. The health route carries
+// the latest alerts, so an outside uptime check can read "stale" off it without any of this.
+import { existsSync, readFileSync } from "node:fs";
 import { appendLedger, readLedger } from "../ledger.ts";
-import { DRY } from "../config.ts";
+import { DRY, dataPath } from "../config.ts";
 
-export type AlertKind = "stale" | "cycle" | "exit";
+export type AlertKind = "stale" | "cycle" | "exit" | "backup";
 export interface AlertRow { at: number; kind: AlertKind; text: string }
+/** What scripts/_obs-backup.sh leaves behind while its last run failed: when, which step, and what git said. */
+export interface BackupFailure { at: number; step: string; error: string }
+/** The marker file, in the data directory; absent while the last backup landed. */
+export const BACKUP_FAILED_FILE = "obs-backup-failed.json";
 export interface AlertRules {
   /** Where an alert is posted; empty means the ledger and the log only. */
   webhook: string;
@@ -38,6 +44,33 @@ export function cycleVerdict(code: number | null, lastError: string | null): str
   if (code === 0) return null;
   const why = lastError ? lastError.replace(/^\[desk\]\s*/, "").slice(0, 200) : "no error line";
   return `a desk cycle failed (exit ${code ?? "?"}): ${why}`;
+}
+
+/** PURE: the backup's marker as a record, or null for no file, a broken one, or one without a step. A missing or unreadable "at" is 0, never a throw. */
+export function parseBackupFailure(raw: string | null | undefined): BackupFailure | null {
+  if (!raw || !raw.trim()) return null;
+  let v: unknown;
+  try { v = JSON.parse(raw); } catch { return null; }
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.step !== "string" || !o.step.trim()) return null;
+  const at = typeof o.at === "number" && Number.isFinite(o.at) ? o.at : typeof o.at === "string" ? Date.parse(o.at) : NaN;
+  return { at: Number.isFinite(at) ? at : 0, step: o.step.trim(), error: typeof o.error === "string" ? o.error.trim() : "" };
+}
+
+/** PURE: a failed backup as a reason, or null while the last one landed. Says the step, how long ago, and what git said. */
+export function backupVerdict(f: BackupFailure | null, now: number): string | null {
+  if (!f) return null;
+  const ago = f.at > 0 ? `${Math.max(0, Math.floor((now - f.at) / 60e3))} min ago` : "at an unknown time";
+  const why = f.error ? f.error.slice(0, 300) : "no error text";
+  return `the memory backup failed at its ${f.step} step ${ago}: ${why}; the ledgers are not leaving this machine until it is fixed (FORCE=1 bash scripts/_obs-backup.sh retries now)`;
+}
+
+/** The backup marker off the data directory; null when there is none. */
+export function readBackupFailure(): BackupFailure | null {
+  const p = dataPath(BACKUP_FAILED_FILE);
+  if (!existsSync(p)) return null;
+  try { return parseBackupFailure(readFileSync(p, "utf8")); } catch { return null; }
 }
 
 /** PURE: whether a kind may be raised now, given when it last was. */
