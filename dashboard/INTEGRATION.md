@@ -598,6 +598,19 @@ available yet.
   `GET|POST /api/obs/my-agent/settings` reads and sets `name`, `style`,
   `voice`, `goal`; `POST /api/obs/my-agent/stream` `{ text }` streams the
   reply as server-sent events (`delta`, `final`, `error`, `done`).
+- `GET /api/obs/my-agent/book` (bearer, since September 8): the wallet's own
+  agent in full, for the Agent page's "Your agent" card. `{ ok, name, on,
+  mode, sizeUsd, since, wallet, walletUrl, walletEth, ethUsd, positions,
+  realizedUsd, unrealizedUsd, equityUsd, trades, tradeCount, wins, losses,
+  at }`: the full wallet address (the owner is asking), the wallet's ETH
+  (read once per thirty seconds, null when the read failed), every position
+  with its cost and result, and the last twenty trades newest last (`kind`
+  entry or exit, `usd`, an exit's `pnlUsd`, `status`, `txUrl`). `equityUsd`
+  is the wallet's ETH in dollars plus the positions (a paper agent: the
+  positions alone), null when the wallet could not be read. Cached ten
+  seconds per wallet. A wallet whose door has closed still reads its own
+  book, as it keeps `/agent` and `/wallet` in the console; the other signed
+  routes answer 403 as before. Never another wallet's data.
 
 ## 2b. The skill, for other agents
 

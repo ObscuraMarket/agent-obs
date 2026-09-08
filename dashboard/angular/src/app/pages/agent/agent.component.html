@@ -334,6 +334,87 @@
     </div>
   </div>
 
+  <!-- Your agent: the wallet that signed in on the console, its own book from its own signed read; never anyone else's -->
+  <div class="card block mine">
+    <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Your agent</h2><span class="num">{{ mySummary }}</span></div>
+    <p class="none" *ngIf="myState === 'no-wallet'">Connect your wallet and sign in on the console to watch your own agent here.</p>
+    <p class="none" *ngIf="myState === 'no-session'"><a href="/console">Sign in on the console</a> to see your agent here.</p>
+    <p class="none" *ngIf="myState === 'loading'">{{ myBookErr ? 'Your agent\'s book did not answer; the next read tries again.' : 'Reading your agent\'s book.' }}</p>
+    <p class="none" *ngIf="myState === 'not-started'">Your agent has not started yet. <a href="/console">/start in the console</a> turns it on.</p>
+    <ng-container *ngIf="myState === 'book' && myBook as b">
+      <div class="mine-top">
+        <div class="mine-name">{{ b.name }}</div>
+        <div class="chips mine-chips">
+          <div class="chip" [class.on]="b.on"><i></i><span>{{ b.on ? 'On' : 'Off' }}</span></div>
+          <div class="chip" [class.on]="b.mode === 'live'"><i></i><span>{{ b.mode === 'live' ? 'Live' : 'Paper' }}</span></div>
+          <div class="chip"><span class="num">${{ b.sizeUsd }} a trade</span></div>
+        </div>
+      </div>
+      <div class="boxes mine-boxes">
+        <div class="box">
+          <div class="lbl">Wallet ETH</div>
+          <div class="val num" [class.mutedtx]="b.walletEth == null">{{ b.walletEth == null ? (b.wallet ? 'unread' : 'no wallet') : num(b.walletEth, 5) + ' ETH' }}</div>
+          <div class="sub num" *ngIf="b.walletEth != null && b.ethUsd != null">{{ usd(b.walletEth * b.ethUsd) }}</div>
+        </div>
+        <div class="box">
+          <div class="lbl">Equity</div>
+          <div class="val num" [class.mutedtx]="b.equityUsd == null">{{ b.equityUsd == null ? 'n/a' : usd(b.equityUsd) }}</div>
+          <div class="sub">{{ b.mode === 'paper' ? 'on paper' : 'wallet and positions' }}</div>
+        </div>
+        <div class="box">
+          <div class="lbl">Realized</div>
+          <div class="val num" [ngClass]="dir(b.realizedUsd)">{{ usd(b.realizedUsd, true) }}</div>
+          <div class="sub num">{{ b.wins }} won, {{ b.losses }} lost</div>
+        </div>
+        <div class="box">
+          <div class="lbl">Unrealized</div>
+          <div class="val num" [ngClass]="b.unrealizedUsd == null ? 'mutedtx' : dir(b.unrealizedUsd)">{{ b.unrealizedUsd == null ? (b.positions.length ? 'unpriced' : '$0.00') : usd(b.unrealizedUsd, true) }}</div>
+          <div class="sub num">{{ b.positions.length }} open</div>
+        </div>
+      </div>
+      <div class="mine-sub">Positions</div>
+      <p class="none" *ngIf="!b.positions.length">{{ b.on ? 'No open position right now. The desk\'s next entry is yours too.' : 'No open position. /start in the console turns your agent back on.' }}</p>
+      <div class="tbl-wrap" *ngIf="b.positions.length">
+        <table class="tbl mine-tbl">
+          <thead><tr><th>Asset</th><th class="r">Size</th><th class="r">Value</th><th class="r">Avg cost</th><th class="r">Unrealized</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let x of b.positions">
+              <td class="asset">{{ x.asset }}</td>
+              <td class="r num">{{ qty(x.qty) }}</td>
+              <td class="r num"><span [class.mutedtx]="x.valueUsd == null">{{ x.valueUsd == null ? 'unpriced' : usd(x.valueUsd) }}</span></td>
+              <td class="r num"><span [class.mutedtx]="x.avgCostUsd == null">{{ x.avgCostUsd == null ? 'n/a' : price(x.avgCostUsd) }}</span></td>
+              <td class="r num">
+                <span [ngClass]="x.unrealizedUsd == null ? 'mutedtx' : dir(x.unrealizedUsd)">{{ x.unrealizedUsd == null ? 'n/a' : usd(x.unrealizedUsd, true) }}</span>
+                <span class="mutedtx" *ngIf="x.unrealizedPct != null">{{ pct(x.unrealizedPct) }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="mine-sub">Last trades</div>
+      <p class="none" *ngIf="!myTrades.length">{{ b.on ? 'No trade yet. The desk\'s next entry is yours too.' : 'No trade yet.' }}</p>
+      <div class="tbl-wrap" *ngIf="myTrades.length">
+        <table class="tbl mine-tbl">
+          <thead><tr><th>Time</th><th>Asset</th><th>Side</th><th class="r">Dollars</th><th class="r">Result</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let t of myTrades">
+              <td class="num">{{ when(t.at) }}</td>
+              <td class="asset"><a *ngIf="t.txUrl" [href]="t.txUrl" target="_blank" rel="noopener noreferrer">{{ t.asset }}</a><span *ngIf="!t.txUrl">{{ t.asset }}</span></td>
+              <td>{{ t.kind === 'entry' ? 'in' : 'out' }}<span class="mutedtx" *ngIf="t.status !== 'settled'"> {{ t.status }}</span></td>
+              <td class="r num"><span [class.mutedtx]="t.usd == null">{{ t.usd == null ? 'unpriced' : usd(t.usd) }}</span></td>
+              <td class="r num"><span *ngIf="t.pnlUsd != null" [ngClass]="dir(t.pnlUsd)">{{ usd(t.pnlUsd, true) }}</span><span class="mutedtx" *ngIf="t.pnlUsd == null">{{ t.kind === 'entry' ? 'open' : 'n/a' }}</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="mine-foot">
+        <span class="mutedtx" *ngIf="b.wallet">Its wallet: <a class="num" [href]="b.walletUrl" target="_blank" rel="noopener noreferrer">{{ b.wallet }}</a></span>
+        <span class="mutedtx" *ngIf="!b.wallet">Its wallet is not set up here yet.</span>
+        <a class="cta mine-cta" href="/console">Open the console</a>
+      </div>
+    </ng-container>
+  </div>
+
   <!-- The agents following the desk: in public, by name and their own wallets, never the person's -->
   <div class="card block">
     <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Agents</h2><span>{{ agentsSummary }}</span></div>

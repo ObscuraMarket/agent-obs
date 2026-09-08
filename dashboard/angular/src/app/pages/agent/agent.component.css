@@ -1803,3 +1803,88 @@ table.tbl {
 .legend .lg-trigger { color: var(--amber); }
 .legend .lg-holding { color: var(--lime); }
 .legend .lg-bad { color: var(--red); }
+
+/* ---- Your agent: the signed-in wallet's own book, above the public list ---- */
+
+.mine-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.mine-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--white);
+}
+
+.mine-chips {
+  justify-content: flex-start;
+}
+
+.mine-boxes {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.mine-sub {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 16px 0 8px;
+}
+
+/* Five columns need less room than the house tables' eight: a phone scrolls it less. */
+table.tbl.mine-tbl {
+  min-width: 520px;
+}
+
+.mine .none a,
+.mine-foot a {
+  color: var(--lime);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.mine-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+/* The full address is shown, since it is the owner's; on a narrow screen it wraps rather than pushes the card wide. */
+.mine-foot .num {
+  word-break: break-all;
+}
+
+.mine-foot .cta.mine-cta {
+  width: auto;
+  margin-top: 0;
+  display: inline-block;
+  border-bottom: 0;
+  color: var(--lime-ink);
+}
+
+@media (max-width: 760px) {
+  .mine-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .mine-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mine-foot .cta.mine-cta {
+    width: 100%;
+    text-align: center;
+  }
+}

@@ -1,11 +1,12 @@
-import { AfterViewInit, Component, ElementRef, HostListener, NgZone, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, HostListener, Inject, NgZone, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
 
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import { REFRESH_MS, nextRefreshMs } from './refresh';
 import {
   CgMarket, ObsDashboard, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
-  ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
+  ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent,
+  ObsMyAgentBook, ObsMyAgentBookTrade, ObsSession, CONSOLE_WALLET, ConsoleWallet, readConsoleSession, dropConsoleSession
 } from '../../service/obs-desk.service';
 
 type MarketAssetId = 'agent' | 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
@@ -62,6 +63,31 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   agentsOn = 0;
   agentsLive = 0;
   get agentsSummary(): string { return this.agents.length ? `${this.agentsOn} on, ${this.agentsLive} live, ${this.agents.length} all time` : 'none yet'; }
+  // ---- Your agent: the wallet that signed in on the console, its own book, from its own signed read ----
+  /** The connected wallet: the site's own connection when the module hands one over, else the browser's provider asked once, silently. */
+  myWallet: string | null = null;
+  /** The console's stored session for that wallet, read from the same key the console writes; null until a sign-in there. */
+  mySession: ObsSession | null = null;
+  myBook: ObsMyAgentBook | null = null;
+  /** The last trades, newest first, for the card's small table. */
+  myTrades: ObsMyAgentBookTrade[] = [];
+  /** The book read failed with something other than a 401; the card says so once and keeps what it had. */
+  myBookErr = false;
+  private myWalletSub?: { unsubscribe(): void };
+  private myBookBusy = false;
+  /** What the card shows: one sentence for each state before the book, the book itself after. */
+  get myState(): 'no-wallet' | 'no-session' | 'loading' | 'not-started' | 'book' {
+    if (!this.myWallet) { return 'no-wallet'; }
+    if (!this.mySession) { return 'no-session'; }
+    if (!this.myBook) { return 'loading'; }
+    if (this.myBook.since == null && !this.myBook.tradeCount) { return 'not-started'; }
+    return 'book';
+  }
+  get mySummary(): string {
+    const b = this.myBook;
+    if (this.myState !== 'book' || !b) { return this.myWallet ? this.short(this.myWallet) : ''; }
+    return `${b.on ? 'on' : 'off'}, ${b.mode}, $${b.sizeUsd} a trade`;
+  }
   reads: ObsReads | null = null;
   obsMarket: ObsMarket | null = null;
   agentToken: ObsAgentToken | null = null;
@@ -186,7 +212,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   /** When CoinGecko was last asked for the strip's other assets. */
   private cgAt = 0;
 
-  constructor(private obs: ObsDeskService, private zone: NgZone, title: Title, meta: Meta) {
+  constructor(private obs: ObsDeskService, private zone: NgZone, @Inject(CONSOLE_WALLET) private siteWallet: ConsoleWallet | null, title: Title, meta: Meta) {
     title.setTitle('Obscura - OBS Desk');
     meta.updateTag({
       name: 'description',
@@ -218,6 +244,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     window.addEventListener('pageshow', this.onVisible);
     // The first read sets the clock; every answer sets the next.
     this.refresh();
+    this.watchMyWallet();
     this.startMarquee();
     // The stream and the typewriter run outside Angular: a 9ms typing tick
     // must not drive change detection. Bound state re-enters via zone.run.
@@ -258,6 +285,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     window.removeEventListener('online', this.onVisible);
     window.removeEventListener('pageshow', this.onVisible);
     this.destroyed = true;
+    this.myWalletSub?.unsubscribe();
     if (this.refreshClock) { clearTimeout(this.refreshClock); }
     this.es?.close();
     this.ro?.disconnect();
@@ -289,6 +317,62 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       error: (e: { status?: number }) => { this.err = 'dashboard'; this.scheduleRefresh(e?.status ?? 0); }
     });
     this.refreshAssetMarkets();
+    this.refreshMyAgent();
+  }
+
+  // ---- your agent ------------------------------------------------------
+
+  /**
+   * The wallet the card follows: the site's own connection when the module hands one over (the header's wallet,
+   * the one the console signs in with), else the browser's provider asked once for the accounts it already
+   * exposes, never a prompt. A wallet arriving or changing re-reads the stored session and the book at once; a
+   * disconnect empties the card. This repo's own build provides no site wallet, so it takes the second path.
+   */
+  private watchMyWallet(): void {
+    if (this.siteWallet) {
+      this.myWalletSub = this.siteWallet.address$.subscribe((addr) => this.zone.run(() => this.setMyWallet(addr || null)));
+      return;
+    }
+    if (typeof window === 'undefined') { return; }
+    // Phantom keeps its Ethereum provider at window.phantom.ethereum and does not always set window.ethereum.
+    const w = window as any;
+    const p = w.ethereum ?? w.phantom?.ethereum ?? null;
+    if (!p || typeof p.request !== 'function') { return; }
+    Promise.resolve(p.request({ method: 'eth_accounts' }))
+      .then((accs: string[]) => this.zone.run(() => this.setMyWallet(accs?.[0] ?? null)))
+      .catch(() => { /* not connected, or the wallet said no: the card asks for a connection */ });
+  }
+
+  private setMyWallet(addr: string | null): void {
+    const same = !!addr && !!this.myWallet && addr.toLowerCase() === this.myWallet.toLowerCase();
+    this.myWallet = addr;
+    this.mySession = addr ? readConsoleSession(addr) : null;
+    if (!same) { this.myBook = null; this.myTrades = []; this.myBookErr = false; }
+    this.refreshMyAgent();
+  }
+
+  /**
+   * The wallet's own book, on the page's clock: called from refresh(), so it shares the fifteen-second cadence,
+   * the hidden-tab pause and the 429 backoff (a 429 here sets the same clock), and once when the wallet arrives.
+   * Nothing is asked without a session; a wallet with none is checked for one on every read, so a sign-in on the
+   * console in another tab shows up here on the next read. A 401 drops the stored session the way the console
+   * does, and the card asks for a sign-in.
+   */
+  private refreshMyAgent(): void {
+    if (document.hidden || this.myBookBusy) { return; }
+    if (this.myWallet && !this.mySession) { this.mySession = readConsoleSession(this.myWallet); }
+    const s = this.mySession;
+    if (!s) { return; }
+    this.myBookBusy = true;
+    this.obs.myAgentBook(s.token).subscribe({
+      next: (b) => { this.myBookBusy = false; this.myBook = b; this.myTrades = [...(b.trades || [])].reverse(); this.myBookErr = false; },
+      error: (e: { status?: number }) => {
+        this.myBookBusy = false;
+        if (e?.status === 401) { dropConsoleSession(); this.mySession = null; this.myBook = null; this.myTrades = []; return; }
+        this.myBookErr = true;
+        if (e?.status === 429) { this.scheduleRefresh(429); }
+      }
+    });
   }
 
   /** The next read, on the clock: fifteen seconds after a success, doubling on a 429. One clock, whichever read last set it. */

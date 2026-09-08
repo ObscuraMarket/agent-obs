@@ -1,8 +1,13 @@
+import "./tmpdata.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter, tapePrices, pnlFingerprint } from "../src/server.ts";
-import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX, TtlCache, attempt, dashboardQuery } from "../src/server.ts";
+import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX, TtlCache, attempt, dashboardQuery, handle, myAgentBookPayload } from "../src/server.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
+import { mintSession } from "../src/desk/accounts.ts";
+import { followState, followBook, recordFollow } from "../src/desk/follow.ts";
+import type { Trade } from "../src/desk/book.ts";
 
 const posts = [
   { at: 1, mode: "draft", posted: false, text: "first draft" },
@@ -175,4 +180,119 @@ test("the one read's query carries each route's own default and clamp, so equal 
   assert.deepEqual(dashboardQuery(new URLSearchParams("hours=abc&trades=-1&feed=9999")), { hours: 168, trades: 50, feed: 200 }, "nonsense is the default, too much is the cap");
   assert.deepEqual(dashboardQuery(new URLSearchParams("hours=0&trades=0.5&feed=0")), { hours: 168, trades: 1, feed: 30 });
   assert.equal(dashboardQuery(new URLSearchParams("hours=999999")).hours, 24 * 365, "a year at most, the market route's own cap");
+});
+
+// ---- The wallet's own book: the signed read behind the Agent page's "Your agent" card. ----
+
+/** The server on a free port for one test, its routes exactly as deployed; closed when the test is done. */
+async function withServer(run: (api: string) => Promise<void>): Promise<void> {
+  const server = createServer(handle);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as { port: number }).port;
+  try {
+    await run(`http://127.0.0.1:${port}`);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+const read = async (api: string, path: string, token?: string): Promise<{ status: number; headers: Headers; j: Record<string, any> }> => {
+  const r = await fetch(api + path, { headers: token ? { Authorization: "Bearer " + token } : {} });
+  return { status: r.status, headers: r.headers, j: (await r.json().catch(() => ({}))) as Record<string, any> };
+};
+const BOOK_KEYS = ["ok", "name", "on", "mode", "sizeUsd", "since", "wallet", "walletUrl", "walletEth", "ethUsd", "positions", "realizedUsd", "unrealizedUsd", "equityUsd", "trades", "tradeCount", "wins", "losses", "at"];
+
+test("the book is behind the bearer: no bearer, no book, and nothing about any wallet in the answer", async () => {
+  await withServer(async (api) => {
+    const r = await read(api, "/api/obs/my-agent/book");
+    assert.equal(r.status, 401);
+    assert.deepEqual(r.j, { ok: false, error: "sign in with your wallet first" });
+    assert.equal(r.headers.get("cache-control"), "no-store");
+    const bad = await read(api, "/api/obs/my-agent/book", "not.a.bearer");
+    assert.equal(bad.status, 401, "a forged bearer is no bearer");
+  });
+});
+
+test("a paper agent's book has the owner's shape: its state, its empty book, no wallet leg and no chain read", async () => {
+  const address = "0x1111111111111111111111111111111111111111";
+  const now = Date.UTC(2026, 8, 8, 12, 0, 0);
+  recordFollow(address, "start", 25, now, "paper");
+  await withServer(async (api) => {
+    const r = await read(api, "/api/obs/my-agent/book", mintSession(address).token);
+    assert.equal(r.status, 200, JSON.stringify(r.j));
+    assert.equal(r.headers.get("cache-control"), "no-store");
+    assert.deepEqual(Object.keys(r.j).sort(), [...BOOK_KEYS].sort(), "exactly the fields the card reads, nothing else");
+    assert.equal(r.j.ok, true);
+    assert.equal(typeof r.j.name, "string");
+    assert.deepEqual([r.j.on, r.j.mode, r.j.sizeUsd, r.j.since], [true, "paper", 25, now]);
+    assert.deepEqual([r.j.wallet, r.j.walletUrl, r.j.walletEth], [null, null, null], "wallets are off here: no address, no balance, no read");
+    assert.deepEqual([r.j.positions, r.j.trades, r.j.tradeCount, r.j.wins, r.j.losses, r.j.realizedUsd], [[], [], 0, 0, 0, 0]);
+    assert.equal(r.j.equityUsd, 0, "a paper book with nothing in it is worth nothing, and that is a number");
+    assert.equal(r.j.unrealizedUsd, 0);
+    assert.equal(typeof r.j.at, "number");
+    const again = await read(api, "/api/obs/my-agent/book", mintSession(address).token);
+    assert.equal(again.j.at, r.j.at, "the second read inside ten seconds is the cached one");
+    const other = await read(api, "/api/obs/my-agent/book", mintSession("0x2222222222222222222222222222222222222222").token);
+    assert.equal(other.status, 200);
+    assert.deepEqual([other.j.on, other.j.since, other.j.sizeUsd], [false, null, 100], "another wallet reads its own book, never this one's");
+  });
+});
+
+test("a wallet whose door has closed still reads its own book, and nothing else behind the door", async () => {
+  const address = "0x3333333333333333333333333333333333333333";
+  const gate = process.env.OBS_CONSOLE_GATE;
+  // List-only with an empty list: the door is closed to every wallet, decided at once, no chain read.
+  process.env.OBS_CONSOLE_GATE = "allowlist";
+  try {
+    await withServer(async (api) => {
+      const token = mintSession(address).token;
+      const events = await read(api, "/api/obs/my-agent/events?since=0", token);
+      assert.equal(events.status, 403, "the door is closed: the other signed routes refuse");
+      assert.equal(events.j.code, "not_holder");
+      const book = await read(api, "/api/obs/my-agent/book", token);
+      assert.equal(book.status, 200, JSON.stringify(book.j));
+      assert.equal(book.j.ok, true, "the book is the wallet's own money, kept the way /agent and /wallet are kept in the console");
+      assert.deepEqual([book.j.on, book.j.since], [false, null]);
+      const none = await read(api, "/api/obs/my-agent/book");
+      assert.equal(none.status, 401, "a closed door does not open the book to a request with no bearer");
+    });
+  } finally {
+    process.env.OBS_CONSOLE_GATE = gate;
+  }
+});
+
+test("the owner's payload: positions with their cost and result, the last twenty trades newest last, exits with their result, equity from the wallet", () => {
+  const t0 = Date.UTC(2026, 8, 8, 9, 0, 0);
+  const buy = (id: string, at: number, usd: number, amount: number): Trade => ({ at, id, status: "settled", from: { asset: "ETH", amount: usd / 2500, usd }, to: { asset: "NSDX", amount, usd }, partner: null, settlementTx: `0x${id}` });
+  const sell = (id: string, at: number, amount: number, usd: number): Trade => ({ at, id, status: "settled", exit: true, from: { asset: "NSDX", amount, usd }, to: { asset: "ETH", amount: usd / 2500, usd }, partner: null, explorerUrl: `https://x/tx/${id}` });
+  const desk: Trade[] = [];
+  for (let i = 0; i < 12; i++) {
+    desk.push(buy(`b${i}`, t0 + i * 600e3, 100, 1000));
+    desk.push(sell(`s${i}`, t0 + i * 600e3 + 300e3, 1000, i % 3 === 0 ? 90 : 110));
+  }
+  desk.push(buy("open", t0 + 13 * 600e3, 100, 1000));
+  const state = followState([{ address: "0xabc", at: t0 - 1, action: "start", sizeUsd: 50, mode: "paper" }], "0xabc");
+  const book = followBook(desk, state, { NSDX: 0.12, ETH: 2500 });
+  const p = myAgentBookPayload("Sable", book, "0x9999999999999999999999999999999999999999", 0.02, 2500, t0 + 14 * 600e3);
+  assert.equal(p.name, "Sable");
+  assert.equal(p.walletUrl, "https://robinhoodchain.blockscout.com/address/0x9999999999999999999999999999999999999999");
+  assert.equal(p.tradeCount, 25, "every mirrored trade is counted");
+  assert.equal(p.trades.length, 20, "the last twenty ride along");
+  assert.ok(p.trades.every((t, i) => i === 0 || t.at >= p.trades[i - 1].at), "newest last");
+  assert.equal(p.trades[p.trades.length - 1].kind, "entry");
+  assert.equal(p.trades[p.trades.length - 1].txUrl, "https://robinhoodchain.blockscout.com/tx/0xopen", "a hash without a page becomes the explorer's page");
+  const exit = p.trades[p.trades.length - 2];
+  assert.deepEqual([exit.kind, exit.asset, exit.txUrl], ["exit", "NSDX", "https://x/tx/s11"]);
+  assert.ok(exit.pnlUsd != null && exit.pnlUsd > 0, "an exit carries its realized result");
+  assert.equal(p.trades[p.trades.length - 1].pnlUsd, null, "an entry has none");
+  assert.deepEqual([p.wins, p.losses], [8, 4]);
+  assert.equal(p.positions.length, 1);
+  assert.deepEqual(Object.keys(p.positions[0]), ["asset", "qty", "priceUsd", "valueUsd", "avgCostUsd", "unrealizedUsd", "unrealizedPct"]);
+  assert.ok(Math.abs((p.positions[0].valueUsd as number) - 60) < 1e-6, "500 NSDX at $0.12: the $50 entry marked at $60");
+  assert.ok(Math.abs((p.unrealizedUsd as number) - 10) < 1e-6);
+  assert.ok(Math.abs((p.equityUsd as number) - 60) < 1e-6, "paper: what the paper positions are worth, the wallet is not in play");
+  const live = myAgentBookPayload("Sable", { ...book, state: { ...state, mode: "live" } }, "0x9999999999999999999999999999999999999999", 0.02, 2500, t0);
+  assert.ok(Math.abs((live.equityUsd as number) - 110) < 1e-6, "live: the wallet's ETH in dollars plus the positions");
+  assert.equal(myAgentBookPayload("Sable", { ...book, state: { ...state, mode: "live" } }, null, null, 2500, t0).equityUsd, null, "a wallet that could not be read is no equity figure");
+  const unpriced = myAgentBookPayload("Sable", followBook(desk, state, { ETH: 2500 }), null, null, 2500, t0);
+  assert.deepEqual([unpriced.unrealizedUsd, unpriced.equityUsd], [null, null], "an unpriced position is not summed as zero");
 });

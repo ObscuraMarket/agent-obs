@@ -1,6 +1,6 @@
 import { AfterViewInit, Component, ElementRef, Inject, NgZone, OnDestroy, Type, ViewChild, ViewContainerRef } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
-import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, ObsPayment, ObsCredits, CONSOLE_VIEWS, CONSOLE_WALLET, ConsoleWallet } from '../../service/obs-desk.service';
+import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, ObsPayment, ObsCredits, CONSOLE_VIEWS, CONSOLE_WALLET, ConsoleWallet, CONSOLE_SESSION_KEY, readConsoleSession } from '../../service/obs-desk.service';
 import { ROBINHOOD_CHAIN_ID, isAddress, judgePay, judgeStep, sendLine } from '../../service/send-guard';
 
 type LineKind = 'input' | 'command' | 'output' | 'error' | 'agent' | 'system';
@@ -57,7 +57,6 @@ const COMMAND_HELP: CommandHelp[] = [
 ];
 const COMMANDS = COMMAND_HELP.map((c) => c.cmd);
 const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['chat', 'name', 'goal', 'voice', 'style', 'model'], help: ['all'] };
-const SESSION_KEY = 'obs-console-session';
 const THEME_KEY = 'obs-console-theme';
 
 /** The sidebar: the console's commands grouped the way a person thinks of them, one tap each. */
@@ -672,17 +671,13 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     try { const c: string = await p.request({ method: 'eth_chainId' }); this.chainId = parseInt(c, 16); } catch { /* the swap reads it again */ }
   }
 
+  /** The session under the key the Agent page reads too (the service's), so one sign-in serves both pages. */
   private readSession(address: string): ObsSession | null {
-    try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (!raw) { return null; }
-      const s = JSON.parse(raw) as ObsSession;
-      return s.address?.toLowerCase() === address.toLowerCase() && s.token && Date.now() < s.expiresAt ? s : null;
-    } catch { return null; }
+    return readConsoleSession(address);
   }
 
   private storeSession(s: ObsSession | null): void {
-    try { if (s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } else { localStorage.removeItem(SESSION_KEY); } } catch { /* private window */ }
+    try { if (s) { localStorage.setItem(CONSOLE_SESSION_KEY, JSON.stringify(s)); } else { localStorage.removeItem(CONSOLE_SESSION_KEY); } } catch { /* private window */ }
   }
 
   private listen(p: any): void {

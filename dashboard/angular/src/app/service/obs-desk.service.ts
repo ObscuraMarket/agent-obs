@@ -418,6 +418,24 @@ export interface ObsConsoleSwapReply { ok: boolean; already?: boolean; reason?: 
 /** `/api/obs/account/challenge` and `/link`: the wallet is the account; a signed challenge mints a week's bearer. */
 export interface ObsChallenge { ok: boolean; message: string; nonce: string; }
 export interface ObsSession { token: string; address: string; expiresAt: number; }
+/**
+ * Where the console keeps its bearer in this browser, as {token, address, expiresAt}. The Agent page reads the
+ * same key, so one sign-in on the console is a sign-in for the "Your agent" card too (2026-09-08).
+ */
+export const CONSOLE_SESSION_KEY = 'obs-console-session';
+/** The stored session for this wallet, or null: another wallet's, an expired one and a private window all read as none. */
+export function readConsoleSession(address: string): ObsSession | null {
+  try {
+    const raw = localStorage.getItem(CONSOLE_SESSION_KEY);
+    if (!raw) { return null; }
+    const s = JSON.parse(raw) as ObsSession;
+    return s.address?.toLowerCase() === address.toLowerCase() && s.token && Date.now() < s.expiresAt ? s : null;
+  } catch { return null; }
+}
+/** The stored session leaves this browser: what every page does on a 401 from a signed route. */
+export function dropConsoleSession(): void {
+  try { localStorage.removeItem(CONSOLE_SESSION_KEY); } catch { /* private window */ }
+}
 export interface ObsLinkReply { ok: boolean; error?: string; session?: ObsSession; standing?: ObsStanding; }
 /** `/api/obs/console/cli`: one typed line in, lines out, plus the effect the page applies. */
 export interface ObsCliReply {
@@ -446,6 +464,36 @@ export interface ObsCredits { ok: boolean; balance: number; granted: number; dep
 export interface ObsUserSettings { name?: string; style?: 'concise' | 'balanced' | 'deep'; voice?: string; goal?: string; }
 export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; /** The agent's own wallet, when agent wallets are switched on there; null otherwise. */ wallet?: string | null; }
 export interface ObsHistoryTurn { role: string; content: string; ts: string; }
+
+/** One of the agent's last trades, as its owner reads it: in or out, the dollars, and an exit's result. */
+export interface ObsMyAgentBookTrade { at: number; kind: 'entry' | 'exit'; asset: string; usd: number | null; pnlUsd: number | null; status: string; txUrl: string | null; }
+/**
+ * `/api/obs/my-agent/book` (bearer): the wallet's own agent in full, for the Agent page's "Your agent" card. The
+ * public list shows every agent by name; this is the owner's view of theirs: the full wallet address, the wallet's
+ * ETH, every position with its cost and result, the last twenty trades newest last. `equityUsd` is the wallet's ETH
+ * in dollars plus the positions (a paper agent: the positions alone), null when the wallet could not be read.
+ */
+export interface ObsMyAgentBook {
+  ok: boolean;
+  name: string;
+  on: boolean;
+  mode: 'paper' | 'live';
+  sizeUsd: number;
+  since: number | null;
+  wallet: string | null;
+  walletUrl: string | null;
+  walletEth: number | null;
+  ethUsd: number | null;
+  positions: Array<{ asset: string; qty: number; priceUsd: number | null; valueUsd: number | null; avgCostUsd: number | null; unrealizedUsd: number | null; unrealizedPct: number | null }>;
+  realizedUsd: number;
+  unrealizedUsd: number | null;
+  equityUsd: number | null;
+  trades: ObsMyAgentBookTrade[];
+  tradeCount: number;
+  wins: number;
+  losses: number;
+  at: number;
+}
 
 /**
  * The site's own pages the console can open beside itself, by command name: trade, rewards, cards, yield (see below): cards, referral,
@@ -577,6 +625,11 @@ export class ObsDeskService {
 
   myAgentHistory(token: string): Observable<{ ok: boolean; turns: ObsHistoryTurn[] }> {
     return this.http.get<{ ok: boolean; turns: ObsHistoryTurn[] }>(`${this.base}/api/obs/my-agent/history`, this.bearer(token));
+  }
+
+  /** `/api/obs/my-agent/book`: the wallet's own agent in full, for its owner. A 401 means the bearer is no good any more. */
+  myAgentBook(token: string): Observable<ObsMyAgentBook> {
+    return this.http.get<ObsMyAgentBook>(`${this.base}/api/obs/my-agent/book`, this.bearer(token));
   }
 
   /** The stream is read with fetch, because HttpClient buffers; this is the URL and the headers for it. */

@@ -155,6 +155,16 @@ async function walk(): Promise<void> {
   check("/agent shows the agent", agent.j.ok === true && /^Your agent is (on|off)/.test(first(agent)), first(agent));
   const wallet = await cli("/wallet");
   check("/wallet shows the agent's wallet", wallet.j.ok === true && has(wallet, /^Your agent's wallet: 0x[0-9a-fA-F]{40}/), first(wallet));
+  // The Agent page's "Your agent" card reads this: the wallet's own book, behind the bearer, in the card's shape.
+  const book = await get("/api/obs/my-agent/book", token);
+  const b = book.j;
+  const shaped = book.status === 200 && b.ok === true && typeof b.name === "string" && typeof b.on === "boolean" && /^(paper|live)$/.test(String(b.mode)) && typeof b.sizeUsd === "number"
+    && Array.isArray(b.positions) && Array.isArray(b.trades) && typeof b.tradeCount === "number" && typeof b.wins === "number" && typeof b.losses === "number" && typeof b.realizedUsd === "number"
+    && ["since", "wallet", "walletUrl", "walletEth", "ethUsd", "unrealizedUsd", "equityUsd"].every((k) => k in b) && typeof b.at === "number";
+  check("the book answers for this wallet in the card's shape", shaped, `${book.status} ${JSON.stringify(b).slice(0, 200)}`);
+  check("the book names the agent's own wallet, the one /wallet shows", typeof b.wallet === "string" && has(wallet, new RegExp(b.wallet, "i")), String(b.wallet));
+  const noBook = await get("/api/obs/my-agent/book");
+  check("the book is behind the bearer", noBook.status === 401 && noBook.j.ok === false, String(noBook.status));
   const credits = await cli("/credits");
   check("/credits shows the balance", credits.j.ok === true && has(credits, /^Credits:/), first(credits));
   const model = await cli("/model");

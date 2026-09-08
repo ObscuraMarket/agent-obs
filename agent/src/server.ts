@@ -56,7 +56,7 @@ import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines, agentsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 import { holderGate, forgetHolder, gateMode, doorNow } from "./desk/gate.ts";
-import { followState, readFollow, recordFollow, checkSize, followMaxUsd, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, liveHoldings, mirrorTrades, followEvents, type FollowMode } from "./desk/follow.ts";
+import { followState, readFollow, recordFollow, checkSize, followMaxUsd, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, liveHoldings, mirrorTrades, followEvents, type FollowMode, type FollowBook } from "./desk/follow.ts";
 import { readEntries } from "./desk/trade-memory.ts";
 import { liveOn, canStartLive } from "./desk/mirror.ts";
 import { latestEthUsd } from "./desk/onchain.ts";
@@ -488,13 +488,15 @@ function livePayload(): Record<string, unknown> {
  * The door is asked on every signed-in call from what it already knows (the list, or a cached holder read), so a
  * wallet taken off the list loses the console at once rather than at the end of its seven-day bearer (2026-09-08).
  */
-function requireWallet(req: IncomingMessage, res: ServerResponse): string | null {
+function requireWallet(req: IncomingMessage, res: ServerResponse, opts: { ownFunds?: boolean } = {}): string | null {
   const address = verifySession(bearerOf(req.headers.authorization));
   if (!address) {
     json(res, 401, { ok: false, error: "sign in with your wallet first" });
     return null;
   }
-  const door = doorNow(address);
+  // A read of the wallet's own money (its agent's book) is kept behind the bearer only: a wallet whose door has
+  // closed still owns what its agent holds, the same rescue the console gives /agent and /wallet (2026-09-08).
+  const door = opts.ownFunds ? null : doorNow(address);
   if (door && !door.ok) {
     json(res, 403, { ok: false, code: "not_holder", error: door.reason ?? "this wallet is not at the door any more; sign in again" });
     return null;
@@ -602,6 +604,89 @@ export function dashboardQuery(params: URLSearchParams): { hours: number; trades
     return Number.isFinite(v) && v > 0 ? Math.max(lo, Math.min(hi, v)) : fallback;
   };
   return { hours: num("hours", 168, 1, 24 * 365), trades: num("trades", 50, 1, 500), feed: num("feed", 30, 1, 200) };
+}
+
+// ---- A wallet's own agent, in full, for the wallet that owns it ----------------------------------------------------
+// The Agent page's "Your agent" card: the same ledgers and marks the public list is built from, with everything the
+// public list leaves out (the full wallet address, every position's cost and result, the last trades with their
+// receipts), for the one wallet the bearer proves and never another. Cached ten seconds per wallet; the wallet's
+// ETH read thirty seconds per wallet, so one open tab cannot hammer the RPC (2026-09-08).
+export interface MyAgentBookTrade { at: number; kind: "entry" | "exit"; asset: string; usd: number | null; pnlUsd: number | null; status: string; txUrl: string | null }
+export interface MyAgentBook {
+  ok: true;
+  name: string;
+  on: boolean;
+  mode: "paper" | "live";
+  sizeUsd: number;
+  since: number | null;
+  wallet: string | null;
+  walletUrl: string | null;
+  walletEth: number | null;
+  ethUsd: number | null;
+  positions: Array<{ asset: string; qty: number; priceUsd: number | null; valueUsd: number | null; avgCostUsd: number | null; unrealizedUsd: number | null; unrealizedPct: number | null }>;
+  realizedUsd: number;
+  unrealizedUsd: number | null;
+  equityUsd: number | null;
+  trades: MyAgentBookTrade[];
+  tradeCount: number;
+  wins: number;
+  losses: number;
+  at: number;
+}
+const MY_AGENT_BOOK_TRADES = 20;
+/**
+ * PURE: the owner's view of a follow book. Unrealized is the sum over the positions, null while one of them is
+ * unpriced (a partial sum would read as the whole). Equity is the wallet's ETH in dollars plus what the positions
+ * are worth: null when the wallet could not be read or ETH is unpriced; a paper agent moves no money, so its equity
+ * is what its paper positions are worth. Wins and losses count the exits by their realized result. Exported for tests.
+ */
+export function myAgentBookPayload(name: string, book: FollowBook, wallet: string | null, walletEth: number | null, ethUsd: number | null, now: number): MyAgentBook {
+  const s = book.state;
+  const pos = book.positions;
+  const positions = pos.positions.map((x) => ({ asset: x.asset, qty: x.qty, priceUsd: x.priceUsd, valueUsd: x.valueUsd, avgCostUsd: x.avgCostUsd, unrealizedUsd: x.unrealizedUsd, unrealizedPct: x.unrealizedPct }));
+  const unpriced = positions.some((x) => x.valueUsd == null);
+  const positionsUsd = unpriced ? null : positions.reduce((a, x) => a + (x.valueUsd ?? 0), 0);
+  const unrealizedUsd = positions.some((x) => x.unrealizedUsd == null) ? null : positions.reduce((a, x) => a + (x.unrealizedUsd ?? 0), 0);
+  const walletUsd = walletEth != null && ethUsd != null ? walletEth * ethUsd : null;
+  const equityUsd = s.mode === "paper" ? positionsUsd : walletUsd == null || positionsUsd == null ? null : walletUsd + positionsUsd;
+  const resultOf = new Map(pos.events.map((e) => [e.id, e.usd] as const));
+  const rows = [...book.trades].sort((a, b) => a.at - b.at);
+  const trades: MyAgentBookTrade[] = rows.slice(-MY_AGENT_BOOK_TRADES).map((t) => ({
+    at: t.updatedAt ?? t.at,
+    kind: t.exit ? "exit" : "entry",
+    asset: t.exit ? t.from.asset : t.to.asset,
+    usd: t.exit ? t.to.usd : t.from.usd,
+    pnlUsd: t.exit ? resultOf.get(t.id) ?? null : null,
+    status: t.status,
+    txUrl: t.explorerUrl ?? (t.settlementTx ? `${EXPLORER_URL}/tx/${t.settlementTx}` : null),
+  }));
+  const results = rows.filter((t) => t.exit).map((t) => resultOf.get(t.id)).filter((v): v is number => v != null);
+  return {
+    ok: true, name, on: s.on, mode: s.mode, sizeUsd: s.sizeUsd, since: s.since,
+    wallet, walletUrl: wallet ? `${EXPLORER_URL}/address/${wallet}` : null, walletEth, ethUsd,
+    positions, realizedUsd: pos.realizedUsd, unrealizedUsd, equityUsd,
+    trades, tradeCount: rows.length, wins: results.filter((v) => v > 0).length, losses: results.filter((v) => v < 0).length,
+    at: now,
+  };
+}
+const myAgentBookCache = new TtlCache<MyAgentBook>(10_000);
+const walletEthCache = new TtlCache<number | null>(30_000);
+/** The agent wallet's ETH, one chain read per wallet per thirty seconds; null when the read fails, and no read at all when there is no wallet. */
+function walletEthCached(address: string, wallet: string | null, now: number): Promise<number | null> {
+  if (!wallet) return Promise.resolve(null);
+  return walletEthCache.get(address.toLowerCase(), () => agentBalanceEth(address).catch(() => null), now);
+}
+function myAgentBook(address: string, now: number): Promise<MyAgentBook> {
+  return myAgentBookCache.get(address.toLowerCase(), async () => {
+    const state = followState(readFollow(), address);
+    const p = await pnlPayload(1, now, false);
+    const prices = pricesNow(p, now);
+    const wallet = agentWalletAddressOrNull(address);
+    const walletEth = await walletEthCached(address, wallet, now);
+    const book = state.mode === "live" ? liveBook(address, state, readFollowTrades(), readFollowNotes(), prices, walletEth) : followBook(deskFromDisk().book.trades, state, prices);
+    const ethUsd = prices.ETH ?? (await cachedPrices(["ETH"]).catch(() => ({} as Record<string, number | null>))).ETH ?? latestEthUsd(now);
+    return myAgentBookPayload(agentDisplayName(address), book, wallet, walletEth, ethUsd, now);
+  }, now);
 }
 
 const dashboardCache = new TtlCache<Record<string, unknown>>(DASHBOARD_TTL_MS);
@@ -1516,6 +1601,17 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     json(res, 200, { ok: true, events: events.slice(-20), on: state.on, mode: state.mode, at: now });
     return;
   }
+  if (path === "/api/obs/my-agent/book") {
+    // The wallet's own agent in full, for the Agent page's "Your agent" card. Behind the bearer only: a closed door
+    // keeps the read, since the book is the wallet's own money, as /agent and /wallet are kept in the console.
+    res.setHeader("Cache-Control", "no-store");
+    const address = requireWallet(req, res, { ownFunds: true });
+    if (!address) return;
+    myAgentBook(address, now)
+      .then((b) => json(res, 200, b))
+      .catch((err) => { console.error(`[my-agent] book for ${address}: ${err instanceof Error ? err.message : String(err)}`); json(res, 502, { ok: false, error: "your agent's book did not answer; try again shortly" }); });
+    return;
+  }
   if (path === "/api/obs/my-agent/wallet/verify") {
     // A funding the person sent to their agent's wallet: read off the chain, recorded once.
     res.setHeader("Cache-Control", "no-store");
@@ -1652,7 +1748,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/dashboard?hours=168&trades=50&feed=30", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/swaps?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/dashboard?hours=168&trades=50&feed=30", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/swaps?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET /api/obs/my-agent/book (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in
