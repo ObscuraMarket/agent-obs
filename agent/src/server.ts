@@ -51,6 +51,7 @@ import { consoleQuote, verifySwap, consoleStanding, isAddress } from "./desk/con
 import { issueChallenge, linkAccount, verifySession, bearerOf } from "./desk/accounts.ts";
 import { getSettings, updateSettings, sanitizeSettings, describeSettings } from "./desk/userSettings.ts";
 import { refreshModel, modelFor, personaFor, approveTool, ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
+import { shouldEndTurn, meteredReply, type TurnState } from "./desk/chatTurn.ts";
 import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines, agentsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
@@ -1354,6 +1355,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     // headers, so a refused turn gets a clean JSON error rather than a half-open stream.
     const address = requireWallet(req, res);
     if (!address) return;
+    // The slot goes back exactly once, and only when chatGuard held one. Until 2026-09-08 every refusal on the way
+    // out gave a slot back, a body too large or an empty message included, which cleared another turn's in-flight
+    // mark for this wallet and decremented the shared slot count for everyone.
+    const turn: TurnState = { guarded: false, ended: false };
+    const release = () => { if (shouldEndTurn(turn)) { turn.ended = true; endTurn(address); } };
     readBody(req, 4096).then(async (text) => {
       let b: Record<string, unknown> = {};
       try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
@@ -1364,6 +1370,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       if (!gate.ok) { json(res, 403, { ok: false, code: "not_holder", error: gate.reason }); return; }
       const guard = chatGuard(address, now);
       if (guard) { json(res, guard.status, { ok: false, error: guard.error }); return; }
+      turn.guarded = true;
       // The turn's price: the wallet's model at OpenRouter's rates plus the margin. Out of credits is a refusal only
       // where credits can be bought; without a treasury the desk meters and lets the turn through.
       let modelId = modelFor(address);
@@ -1379,22 +1386,27 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       }
       const model = (await modelInfo(modelId)) ?? DEFAULT_MODEL_INFO;
       const paid = !model.free;
-      if (paid && creditsOn() && balanceUsd(address, readCredits()) <= 0) { endTurn(address); json(res, 402, { ok: false, error: "You're out of credits. /credits shows how to add some (a thousand credits are $10 of USDG), and /models free lists models that cost nothing." }); return; }
+      if (paid && creditsOn() && balanceUsd(address, readCredits()) <= 0) { release(); json(res, 402, { ok: false, error: "You're out of credits. /credits shows how to add some (a thousand credits are $10 of USDG), and /models free lists models that cost nothing." }); return; }
+      // What came back, kept for the meter: the final text, the deltas joined, and how many events of any kind the
+      // gateway sent, since a turn that stops early has no final and a turn nothing came back on owes nothing.
       let replyText = "";
+      let streamed = "";
+      let delivered = 0;
+      let closed = false;
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
       const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
       if (dropped) send({ type: "note", text: `${dropped} is no longer offered; your agent is back on ${DEFAULT_MODEL}. /models <search> finds another.` });
       const ac = new AbortController();
-      res.on("close", () => ac.abort());
+      res.on("close", () => { closed = true; ac.abort(); });
       let idle: ReturnType<typeof setTimeout> | undefined;
       const arm = (ms = 60_000) => { clearTimeout(idle); idle = setTimeout(() => ac.abort(), ms); };
-      let deltas = 0;
       try {
         arm();
         const stream = await streamUserAgent(address, msg, ac.signal);
         for await (const ev of stream) {
           arm();
-          if (ev.type === "text_delta") { deltas++; send({ type: "delta", text: deEmDash(ev.text) }); }
+          delivered++;
+          if (ev.type === "text_delta") { streamed += ev.text; send({ type: "delta", text: deEmDash(ev.text) }); }
           else if (ev.type === "text_final") { replyText = ev.text; send({ type: "final", text: deEmDash(ev.text) }); }
           else if (ev.type === "error") send({ type: "error", message: (ev as { message?: string }).message ?? "your agent could not respond" });
           else if (ev.type === "tool_call") send({ type: "tool", phase: "call", tool: ev.tool, toolCallId: ev.toolCallId, args: ev.args });
@@ -1404,21 +1416,37 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           else if (ev.type === "approval_resolved") send({ type: "approval_resolved", toolCallId: ev.toolCallId, decision: ev.decision });
           else if (ev.type === "agent_end") break;
         }
-        // Metered from what went in and came out: the gateway reports no token counts, so about four characters a token, plus a context allowance.
-        const tokensIn = estimateTokens(personaFor(address)) + estimateTokens(msg) + contextTokens();
-        const tokensOut = estimateTokens(replyText);
-        const charged = model ? turnCostUsd(model, tokensIn, tokensOut, marginPct()) : 0;
-        chargeTurn(address, charged, { model: modelId, tokensIn, tokensOut }, Date.now());
-        send({ type: "done", charged: toCredits(charged), balance: toCredits(balanceUsd(address, readCredits())), model: modelId });
       } catch (err) {
-        console.error(`[my-agent] stream failed (aborted=${ac.signal.aborted}, deltas=${deltas}): ${err instanceof Error ? err.message : String(err)}`);
+        console.error(`[my-agent] stream failed (aborted=${ac.signal.aborted}, closed=${closed}, delivered=${delivered}, streamed=${streamed.length} chars): ${err instanceof Error ? err.message : String(err)}`);
         if (!ac.signal.aborted) send({ type: "error", message: "your agent could not respond just now; try again shortly" });
       } finally {
         clearTimeout(idle);
+        // Metered here, on what actually came back, whether the stream finished, failed, timed out or the socket
+        // closed: until 2026-09-08 the charge ran only after a finished stream, so a client that hung up mid-reply
+        // had the inference free. The gateway reports no token counts, so about four characters a token, plus a
+        // context allowance. Nothing came back, nothing is owed.
+        try {
+          const metered = meteredReply({ delivered, final: replyText, streamed });
+          if (metered !== null) {
+            const tokensIn = estimateTokens(personaFor(address)) + estimateTokens(msg) + contextTokens();
+            const tokensOut = estimateTokens(metered);
+            const charged = turnCostUsd(model, tokensIn, tokensOut, marginPct());
+            chargeTurn(address, charged, { model: modelId, tokensIn, tokensOut }, Date.now());
+            if (!closed) send({ type: "done", charged: toCredits(charged), balance: toCredits(balanceUsd(address, readCredits())), model: modelId });
+          }
+        } catch (err) {
+          // The ledger failed, not the stream: said in the log, and the slot still goes back below.
+          console.error(`[my-agent] metering failed for ${address}: ${err instanceof Error ? err.message : String(err)}`);
+        }
         res.end();
-        endTurn(address);
+        release();
       }
-    }).catch((err) => { endTurn(address); json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }); });
+    }).catch((err) => {
+      release();
+      // Once the stream headers are out a JSON error cannot follow them; the response just ends.
+      if (res.headersSent) { res.end(); return; }
+      json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" });
+    });
     return;
   }
   if (path === "/api/obs/reads") {
