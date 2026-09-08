@@ -22,6 +22,7 @@
     "desk": "tsx src/desk/cycle.ts",
     "desk:dry": "DRY_RUN=1 tsx src/desk/cycle.ts",
     "model:check": "tsx scripts/modelCheck.ts",
+    "x:check": "tsx scripts/xCheck.ts",
     "console:walk": "tsx scripts/consoleWalk.ts",
     "live": "tsx src/desk/live.ts",
     "live:paper": "OBS_PAPER=on tsx src/desk/live.ts",
