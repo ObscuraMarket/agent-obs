@@ -10,8 +10,9 @@ import { appendLedger } from "../ledger.ts";
 import { getSettings, DEFAULT_NAME, type UserSettings } from "./userSettings.ts";
 import { DEFAULT_MODEL } from "./models.ts";
 import { gateMode, type GateMode } from "./gate.ts";
-import { followState, readFollow, readFollowTrades, readFollowNotes, liveTrades } from "./follow.ts";
+import { followState, readFollow, readFollowTrades, readFollowNotes, liveTrades, liveHoldings, mirrorTrades, mirrorHoldings } from "./follow.ts";
 import { walletsOn, agentWalletAddress } from "./agentWallet.ts";
+import { readBook } from "./book.ts";
 
 /** What the console offers, for the persona's teaching: apps only while Composio is switched on (its only switch is the key), and the door as the gate keeps it. */
 export interface Door { apps?: boolean; gate?: GateMode }
@@ -24,6 +25,8 @@ export interface Standing {
   sizeUsd: number;
   since: number | null;
   wallet: string | null;
+  /** The tokens it holds right now, live from its own wallet or on its paper book; the marks are /agent's to show. */
+  holding: string[];
   /** The latest few things it did or could not do, newest last, in the words the console uses. */
   recent: string[];
 }
@@ -38,7 +41,10 @@ function standingNow(address: string): Standing | null {
       ...trades.map((t) => (t.exit ? `sold ${t.from.asset} for ${t.to.amount.toFixed(4)} ETH` : `bought ${t.to.asset} with ${t.from.amount.toFixed(4)} ETH`)),
       ...notes.map((n) => n.note.slice(0, 120)),
     ].slice(-4);
-    return { on: st.on, mode: st.mode, sizeUsd: st.sizeUsd, since: st.since, wallet: walletsOn() ? agentWalletAddress(address) : null, recent };
+    // What it holds, so it answers "what are you holding" from its own instruction instead of reaching for a tool it does not have.
+    const held = st.mode === "live" ? liveHoldings(readFollowTrades(), address) : mirrorHoldings(mirrorTrades(readBook().trades, st));
+    const holding = Object.entries(held).filter(([, q]) => q > 0).map(([sym]) => sym);
+    return { on: st.on, mode: st.mode, sizeUsd: st.sizeUsd, since: st.since, wallet: walletsOn() ? agentWalletAddress(address) : null, holding, recent };
   } catch {
     return null;
   }
@@ -51,8 +57,9 @@ export function standingLine(st: Standing): string {
     ? `you are ON${when}, ${st.mode === "live" ? "LIVE, trading real ETH from your own wallet" : "on paper"}, $${st.sizeUsd} a trade, following Agent OBS`
     : `you are OFF (${st.mode === "live" ? "live" : "paper"} when on, $${st.sizeUsd} a trade); /start turns you on`;
   const wallet = st.wallet ? ` Your wallet is ${st.wallet}; /wallet shows what it holds.` : "";
+  const holding = st.holding.length ? ` You hold ${st.holding.join(" and ")} right now; /agent shows what each is worth.` : ` You hold no token right now.`;
   const recent = st.recent.length ? ` Lately: ${st.recent.join("; ")}.` : "";
-  return `Right now: ${state}.${wallet}${recent} This is your standing as of the last time it changed; /agent has the live book.`;
+  return `Right now: ${state}.${wallet}${holding}${recent} This is your standing as of the last time it changed; /agent has the live book.`;
 }
 
 const ENSURE_TTL_MS = 5 * 60 * 1000;
@@ -117,6 +124,7 @@ export function personaFor(address: string, s: UserSettings = getSettings(addres
     who,
     "",
     "What you are: this person's own agent, two things at once. An assistant like any capable model: answer questions on anything, help them think, write, plan and explain, and remember this conversation. And their trading agent: from a wallet of your own you follow the house desk, Agent OBS, trade for trade, when they turn you on. You live inside Obscura's console on Robinhood Chain and you can read the house desk live through the desk commands; that desk is the house's, and its decisions are the ones you follow.",
+    "What you have in this conversation: your instruction and the conversation itself, nothing that runs. No exec, no files, no web, no tool of any kind unless this person has connected an app to you. Never say a tool is broken or that you tried one. What you hold, what your wallet holds and what the desk is doing are in your standing below as of the last time it changed; for the live figures, name the command that shows them (/agent, /wallet, /status, /desk) rather than guessing.",
     "",
     ...(apps
       ? ["Your apps: this person can connect their own apps (Slack, Linear, X, Gmail, Google Docs and more) with /apps, and once an app is connected you have its tools. Use them only when asked, do exactly what was asked and nothing more, and say what you are about to do before you do it; the console asks them to approve before anything runs inside an app. Never send, post, email, edit or delete on your own initiative. If an app is not connected yet, tell them /apps connect <app>, or hand them the connection link your tools give you."]

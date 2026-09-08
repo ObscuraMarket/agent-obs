@@ -162,11 +162,13 @@ test("the personal agent's instruction carries the rules that are policy, and ne
   assert.match(p, /their trading agent: from a wallet of your own you follow the house desk/);
   assert.ok(!/not a trading agent/.test(p), "it is their trading agent, and says so");
   // Its standing, written in when it changes: on, live, size, wallet, the latest doings.
-  const on = standingLine({ on: true, mode: "live", sizeUsd: 10, since: Date.UTC(2026, 8, 7, 22, 3), wallet: "0xbdbFcBE13330DC9195B8C1809e436c17A057374B", recent: ["bought LENNY with 0.0040 ETH"] });
-  assert.match(on, /^Right now: you are ON since 22:03 UTC, LIVE, trading real ETH from your own wallet, \$10 a trade, following Agent OBS\. Your wallet is 0xbdbF.*Lately: bought LENNY with 0\.0040 ETH\./);
-  assert.match(standingLine({ on: false, mode: "paper", sizeUsd: 100, since: null, wallet: null, recent: [] }), /^Right now: you are OFF \(paper when on, \$100 a trade\); \/start turns you on\./);
-  const withStanding = personaFor("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", { name: "Ledger" }, { apps: false, gate: "allowlist" }, { on: true, mode: "paper", sizeUsd: 50, since: null, wallet: null, recent: [] });
+  const on = standingLine({ on: true, mode: "live", sizeUsd: 10, since: Date.UTC(2026, 8, 7, 22, 3), wallet: "0xbdbFcBE13330DC9195B8C1809e436c17A057374B", holding: ["RWA", "LENNY"], recent: ["bought LENNY with 0.0040 ETH"] });
+  assert.match(on, /^Right now: you are ON since 22:03 UTC, LIVE, trading real ETH from your own wallet, \$10 a trade, following Agent OBS\. Your wallet is 0xbdbF.* You hold RWA and LENNY right now; \/agent shows what each is worth\. Lately: bought LENNY with 0\.0040 ETH\./);
+  assert.match(standingLine({ on: false, mode: "paper", sizeUsd: 100, since: null, wallet: null, holding: [], recent: [] }), /^Right now: you are OFF \(paper when on, \$100 a trade\); \/start turns you on\. You hold no token right now\./);
+  const withStanding = personaFor("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", { name: "Ledger" }, { apps: false, gate: "allowlist" }, { on: true, mode: "paper", sizeUsd: 50, since: null, wallet: null, holding: [], recent: [] });
   assert.match(withStanding, /Right now: you are ON, on paper, \$50 a trade, following Agent OBS\./);
+  // It has no tools of its own: it answers what it holds from its standing and never reports a tool as broken (it did, 2026-09-08).
+  assert.match(p, /No exec, no files, no web, no tool of any kind unless this person has connected an app to you\. Never say a tool is broken/);
   assert.match(p, /that wallet is the one that controls you/);
   assert.match(p, /\/model picks the model you run on/);
   assert.match(p, /\/credits shows their balance/);
