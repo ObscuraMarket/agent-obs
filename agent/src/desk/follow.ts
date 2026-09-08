@@ -8,6 +8,7 @@
 // desk's trades, so both are tested offline. One ledger row per command, appended, never rewritten.
 import { appendLedger, readLedger } from "../ledger.ts";
 import { latestTrades, positions, type Trade, type Prices, type Positions } from "./book.ts";
+import type { AgentCapitalRow } from "./agentWallet.ts";
 
 const FILE = "obs-follow.jsonl";
 /** What a wallet's agent trades per entry when it says nothing else, in dollars. */
@@ -184,6 +185,90 @@ export function liveBook(address: string, state: FollowState, rows: FollowTradeR
   const a = address.toLowerCase();
   const mine = notes.filter((n) => n.address === a && (state.since == null || n.at >= state.since)).sort((x, y) => x.at - y.at).slice(-3).map((n) => n.note);
   return { state, trades, positions: positions([], trades, liveHoldings(rows, address), prices), notes: mine, walletEth };
+}
+
+// ---- The day's mark: a follower's own loss brake reads from here. ----
+//
+// Until 2026-09-08 the mirror handed the rails no equity at all, so a follower had no ceiling on what it could lose
+// in a day while the desk's own brake stood. Its brake is measured the way the desk's is, against its first mark of
+// the UTC day, and that mark is one ledger row per follower per day, written on the first look and read after.
+
+export interface FollowMarkRow { address: string; day: string; equityUsd: number; at: number }
+const MARKS_FILE = "obs-follow-marks.jsonl";
+
+/** PURE: the UTC day a moment falls in, the ledger's key: YYYY-MM-DD. */
+export const utcDay = (now: number): string => new Date(now).toISOString().slice(0, 10);
+
+/** PURE: this follower's mark for the UTC day `now` falls in, the earliest when the ledger holds more than one; null when the day has none. */
+export function dayStartMark(marks: FollowMarkRow[], address: string, now: number): FollowMarkRow | null {
+  const a = address.toLowerCase();
+  const day = utcDay(now);
+  const mine = marks.filter((m) => m && m.address === a && m.day === day && Number.isFinite(m.equityUsd) && m.equityUsd > 0).sort((x, y) => x.at - y.at);
+  return mine[0] ?? null;
+}
+
+/**
+ * PURE: the day's mark to use: the one already on the ledger for this UTC day, or a fresh row from the equity
+ * read now, which the caller writes. Once a day has its mark the mark stands, whatever the equity does after.
+ */
+export function markOrNew(marks: FollowMarkRow[], address: string, equityUsd: number, now: number): { mark: FollowMarkRow; fresh: boolean } {
+  const have = dayStartMark(marks, address, now);
+  if (have) return { mark: have, fresh: false };
+  return { mark: { address: address.toLowerCase(), day: utcDay(now), equityUsd, at: now }, fresh: true };
+}
+
+/**
+ * PURE: what the person put in or took out after the mark, in dollars: a /fund after the mark is not a gain and a
+ * /withdraw is not a loss, so the mark moves with them. A row the ledger could not price moves nothing.
+ */
+export function capitalSinceUsd(rows: AgentCapitalRow[], address: string, sinceAt: number, now: number): number {
+  const a = address.toLowerCase();
+  let net = 0;
+  for (const r of rows) {
+    if (!r || r.address !== a || !(r.at > sinceAt) || r.at > now || r.usd == null) continue;
+    if (r.kind === "deposit") net += r.usd;
+    else net -= r.usd;
+  }
+  return net;
+}
+
+/**
+ * PURE: a follower's equity: its wallet's ETH in dollars, its positions marked the way its book marks them, and
+ * a swap still in flight at its from-leg dollars, the way the desk's own snapshot carries one (the ETH has left the
+ * wallet and the token is not a position until its receipt). Null when the ETH is unread or unpriced, or when a
+ * position or an in-flight leg has no price: the brake stays off on a guess, and no mark is written from one, the
+ * same rule the desk's own rails keep.
+ */
+export function followerEquityUsd(walletEth: number | null, ethUsd: number | null, pos: Positions): number | null {
+  if (walletEth == null || !(ethUsd != null && ethUsd > 0)) return null;
+  let total = walletEth * ethUsd;
+  for (const p of pos.positions) {
+    if (p.valueUsd == null) return null;
+    total += p.valueUsd;
+  }
+  for (const f of pos.inFlight) {
+    if (f.usd == null) return null;
+    total += f.usd;
+  }
+  return total;
+}
+
+/** PURE: the latest price per symbol from the desk's own samples within the window, keyed upper-case, for marking a follower's tokens. */
+export function latestPrices(samples: Array<{ at: number; symbol: string; priceUsd: number }>, now: number, maxAgeMs = 3 * 3600e3): Prices {
+  const out: Prices = {};
+  for (const s of [...samples].filter((x) => x && now - x.at <= maxAgeMs && x.at <= now).sort((a, b) => a.at - b.at)) out[s.symbol.toUpperCase()] = s.priceUsd;
+  return out;
+}
+
+export const readFollowMarks = (): FollowMarkRow[] => readLedger<FollowMarkRow>(MARKS_FILE);
+export function recordFollowMark(row: FollowMarkRow): boolean {
+  return appendLedger(MARKS_FILE, { ...row, address: row.address.toLowerCase() });
+}
+/** The follower's mark for today: read from the ledger, or written now from this equity when the day has none. */
+export function followDayStart(address: string, equityUsd: number, now = Date.now()): FollowMarkRow {
+  const { mark, fresh } = markOrNew(readFollowMarks(), address, equityUsd, now);
+  if (fresh) recordFollowMark(mark);
+  return mark;
 }
 
 const usd = (v: number) => `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
