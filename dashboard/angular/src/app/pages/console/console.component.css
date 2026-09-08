@@ -1,11 +1,13 @@
-/* A terminal that belongs to this site rather than a generic black box: the house tokens throughout, the lime
-   accent doing the work green-on-black does in a shell. Mono where what you type is what runs; the body face
-   where two parties are talking. */
-:host {
-  display: block;
+/* A chat workspace with a command line in it: a sidebar of the things worth doing, a bar that says where you stand,
+   the conversation in the middle and one pill of an input at the bottom. The house tokens throughout, the lime
+   accent doing the work green-on-black does in a shell. Mono where what you type is what runs; the body face where
+   two parties are talking. Dark is the house; light is one tap away in the bar. */
+:host { display: block; }
+.obs-console {
   --ink: #0a0c0a;
   --panel: #101310;
   --panel-solid: #131613;
+  --raised: #181c18;
   --border: #2a2e2a;
   --border-strong: #373c37;
   --text: #f2f5f2;
@@ -13,184 +15,252 @@
   --text-faint: #8a968a;
   --lime: #b8ff3d;
   --lime-ink: #07130a;
+  --accent-text: #b8ff3d;
+  --accent-wash: rgba(184, 255, 61, 0.08);
   --amber: #ffce4d;
   --red: #ff6b6b;
+  --red-text: #f0a0a0;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --body: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
   --radius: 14px;
   --radius-sm: 8px;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+/* The light look: the same page on paper. The accent stays lime on fills and turns a deep green where it is text,
+   so it reads on white. */
+.obs-console--light {
+  --ink: #f5f7f3;
+  --panel: #ffffff;
+  --panel-solid: #eef1ec;
+  --raised: #ffffff;
+  --border: #dbe1d8;
+  --border-strong: #c5cdc2;
+  --text: #101410;
+  --text-dim: #48534a;
+  --text-faint: #6f7a70;
+  --accent-text: #3f7d00;
+  --accent-wash: rgba(90, 160, 0, 0.09);
+  --red-text: #b83a3a;
+  --shadow: 0 12px 40px rgba(20, 30, 10, 0.12);
 }
 .obs-console,
 .obs-console * { box-sizing: border-box; }
-/* Every button here draws itself: no native push-button under it (Safari keeps one unless told), and nothing the
-   site's global stylesheet says about buttons (height, shadow, casing, spacing) reaches the console's pills. */
+/* Every button here draws itself (and the rules below that shape a button carry .obs-console too, so they outrank this one): no native push-button under it (Safari keeps one unless told), and nothing the
+   site's global stylesheet says about buttons (height, shadow, casing, spacing) reaches the console's controls. */
 .obs-console button {
   appearance: none; -webkit-appearance: none;
   display: inline-flex; align-items: center; justify-content: center;
   margin: 0; min-height: 0; height: auto; line-height: 1.25; white-space: nowrap;
   box-shadow: none; text-shadow: none; background-image: none; text-transform: none; letter-spacing: normal; text-decoration: none;
-  outline: none;
+  outline: none; font-family: var(--body);
 }
-.obs-console button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
-.obs-console .cli__card { display: flex; align-items: flex-start; justify-content: flex-start; white-space: normal; }
-.obs-console .cli__menu-item { display: grid; align-items: baseline; white-space: normal; }
-.obs-console .cli__signin { margin-left: auto; }
-.obs-console { max-width: 1180px; margin: 0 auto; padding: 28px 20px 40px; color: var(--text); }
+.obs-console button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.obs-console svg { width: 18px; height: 18px; display: block; }
 
+/* The workspace: sidebar, console, and the site page a command opened. It fills the window under the site's
+   header, never less than a comfortable screen. */
+.obs-console {
+  position: relative;
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 0;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 20px 20px 28px;
+  height: clamp(600px, calc(100vh - 110px), 1000px);
+  color: var(--text);
+  font-family: var(--body);
+}
+.obs-console--split { grid-template-columns: 236px minmax(360px, 1fr) minmax(0, 1fr); }
+
+/* ---- the sidebar ------------------------------------------------------------------------------------------- */
+.cli__side {
+  display: flex; flex-direction: column; gap: 6px; min-height: 0;
+  padding: 14px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+.cli__side-brand { display: flex; align-items: center; gap: 9px; padding: 2px 6px 12px; }
+.cli__side-title { font-size: 13.5px; font-weight: 700; color: var(--text); letter-spacing: 0.01em; }
+.obs-console .cli__side-close { display: none; margin-left: auto; }
+.cli__mark { width: 64px; height: 64px; border-radius: 18px; object-fit: cover; display: block; }
+.cli__mark--small { width: 26px; height: 26px; border-radius: 8px; }
+.obs-console .cli__side-new {
+  gap: 8px; justify-content: flex-start; width: 100%;
+  padding: 9px 12px; border-radius: 10px; font-size: 13.5px; font-weight: 700; cursor: pointer;
+  color: var(--lime-ink); background: var(--lime); border: 1px solid transparent;
+  transition: filter 0.15s ease;
+}
+.obs-console .cli__side-new:hover { filter: brightness(1.05); }
+.obs-console .cli__side-new svg { width: 16px; height: 16px; }
+.obs-console .cli__side-item {
+  gap: 8px; justify-content: flex-start; width: 100%; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; padding: 5px 10px; border-radius: 9px; font-size: 13.5px; font-weight: 500; cursor: pointer;
+  color: var(--text-dim); background: transparent; border: 1px solid transparent; text-decoration: none;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.obs-console .cli__side-item:hover:not(:disabled) { background: var(--accent-wash); color: var(--text); }
+.obs-console .cli__side-item:disabled { opacity: 0.5; cursor: default; }
+.obs-console .cli__side-search { color: var(--text-dim); }
+.obs-console .cli__side-search svg { width: 15px; height: 15px; }
+.cli__side-nav { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+.cli__side-nav::-webkit-scrollbar { width: 6px; }
+.cli__side-nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+.cli__side-group { display: flex; flex-direction: column; gap: 1px; }
+.cli__side-eyebrow { margin: 0 0 4px; padding: 0 10px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); }
+.obs-console .cli__side-item--recent { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
+.cli__side-foot { display: flex; flex-direction: column; gap: 1px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* ---- the console ------------------------------------------------------------------------------------------- */
 .cli {
-  display: flex;
-  flex-direction: column;
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border-radius: 0 var(--radius) var(--radius) 0;
   background: var(--ink);
-  font-family: var(--mono);
   overflow: hidden;
-  min-height: 520px;
-  max-height: 78vh;
   cursor: text;
 }
+.obs-console--split .cli { border-radius: 0; border-right: 0; }
 
 .cli__bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px 10px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--panel-solid);
-  font-family: var(--body);
   font-size: 13px;
-  flex-wrap: wrap;
   cursor: default;
 }
-.cli__status { color: var(--text-faint); }
-.cli__credits { font-family: var(--body); font-size: 12px; font-weight: 600; color: var(--text-dim); background: transparent; border: 1px solid var(--border-strong); border-radius: 999px; padding: 4px 10px; cursor: pointer; }
-.cli__credits:hover { color: var(--lime); border-color: var(--lime); }
-.cli__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
+.cli__bar-space { flex: 1; }
+.cli__status { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cli__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex: none; }
 .cli__dot.on { background: var(--lime); box-shadow: 0 0 8px var(--lime); }
 .cli__dot.warn { background: var(--amber); }
-.cli__who { color: var(--text); font-weight: 700; }
+.cli__icon {
+  width: 32px; height: 32px; border-radius: 9px; padding: 0; cursor: pointer;
+  color: var(--text-dim); background: transparent; border: 1px solid transparent;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.cli__icon:hover { background: var(--accent-wash); color: var(--text); }
+.obs-console .cli__menu-btn { display: none; }
+.cli__pill {
+  font-size: 12.5px; font-weight: 600; color: var(--text); background: var(--raised);
+  border: 1px solid var(--border-strong); border-radius: 999px; padding: 6px 12px; cursor: pointer; gap: 5px;
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.cli__pill:hover { border-color: var(--accent-text); color: var(--accent-text); }
+.cli__pill-dim { color: var(--text-faint); font-weight: 500; }
 .cli__signin {
-  margin-left: auto; font-family: var(--body); font-size: 12.5px; font-weight: 700;
-  background: var(--lime); color: var(--lime-ink); border: 0; border-radius: 999px; padding: 7px 14px; cursor: pointer;
+  font-size: 12.5px; font-weight: 700; cursor: pointer;
+  background: var(--lime); color: var(--lime-ink); border: 0; border-radius: 999px; padding: 8px 14px;
 }
 .cli__signin:disabled { opacity: 0.6; cursor: default; }
 
-.cli__scroll { flex: 1; overflow-y: auto; padding: 16px 14px; display: flex; flex-direction: column; gap: 10px; }
+.cli__scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
 .cli__scroll::-webkit-scrollbar { width: 8px; }
 .cli__scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+
+/* The first screen: the mark, "Ask anything", three things worth doing. Centred, the way an empty chat is. */
+.cli__welcome { margin: auto; max-width: 760px; width: 100%; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 24px 0; }
+.cli__title { margin: 8px 0 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); text-wrap: balance; }
+.cli__welcome-note { margin: 0 0 14px; font-size: 14px; color: var(--text-faint); max-width: 46ch; }
+.obs-console .cli__cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; }
+.obs-console .cli__card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 5px; text-align: left; cursor: pointer; white-space: normal;
+  padding: 14px 14px 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.obs-console .cli__card:hover:not(:disabled) { border-color: var(--accent-text); background: var(--accent-wash); }
+.obs-console .cli__card:disabled { opacity: 0.5; cursor: default; }
+.obs-console .cli__card-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.obs-console .cli__card-text { font-size: 12.5px; line-height: 1.5; color: var(--text-faint); }
 
 /* The transcript reads as a conversation, not a log: your messages right, your agent's left in a card, both in the
    body face because they are speech. The terminal treatment is kept for the command you typed and for column-aligned
    output. */
 .cli__row { display: flex; justify-content: flex-start; }
 .cli__row--me { justify-content: flex-end; }
-.cli__bubble { max-width: 82%; font-family: var(--body); font-size: 14.5px; line-height: 1.62; padding: 10px 14px; border-radius: var(--radius); word-break: break-word; white-space: pre-wrap; }
-.cli__bubble--me { background: rgba(184, 255, 61, 0.1); border: 1px solid var(--border-strong); border-bottom-right-radius: 4px; color: var(--text); }
+.cli__bubble { max-width: 78%; font-size: 14.5px; line-height: 1.62; padding: 10px 14px; border-radius: var(--radius); word-break: break-word; white-space: pre-wrap; }
+.cli__bubble--me { background: var(--accent-wash); border: 1px solid var(--border-strong); border-bottom-right-radius: 4px; color: var(--text); }
 .cli__bubble--agent { background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; color: var(--text); }
+.cli__bubble a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 
 .cli__cmd { margin: 2px 0; font-family: var(--mono); font-size: 12.5px; color: var(--text-faint); }
-.cli__cmd-mark { color: var(--lime); margin-right: 7px; }
-
+.cli__cmd-mark { color: var(--accent-text); margin-right: 7px; }
 .cli__out {
   margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.62; white-space: pre-wrap; word-break: break-word;
-  color: var(--text-dim); padding: 9px 12px; border-left: 2px solid var(--border-strong); background: rgba(255, 255, 255, 0.02);
+  color: var(--text-dim); padding: 9px 12px; border-left: 2px solid var(--border-strong); background: var(--panel);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
-.cli__out--error { color: #f0a0a0; border-left-color: rgba(255, 107, 107, 0.5); }
-.cli__note { margin: 2px 0; font-family: var(--body); font-size: 13px; line-height: 1.55; color: var(--text-faint); }
+.cli__out--error { color: var(--red-text); border-left-color: rgba(255, 107, 107, 0.5); }
+.cli__note { margin: 2px 0; font-size: 13px; line-height: 1.55; color: var(--text-faint); }
 
 .cli__suggest { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
 .cli__chip {
-  font-family: var(--body); font-size: 12.5px; line-height: 1.3; padding: 6px 12px; border-radius: 999px;
+  font-size: 12.5px; line-height: 1.3; padding: 6px 12px; border-radius: 999px;
   border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; text-align: left;
   transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
-.cli__chip--cmd { font-family: var(--mono); color: var(--lime); border-color: var(--border); }
-.cli__chip:hover:not(:disabled) { color: var(--text); border-color: var(--lime); background: rgba(184, 255, 61, 0.07); }
+.cli__chip--cmd { font-family: var(--mono); color: var(--accent-text); border-color: var(--border); }
+.cli__chip:hover:not(:disabled) { color: var(--text); border-color: var(--accent-text); background: var(--accent-wash); }
 .cli__chip:disabled { opacity: 0.4; cursor: default; }
 /* A link chip opens in a new tab (an app's sign-in); the approval chips answer the agent's question. */
-a.cli__chip--link { text-decoration: none; display: inline-flex; align-items: center; color: var(--lime); border-color: var(--lime); font-weight: 600; }
-a.cli__chip--link:hover { background: rgba(184, 255, 61, 0.1); }
+a.cli__chip--link { text-decoration: none; display: inline-flex; align-items: center; color: var(--accent-text); border-color: var(--accent-text); font-weight: 600; }
+a.cli__chip--link:hover { background: var(--accent-wash); }
 .cli__approval { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; }
-.cli__chip--allow { color: var(--lime); border-color: var(--lime); font-weight: 700; }
-.cli__chip--deny { color: #f0a0a0; border-color: rgba(255, 107, 107, 0.5); }
-.cli__decided { font-family: var(--body); font-size: 12.5px; color: var(--text-faint); }
+.cli__chip--allow { color: var(--accent-text); border-color: var(--accent-text); font-weight: 700; }
+.cli__chip--deny { color: var(--red-text); border-color: rgba(255, 107, 107, 0.5); }
+.cli__decided { font-size: 12.5px; color: var(--text-faint); }
 .cli__approval-args { margin: 6px 0 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--text-faint); white-space: pre-wrap; word-break: break-word; }
-.cli__bubble a { color: var(--lime); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 
-.cli__caret { display: inline-block; width: 7px; height: 14px; margin-left: 3px; background: var(--lime); vertical-align: text-bottom; animation: cli-blink 1s steps(2, start) infinite; }
+.cli__caret { display: inline-block; width: 7px; height: 14px; margin-left: 3px; background: var(--accent-text); vertical-align: text-bottom; animation: cli-blink 1s steps(2, start) infinite; }
 @keyframes cli-blink { to { visibility: hidden; } }
 
-.cli__hint { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; border-top: 1px solid var(--border); background: var(--panel); }
-.cli__hint-item { font-family: inherit; font-size: 11.5px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
-.cli__hint-item:hover { color: var(--lime); border-color: var(--border-strong); }
+/* ---- the dock: menu, hints, input ---------------------------------------------------------------------------- */
+.cli__dock { display: flex; flex-direction: column; gap: 8px; padding: 8px 16px 14px; border-top: 1px solid var(--border); background: var(--panel-solid); cursor: default; }
+/* The command menu above the input: each command in a few words, so "/" is never a guess. */
+.cli__menu { display: flex; flex-direction: column; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); max-height: 300px; overflow-y: auto; box-shadow: var(--shadow); }
+.obs-console .cli__menu-item {
+  display: grid; grid-template-columns: 120px 1fr auto; gap: 12px; align-items: baseline; text-align: left; cursor: pointer; white-space: normal;
+  padding: 8px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); font-size: 13px;
+}
+.obs-console .cli__menu-item--on, .obs-console .cli__menu-item:hover { background: var(--accent-wash); color: var(--text); }
+.cli__menu-cmd { font-family: var(--mono); font-size: 12.5px; color: var(--accent-text); }
+.cli__menu-usage { font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); }
 
-.cli__input-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--border); background: var(--panel-solid); margin: 0; }
-.cli__prompt { color: var(--lime); user-select: none; }
-.cli__input { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-family: var(--body); font-size: 14.5px; min-width: 0; }
+.cli__hint { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px; }
+.cli__hint-item { font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.cli__hint-item:hover { color: var(--accent-text); border-color: var(--border-strong); }
+/* One sentence above the input, only when something is needed: the wallet, the sign-in, a retry. */
+.obs-console .cli__hintline { align-self: center; font-size: 12.5px; color: var(--text-faint); background: transparent; border: 0; padding: 2px 6px; cursor: pointer; white-space: normal; text-align: center; }
+.obs-console .cli__hintline:hover { color: var(--accent-text); }
+
+.cli__input-row {
+  display: flex; align-items: center; gap: 8px; margin: 0;
+  padding: 6px 6px 6px 8px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--raised);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.cli__input-row:focus-within { border-color: var(--accent-text); box-shadow: 0 0 0 3px var(--accent-wash); }
+.cli__slash { width: 30px; height: 30px; font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--accent-text); background: var(--accent-wash); border-radius: 50%; }
+.cli__input { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-family: var(--body); font-size: 14.5px; min-width: 0; padding: 6px 4px; }
 .cli__input::placeholder { color: var(--text-faint); }
 .cli__input:disabled { opacity: 0.5; }
 .cli__send {
-  font-family: var(--body); font-size: 12.5px; font-weight: 700; color: var(--text); background: transparent;
-  border: 1px solid var(--border-strong); border-radius: 999px; padding: 6px 14px; cursor: pointer;
+  width: 34px; height: 34px; padding: 0; border-radius: 50%; cursor: pointer;
+  color: var(--lime-ink); background: var(--lime); border: 0;
+  transition: filter 0.15s ease, opacity 0.15s ease;
 }
-.cli__send:hover:not(:disabled) { border-color: var(--lime); color: var(--lime); }
-.cli__send:disabled { opacity: 0.4; cursor: default; }
+.cli__send:hover:not(:disabled) { filter: brightness(1.06); }
+.cli__send:disabled { opacity: 0.35; cursor: default; }
 
-/* The first screen: three things worth doing, each one tap, in the body face because it is an invitation. */
-.cli__welcome { font-family: var(--body); padding: 6px 2px 10px; }
-.cli__title { margin: 0 0 14px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
-.cli__cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.cli__card {
-  display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer;
-  padding: 16px 16px 18px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--panel); color: var(--text);
-  font-family: var(--body); transition: border-color 0.15s ease, background 0.15s ease;
-}
-.cli__card:hover:not(:disabled) { border-color: var(--lime); background: rgba(184, 255, 61, 0.06); }
-.cli__card:disabled { opacity: 0.5; cursor: default; }
-.cli__card-title { font-size: 15px; font-weight: 700; color: var(--lime); }
-.cli__card-text { font-size: 13.5px; line-height: 1.5; color: var(--text-dim); }
-.cli__welcome-note { margin: 14px 0 0; font-size: 13px; color: var(--text-faint); }
-
-/* The command menu above the input: each command in a few words, so "/" is never a guess. */
-.cli__menu { display: flex; flex-direction: column; padding: 6px; border-top: 1px solid var(--border); background: var(--panel); max-height: 300px; overflow-y: auto; }
-.cli__menu-item {
-  display: grid; grid-template-columns: 120px 1fr auto; gap: 12px; align-items: baseline; text-align: left; cursor: pointer;
-  padding: 8px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); font-family: var(--body); font-size: 13px;
-}
-.cli__menu-item--on, .cli__menu-item:hover { background: rgba(184, 255, 61, 0.08); color: var(--text); }
-.cli__menu-cmd { font-family: var(--mono); font-size: 12.5px; color: var(--lime); }
-.cli__menu-usage { font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); }
-
-@media (max-width: 640px) {
-  .obs-console { padding: 12px 10px 24px; }
-  .cli { min-height: 420px; max-height: 80vh; border-radius: 12px; }
-  .cli__bubble { max-width: 90%; font-size: 14px; }
-  .cli__out { font-size: 11.5px; }
-  .cli__cards { grid-template-columns: 1fr; }
-  .cli__title { font-size: 18px; }
-  .cli__menu-item { grid-template-columns: 96px 1fr; }
-  .cli__menu-usage { display: none; }
-  /* The Send button stays on a phone: the keyboard's Send key is one way, this is the other. */
-  .cli__send { padding: 6px 10px; font-size: 12px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .cli__caret { animation: none; }
-  .cli__chip { transition: none; }
-}
-
-/* One of the site's own pages beside the console: the view a command opened. Two columns when there is room, and
-   on a phone the view sits above the console so what was asked for is in sight. */
-.obs-console--split { max-width: 1480px; display: grid; grid-template-columns: minmax(340px, 460px) minmax(0, 1fr); gap: 20px; align-items: stretch; }
+/* ---- the site's page beside the console --------------------------------------------------------------------- */
 .cli__view { display: none; }
 .cli__view--open {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 520px;
-  max-height: 78vh;
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border-radius: 0 var(--radius) var(--radius) 0;
   background: var(--panel);
   overflow: hidden;
 }
@@ -199,9 +269,41 @@ a.cli__chip--link:hover { background: rgba(184, 255, 61, 0.1); }
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel-solid);
   font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; color: var(--text-dim);
 }
-.cli__view-title { color: var(--lime); }
+.cli__view-title { color: var(--accent-text); }
 .cli__view-body { flex: 1; min-height: 0; overflow: auto; }
+
+/* ---- smaller screens ---------------------------------------------------------------------------------------- */
+@media (max-width: 1100px) {
+  .obs-console--split { grid-template-columns: 236px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .obs-console--split .cli { border-radius: 0 var(--radius) 0 0; border-right: 1px solid var(--border-strong); }
+  .obs-console--split .cli__view--open { grid-column: 1 / -1; border-radius: 0 0 var(--radius) var(--radius); border-top: 0; }
+  .obs-console--split .cli__side { border-radius: var(--radius) 0 0 0; }
+}
 @media (max-width: 900px) {
-  .obs-console--split { grid-template-columns: 1fr; }
-  .cli__view--open { order: -1; min-height: 0; max-height: 60vh; }
+  .obs-console, .obs-console--split { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; padding: 10px 10px 18px; height: clamp(520px, calc(100vh - 90px), 1000px); }
+  .obs-console--split { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .obs-console--split .cli__view--open { grid-column: auto; order: -1; border-radius: var(--radius) var(--radius) 0 0; border-top: 1px solid var(--border-strong); border-bottom: 0; }
+  .obs-console--split .cli { border-radius: 0 0 var(--radius) var(--radius); border-right: 1px solid var(--border-strong); }
+  .cli { border-radius: var(--radius); }
+  /* The sidebar becomes a drawer the bar's menu button opens. */
+  .cli__side { position: fixed; inset: 0 auto 0 0; z-index: 40; width: min(300px, 86vw); border-radius: 0; border-right: 1px solid var(--border); transform: translateX(-104%); transition: transform 0.2s ease; box-shadow: var(--shadow); }
+  .obs-console--side .cli__side { transform: none; }
+  .cli__backdrop { position: fixed; inset: 0; z-index: 39; background: rgba(0, 0, 0, 0.5); }
+  .obs-console .cli__side-close { display: inline-flex; }
+  .obs-console .cli__menu-btn { display: inline-flex; }
+  .cli__scroll { padding: 14px 12px; }
+  .cli__bubble { max-width: 90%; font-size: 14px; }
+  .cli__out { font-size: 11.5px; }
+  .obs-console .cli__cards { grid-template-columns: 1fr; }
+  .cli__title { font-size: 22px; }
+  .cli__mark { width: 52px; height: 52px; border-radius: 14px; }
+  .obs-console .cli__menu-item { grid-template-columns: 96px 1fr; }
+  .cli__menu-usage { display: none; }
+  .cli__dock { padding: 8px 10px 12px; }
+  .cli__pill { display: none; }
+  .cli__status { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cli__caret { animation: none; }
+  .cli__chip, .cli__side, .cli__input-row { transition: none; }
 }

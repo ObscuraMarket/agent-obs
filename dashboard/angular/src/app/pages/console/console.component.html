@@ -1,35 +1,87 @@
-<!-- The OBS console at /console: the path of least resistance. Buttons before commands, one obvious next step in
-     every state, and a menu that explains each command the moment a line starts with "/". A line is a message to
-     your agent; a slash line is a command the desk routes. The page streams the chat, signs nothing, holds no key. -->
-<div class="obs-console" [class.obs-console--split]="view">
-  <div class="cli" (click)="focusInput()">
+<!-- The OBS console at /console: a chat workspace with a command line in it. A sidebar of the things worth doing, a
+     bar that says where you stand, the conversation in the middle, and one input at the bottom that takes a question
+     or a command. A line is a message to your agent; a slash line is a command the desk routes. The page streams
+     the chat, signs nothing, holds no key. -->
+<div class="obs-console" [class.obs-console--split]="view" [class.obs-console--light]="theme === 'light'" [class.obs-console--side]="sideOpen">
+  <div class="cli__backdrop" *ngIf="sideOpen" (click)="toggleSide($event)" aria-hidden="true"></div>
+
+  <!-- The sidebar: new chat, search, then the console's commands grouped the way a person thinks of them. -->
+  <aside class="cli__side" aria-label="Console navigation">
+    <div class="cli__side-brand">
+      <img class="cli__mark cli__mark--small" src="/assets/images/agent-obs.png" alt="">
+      <span class="cli__side-title">OBS Console</span>
+      <button type="button" class="cli__icon cli__side-close" (click)="toggleSide($event)" aria-label="Close menu">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+      </button>
+    </div>
+    <button type="button" class="cli__side-new" (click)="newChat()">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+      New chat
+    </button>
+    <button type="button" class="cli__side-item cli__side-search" (click)="searchCommands()">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      Search commands
+    </button>
+
+    <nav class="cli__side-nav">
+      <div class="cli__side-group" *ngFor="let s of sideNav">
+        <p class="cli__side-eyebrow">{{ s.title }}</p>
+        <button type="button" *ngFor="let it of s.items" class="cli__side-item" (click)="pickSide(it.line)" [disabled]="busy" [title]="it.line">{{ it.label }}</button>
+      </div>
+      <div class="cli__side-group" *ngIf="recent.length">
+        <p class="cli__side-eyebrow">Recent</p>
+        <button type="button" *ngFor="let r of recent" class="cli__side-item cli__side-item--recent" (click)="pickSide(r)" [disabled]="busy" [title]="r">{{ r }}</button>
+      </div>
+    </nav>
+
+    <div class="cli__side-foot">
+      <a class="cli__side-item" routerLink="/docs">Docs</a>
+      <a class="cli__side-item" routerLink="/">Home</a>
+    </div>
+  </aside>
+
+  <section class="cli" (click)="focusInput()" aria-label="OBS console">
+    <!-- The bar: where you stand on the left; the look, the model, the credits and the wallet on the right. -->
     <div class="cli__bar">
+      <button type="button" class="cli__icon cli__menu-btn" (click)="toggleSide($event)" aria-label="Open menu">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
       <span class="cli__dot" [class.on]="agentState === 'ready' || agentState === 'thinking'" [class.warn]="agentState === 'provisioning' || agentState === 'error'" aria-hidden="true"></span>
-      <span class="cli__who">OBS Console</span>
-      <span class="cli__status">{{ statusLine }}<ng-container *ngIf="wallet"> · {{ short(wallet) }}</ng-container></span>
-      <button type="button" class="cli__credits" *ngIf="credits !== null" (click)="runLine('/credits')" title="Your credits: what your agent spends when it thinks. A thousand credits are $10 of USDG. Tap to add some.">{{ creditsText(credits) }}</button>
-      <button type="button" class="cli__signin" (click)="onSignInClick($event)" [disabled]="status === 'signing'">{{ status === 'signed-in' ? 'Signed in' : status === 'signing' ? 'Signing…' : 'Sign in with wallet' }}</button>
+      <span class="cli__status">{{ statusLine }}</span>
+      <span class="cli__bar-space"></span>
+      <button type="button" class="cli__icon" (click)="toggleTheme(); $event.stopPropagation()" [attr.aria-label]="theme === 'dark' ? 'Switch to light' : 'Switch to dark'" [title]="theme === 'dark' ? 'Light' : 'Dark'">
+        <svg *ngIf="theme === 'dark'" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.6" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <svg *ngIf="theme === 'light'" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 12.4A6.5 6.5 0 0 1 7.6 4.5a6.5 6.5 0 1 0 7.9 7.9z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/></svg>
+      </button>
+      <button type="button" class="cli__pill" *ngIf="modelLabel" (click)="runLine('/model')" title="The model your agent runs on. Tap to pick another.">
+        <span class="cli__pill-dim">{{ agentName }} ·</span> {{ modelLabel }}
+      </button>
+      <button type="button" class="cli__pill" *ngIf="credits !== null" (click)="runLine('/credits')" title="Your credits: what your agent spends when it thinks. A thousand credits are $10 of USDG. Tap to add some.">
+        <span class="cli__pill-dim">Top up ·</span> {{ creditsText(credits) }}
+      </button>
+      <button type="button" class="cli__signin" (click)="onSignInClick($event)" [disabled]="status === 'signing'">{{ signInLabel }}</button>
     </div>
 
     <div class="cli__scroll" #screen aria-live="polite">
-      <!-- The first screen: three things worth doing, each one tap. It steps aside as soon as anything runs. -->
+      <!-- The first screen: the mark, one invitation, and three things worth doing. It steps aside as soon as anything runs. -->
       <div class="cli__welcome" *ngIf="!started">
-        <h2 class="cli__title">What would you like to do?</h2>
+        <img class="cli__mark" src="/assets/images/agent-obs.png" alt="">
+        <h2 class="cli__title">Ask anything</h2>
+        <p class="cli__welcome-note">Talk to your agent, read the desk, or type / for every command, explained.</p>
         <div class="cli__cards">
           <button type="button" class="cli__card" (click)="runLine('/status')" [disabled]="busy">
             <span class="cli__card-title">See what the desk is doing</span>
-            <span class="cli__card-text">Agent OBS trades in public. See what it holds right now, and why.</span>
+            <span class="cli__card-text">Agent OBS trades in public. What it holds right now, and why.</span>
           </button>
           <button type="button" class="cli__card" (click)="runLine('/trade')" [disabled]="busy">
             <span class="cli__card-title">Trade</span>
-            <span class="cli__card-text">Swap through Obscura's routes. Rewards, Cards and Yield are one tap below.</span>
+            <span class="cli__card-text">Swap through Obscura's routes. Rewards, Cards and Yield are one tap away.</span>
           </button>
           <button type="button" class="cli__card" (click)="runLine('/connect')" [disabled]="busy || status === 'signing'">
             <span class="cli__card-title">{{ status === 'signed-in' ? 'Meet your agent' : 'Get your own agent' }}</span>
             <span class="cli__card-text">{{ inviteLine }}</span>
           </button>
         </div>
-        <p class="cli__welcome-note">Or type a question below. Type / to see every command, explained.</p>
       </div>
 
       <ng-container *ngFor="let g of groups; let i = index; let last = last">
@@ -67,25 +119,31 @@
       <pre class="cli__out cli__out--error" *ngIf="agentError">{{ agentError }}</pre>
     </div>
 
-    <!-- The command menu: what "/" can do, each in a few words. Arrow keys move, Tab picks, Enter sends a command typed in full or picks one typed in part, Escape closes. -->
-    <div class="cli__menu" *ngIf="menu.length" role="listbox" aria-label="Commands">
-      <button type="button" *ngFor="let m of menu; let i = index" class="cli__menu-item" [class.cli__menu-item--on]="i === menuAt" role="option" [attr.aria-selected]="i === menuAt" (mousedown)="$event.preventDefault()" (click)="pickMenu(m)">
-        <span class="cli__menu-cmd">/{{ m.cmd }}</span>
-        <span class="cli__menu-what">{{ m.what }}</span>
-        <span class="cli__menu-usage" *ngIf="m.usage">{{ m.usage }}</span>
-      </button>
-    </div>
+    <!-- The dock: the command menu when a line starts with "/", one line of hints, and the input itself. -->
+    <div class="cli__dock">
+      <!-- The command menu: what "/" can do, each in a few words. Arrow keys move, Tab picks, Enter sends a command typed in full or picks one typed in part, Escape closes. -->
+      <div class="cli__menu" *ngIf="menu.length" role="listbox" aria-label="Commands">
+        <button type="button" *ngFor="let m of menu; let i = index" class="cli__menu-item" [class.cli__menu-item--on]="i === menuAt" role="option" [attr.aria-selected]="i === menuAt" (mousedown)="$event.preventDefault()" (click)="pickMenu(m)">
+          <span class="cli__menu-cmd">/{{ m.cmd }}</span>
+          <span class="cli__menu-what">{{ m.what }}</span>
+          <span class="cli__menu-usage" *ngIf="m.usage">{{ m.usage }}</span>
+        </button>
+      </div>
 
-    <div class="cli__hint" *ngIf="hint.length">
-      <button type="button" *ngFor="let h of hint" class="cli__hint-item" (click)="pickHint(h)">{{ h }}</button>
-    </div>
+      <div class="cli__hint" *ngIf="hint.length">
+        <button type="button" *ngFor="let h of hint" class="cli__hint-item" (click)="pickHint(h)">{{ h }}</button>
+      </div>
+      <button type="button" class="cli__hintline" *ngIf="!hint.length && !menu.length && hintLine" (click)="hintAction($event)">{{ hintLine }}</button>
 
-    <form class="cli__input-row" (submit)="submit($event)">
-      <span class="cli__prompt" aria-hidden="true">&gt;</span>
-      <input #cmd class="cli__input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" enterkeyhint="send" [placeholder]="placeholder" (keydown)="onKey($event)" (input)="onInput()" [disabled]="agentState === 'provisioning'" aria-label="OBS console input">
-      <button type="submit" class="cli__send" [disabled]="busy" aria-label="Send">Send</button>
-    </form>
-  </div>
+      <form class="cli__input-row" (submit)="submit($event)">
+        <button type="button" class="cli__icon cli__slash" (click)="searchCommands(); $event.stopPropagation()" title="Every command, explained" aria-label="Commands">/</button>
+        <input #cmd class="cli__input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" enterkeyhint="send" [placeholder]="placeholder" (keydown)="onKey($event)" (input)="onInput()" [disabled]="agentState === 'provisioning'" aria-label="OBS console input">
+        <button type="submit" class="cli__send" [disabled]="busy" aria-label="Send">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4M4.5 9.5L10 4l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        </button>
+      </form>
+    </div>
+  </section>
 
   <!-- One of the site's own pages, opened by a button or a view command beside the console; the site's module
        supplies the component, this page only hosts it. -->

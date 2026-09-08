@@ -58,6 +58,16 @@ const COMMAND_HELP: CommandHelp[] = [
 const COMMANDS = COMMAND_HELP.map((c) => c.cmd);
 const ARG_VALUES: Record<string, string[]> = { style: ['concise', 'balanced', 'deep'], reset: ['chat', 'name', 'goal', 'voice', 'style', 'model'], help: ['all'] };
 const SESSION_KEY = 'obs-console-session';
+const THEME_KEY = 'obs-console-theme';
+
+/** The sidebar: the console's commands grouped the way a person thinks of them, one tap each. */
+interface SideItem { label: string; line: string; }
+interface SideSection { title: string; items: SideItem[]; }
+const SIDE_NAV: SideSection[] = [
+  { title: 'The desk', items: [{ label: 'Status', line: '/desk' }, { label: 'Positions', line: '/positions' }, { label: 'Thoughts', line: '/thoughts' }, { label: 'Watch', line: '/watch' }, { label: 'Agents', line: '/agents' }] },
+  { title: 'Your agent', items: [{ label: 'Agent', line: '/agent' }, { label: 'Wallet', line: '/wallet' }, { label: 'Credits', line: '/credits' }, { label: 'Model', line: '/model' }, { label: 'Settings', line: '/whoami' }] },
+  { title: 'The app', items: [{ label: 'Trade', line: '/trade' }, { label: 'Rewards', line: '/rewards' }, { label: 'Cards', line: '/cards' }, { label: 'Yield', line: '/yield' }] },
+];
 
 /**
  * The OBS console: one surface for talking to your agent and for shaping it, beside the desk's read-only commands,
@@ -101,6 +111,13 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
   /** What the desk offers right now, read once from its status: Apps stay hidden until Composio is switched on there, and the door's wording follows its gate. */
   appsOn = true;
   gate: 'on' | 'allowlist' | 'off' = 'on';
+  /** The look: dark is the house; light is one tap away in the bar, remembered per browser. */
+  theme: 'dark' | 'light' = 'dark';
+  /** The model the wallet's agent runs on, from the credits read; the bar's pill shows it and opens /model. */
+  model: string | null = null;
+  /** The sidebar on a phone: a drawer the bar's menu button opens. */
+  sideOpen = false;
+  readonly sideNav: SideSection[] = SIDE_NAV;
   /** The welcome card's third line: who gets an agent by connecting, as the door stands today. */
   get inviteLine(): string {
     const who = this.gate === 'allowlist' ? 'For invited wallets' : this.gate === 'off' ? 'For everyone' : 'For OBS and AOBS holders';
@@ -118,6 +135,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
   constructor(private obs: ObsDeskService, private zone: NgZone, @Inject(CONSOLE_VIEWS) private views: Record<string, Type<unknown>>, @Inject(CONSOLE_WALLET) private siteWallet: ConsoleWallet | null, title: Title, meta: Meta) {
     title.setTitle('Obscura - OBS Console');
     meta.updateTag({ name: 'description', content: 'The OBS console: talk to your own agent, read the desk, quote and swap from your own wallet.' });
+    try { if (localStorage.getItem(THEME_KEY) === 'light') { this.theme = 'light'; } } catch { /* private window: the house look */ }
   }
 
   ngAfterViewInit(): void {
@@ -227,6 +245,60 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     return 'Not signed in';
   }
   short(address: string): string { return address.slice(0, 6) + '…' + address.slice(-4); }
+  /** The bar's wallet button: what tapping it does, in two words. */
+  get signInLabel(): string {
+    if (this.status === 'signed-in' && this.wallet) { return this.short(this.wallet); }
+    if (this.status === 'signing') { return 'Signing…'; }
+    return this.wallet ? 'Sign in' : 'Connect wallet';
+  }
+  /** The model as a person names it: the maker's prefix off. */
+  get modelLabel(): string { const m = this.model || ''; return m.includes('/') ? m.slice(m.indexOf('/') + 1) : m; }
+  /** One sentence above the input, only when something is needed: the wallet, the sign-in, a retry. */
+  get hintLine(): string {
+    if (this.agentState === 'ready' || this.agentState === 'thinking' || this.agentState === 'provisioning') { return ''; }
+    if (this.agentState === 'error') { return 'Your agent is not reachable right now. Tap to try again.'; }
+    if (this.status === 'signing') { return 'Check your wallet: sign the message to sign in.'; }
+    if (this.wallet) { return 'Your wallet is connected. Sign in to talk to your agent; the desk commands work without it.'; }
+    return 'Connect your wallet to talk to your agent. The desk commands work without one.';
+  }
+  hintAction(ev: Event): void {
+    ev.stopPropagation();
+    if (this.status === 'signing') { return; }
+    void this.runLine('/connect');
+  }
+  /** The last few lines typed this session, newest first, for the sidebar: a tap runs one again. */
+  get recent(): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (let i = this.history.length - 1; i >= 0 && out.length < 6; i--) {
+      const h = this.history[i];
+      if (h === '/clear' || h === '/cls' || seen.has(h)) { continue; }
+      seen.add(h);
+      out.push(h);
+    }
+    return out;
+  }
+
+  toggleTheme(): void {
+    this.theme = this.theme === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem(THEME_KEY, this.theme); } catch { /* private window */ }
+  }
+  toggleSide(ev?: Event): void { ev?.stopPropagation(); this.sideOpen = !this.sideOpen; }
+  /** A sidebar item: one line, run as if typed; on a phone the drawer closes behind it. */
+  pickSide(line: string): void { this.sideOpen = false; void this.runLine(line); }
+  /** New chat: the screen back to its first state. The agent keeps its memory; /reset chat is the one that forgets. */
+  newChat(): void { this.sideOpen = false; this.clearScreen(); setTimeout(() => this.focusInput(), 0); }
+  /** Search: the input with "/" in it, so the menu of every command opens, explained. */
+  searchCommands(): void {
+    this.sideOpen = false;
+    const el = this.cmd?.nativeElement;
+    if (!el) { return; }
+    el.value = '/';
+    this.onInput();
+    el.focus();
+  }
+  /** The screen as it was before the first line: the welcome back, the menu and hints gone. */
+  private clearScreen(): void { this.lines = []; this.started = false; this.menu = []; this.hint = []; }
 
   focusInput(): void {
     const el = this.cmd?.nativeElement;
@@ -291,7 +363,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
       if (ev.key === 'Escape') { ev.preventDefault(); this.menu = []; return; }
     }
     if (ev.key === 'Tab') { ev.preventDefault(); const c = this.complete(el.value); el.value = c.value; this.hint = c.options; return; }
-    if (ev.key === 'l' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); this.lines = []; return; }
+    if (ev.key === 'l' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); this.clearScreen(); return; }
     if (ev.key === 'Escape' && this.view) { ev.preventDefault(); void this.runLine('/close'); return; }
     if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
       const r = this.recall(ev.key === 'ArrowUp' ? -1 : 1);
@@ -397,14 +469,16 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
       if (!line.startsWith('/')) { await this.chat(line); return; }
       const head = line.slice(1).split(/\s+/)[0].toLowerCase();
       if (head === 'connect') { await this.signIn(line.slice(1).split(/\s+/).slice(1).join(' ')); return; }
-      if (head === 'clear' || head === 'cls') { this.lines = []; return; }
+      if (head === 'clear' || head === 'cls') { this.clearScreen(); return; }
       if (head === 'logout' || head === 'disconnect') { this.logout(); return; }
       // Only the console's own reply shape is taken from an error body; a rate limit, a read-only refusal or a network
       // failure carries an object too, and printing "Done." for one of those hid the real answer (2026-09-08).
       const data = await this.signed<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (this.isExpired(e) ? null : e?.error && typeof e.error === 'object' && (typeof e.error.ok === 'boolean' || Array.isArray(e.error.lines)) ? e.error : { ok: false, lines: [e?.status === 429 ? 'The desk is busy; try again in a moment.' : (typeof e?.error?.error === 'string' ? e.error.error : 'Couldn\'t reach the desk. Try again in a moment.')] }) as ObsCliReply | null);
       if (data === null) { return; }
       if (isAddress(data.wallet)) { this.agentWallet = data.wallet; }
-      if (data.effect === 'clear') { this.lines = []; return; }
+      if (data.effect === 'clear') { this.clearScreen(); return; }
+      // A model picked or shown: the bar's pill follows, read with the credits (the one route that names the model).
+      if (data.effect === 'model' && data.ok) { void this.refreshCredits(); }
       if (data.effect === 'chat' && typeof data.text === 'string') { await this.chat(data.text, true); return; }
       if (data.effect === 'wallet' && data.ok) { await this.walletEffect(data); return; }
       if (data.effect === 'view') { this.applyView(data); return; }
@@ -436,7 +510,11 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
 
   private async refreshCredits(): Promise<void> {
     if (!this.token) { return; }
-    try { const c = await this.signed<ObsCredits>(this.obs.credits(this.token)); this.credits = c.balance; } catch { /* the bar keeps what it had; a 401 has already cleared it */ }
+    try {
+      const c = await this.signed<ObsCredits>(this.obs.credits(this.token));
+      this.credits = c.balance;
+      if (typeof c.model === 'string' && c.model) { this.model = c.model; }
+    } catch { /* the bar keeps what it had; a 401 has already cleared it */ }
   }
 
   /** Add credits: sign the transfer to the treasury, wait for it to land, then have the desk read it and credit it. */
@@ -578,7 +656,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
    */
   private dropSession(): void {
     this.storeSession(null);
-    this.token = null; this.standing = null; this.credits = null; this.settings = {}; this.agentWallet = null;
+    this.token = null; this.standing = null; this.credits = null; this.model = null; this.settings = {}; this.agentWallet = null;
     this.agentState = 'idle'; this.agentError = null; this.agentName = 'OBS console';
     this.status = this.wallet ? 'connected' : 'guest';
   }
