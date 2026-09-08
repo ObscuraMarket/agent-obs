@@ -7,6 +7,7 @@
 import { ASSETS } from "./assets.ts";
 import { readTokenBalance } from "./signer.ts";
 import { OBS_CONTRACT, AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "../config.ts";
+import { Lru } from "../lru.ts";
 
 export type GateMode = "on" | "allowlist" | "off";
 /** PURE: how the door is kept. "on" is holders (and the list); "allowlist" is the list only; "off" is everyone. */
@@ -48,7 +49,9 @@ export function holderVerdict(obs: number, aobs: number, needObs: number, needAo
   };
 }
 
-const cache = new Map<string, { at: number; verdict: HolderVerdict }>();
+// Keyed on any address a request names (the door endpoint takes one unsigned), so bounded: past five thousand the
+// wallet asked about longest ago is read again on its next visit rather than kept (2026-09-08).
+const cache = new Lru<string, { at: number; verdict: HolderVerdict }>(5_000);
 const CACHE_MS = 10 * 60 * 1000;
 
 /**

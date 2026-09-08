@@ -63,6 +63,7 @@ import { walletsOn, agentWalletAddress, rememberWallet, fundTx, withdrawEth, age
 import type { Prices } from "./desk/book.ts";
 import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL, DEFAULT_MODEL_INFO } from "./desk/models.ts";
 import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, freeUsd, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
+import { Lru } from "./lru.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
 // Public exposure needs manners: a per-address budget on requests and a cap
@@ -88,7 +89,9 @@ export function originAllowed(origin: string, list: string[]): boolean {
   }
   return false;
 }
-const refusedOrigins = new Map<string, number>();
+// Keyed on the Origin header, which anyone can vary per request, so bounded: past five thousand the origin refused
+// longest ago is forgotten and would be logged again, which is the cheap side to err on (2026-09-08).
+const refusedOrigins = new Lru<string, number>(5_000);
 const READS_TTL_MS = 60_000;
 
 export interface FeedItem {
@@ -576,31 +579,102 @@ function refreshSharedPnl(): void {
 }
 const STREAM_PING_MS = 25_000;
 
+/** How many clients the budget remembers at once; past it the client seen longest ago is forgotten. */
+export const RATE_CLIENTS_MAX = 20_000;
+/** How often the budget forgets clients whose window has passed. */
+const RATE_SWEEP_MS = 60_000;
+
 /** PURE: a sliding-window request budget per client. Exported for tests. */
 export class RateLimiter {
-  private hits = new Map<string, number[]>();
-  constructor(private perMinute: number, private windowMs = 60_000) {}
+  private hits: Lru<string, number[]>;
+  constructor(private perMinute: number, private windowMs = 60_000, maxClients = RATE_CLIENTS_MAX) {
+    this.hits = new Lru(maxClients);
+  }
+  /** How many clients are remembered right now. */
+  get clients(): number {
+    return this.hits.size;
+  }
   /** True when the client may proceed; records the hit. */
   allow(client: string, now = Date.now()): boolean {
     const cut = now - this.windowMs;
     const list = (this.hits.get(client) ?? []).filter((t) => t > cut);
-    if (list.length >= this.perMinute) {
-      this.hits.set(client, list);
-      return false;
-    }
-    list.push(now);
+    const ok = list.length < this.perMinute;
+    if (ok) list.push(now);
+    // Bounded by the map itself: past the cap the client seen longest ago is forgotten. Quiet clients are swept on a
+    // timer; the sweep once ran inside every request whenever more than ten thousand were known, so a burst of new
+    // addresses made each request walk them all (2026-09-08).
     this.hits.set(client, list);
-    if (this.hits.size > 10_000) for (const [k, v] of this.hits) if (!v.some((t) => t > cut)) this.hits.delete(k);
-    return true;
+    return ok;
+  }
+  /** Forgets every client with no hit inside the window; how many went. Run on a timer, never on a request. */
+  sweep(now = Date.now()): number {
+    const cut = now - this.windowMs;
+    let dropped = 0;
+    for (const [client, list] of this.hits) {
+      if (list.some((t) => t > cut)) continue;
+      this.hits.delete(client);
+      dropped++;
+    }
+    return dropped;
   }
 }
 const limiter = new RateLimiter(RATE_PER_MIN);
+// Unref'd: the sweep must not hold a test or a one-shot import open.
+setInterval(() => limiter.sweep(), RATE_SWEEP_MS).unref();
 const streams = new Map<string, number>();
 let streamCount = 0;
+
+/**
+ * PURE: whether a peer address is loopback or private: 127/8, ::1, 10/8, 172.16/12, 192.168/16 and fc00::/7, which
+ * is what Railway's edge and a proxy on the same host present. An IPv4 address mapped into IPv6 (::ffff:10.0.0.1,
+ * how node reports an IPv4 peer on a dual-stack socket) is read as the IPv4. Anything unparseable is not private.
+ */
+export function isPrivatePeer(address: string | null | undefined): boolean {
+  if (!address) return false;
+  let a = address.trim().toLowerCase();
+  const zone = a.indexOf("%");
+  if (zone >= 0) a = a.slice(0, zone);
+  if (a.startsWith("[") && a.endsWith("]")) a = a.slice(1, -1);
+  if (a.startsWith("::ffff:") && a.includes(".")) a = a.slice("::ffff:".length);
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(a);
+  if (v4) {
+    const octets = v4.slice(1).map(Number);
+    if (octets.some((o) => o > 255)) return false;
+    const [o1, o2] = octets;
+    return o1 === 127 || o1 === 10 || (o1 === 172 && o2 >= 16 && o2 <= 31) || (o1 === 192 && o2 === 168);
+  }
+  if (a === "::1") return true;
+  if (!a.includes(":")) return false;
+  // fc00::/7: the first seven bits are 1111110, so the leading group runs fc00 to fdff.
+  const head = a.split(":")[0];
+  if (!/^[0-9a-f]{1,4}$/.test(head)) return false;
+  return (parseInt(head, 16) & 0xfe00) === 0xfc00;
+}
+
+/**
+ * PURE: the address a request is budgeted by. The forwarded headers name the real client only when the socket's
+ * peer is the edge (loopback or a private range); from anyone else they are whatever the sender typed, and a loop
+ * that sent a fresh X-Forwarded-For with every request rotated past the budget and the stream cap until 2026-09-08.
+ */
+export function clientFrom(peer: string | null | undefined, headers: Record<string, string | string[] | undefined>): string {
+  if (isPrivatePeer(peer)) {
+    const fwd = headers["x-forwarded-for"] ?? headers["cf-connecting-ip"];
+    const first = Array.isArray(fwd) ? fwd[0] : fwd;
+    const named = first ? first.split(",")[0].trim() : "";
+    if (named) return named;
+  }
+  return peer || "unknown";
+}
+let publicPeerNoted = false;
 const clientOf = (req: IncomingMessage): string => {
-  const fwd = req.headers["x-forwarded-for"] ?? req.headers["cf-connecting-ip"];
-  const first = Array.isArray(fwd) ? fwd[0] : fwd;
-  return (first ? first.split(",")[0].trim() : "") || req.socket.remoteAddress || "unknown";
+  const peer = req.socket.remoteAddress;
+  // Said once per process: if the edge in front of this desk ever presents a public address, every visitor is
+  // budgeted as that one peer, and this line is how the operator would tell.
+  if (!publicPeerNoted && peer && !isPrivatePeer(peer) && (req.headers["x-forwarded-for"] || req.headers["cf-connecting-ip"])) {
+    publicPeerNoted = true;
+    console.log(`[obs] forwarded address ignored: the peer ${peer} is not loopback or private, so requests are budgeted by the peer`);
+  }
+  return clientFrom(peer, req.headers);
 };
 
 /** PURE: one SSE frame. */
