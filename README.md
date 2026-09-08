@@ -139,8 +139,10 @@ Start with [QUICKSTART.md](QUICKSTART.md): a fresh clone to a running page,
 then paper, then live. Everything answers to one command, `obs`, and the
 console speaks the same commands from a browser wallet. [DEPLOY.md](DEPLOY.md)
 is the hosted path. Trading stays off until the operator funds the wallet,
-records the capital and sets `OBS_TRADING=on`. Before any deploy, `npm test`
-and `npm run console:walk` in `agent/`, on their real exit codes.
+records the capital and sets `OBS_TRADING=on`. Every push and pull request
+typechecks, tests and walks the console in `agent/` (`.github/workflows/ci.yml`),
+and `scripts/deploy-desk.sh` refuses a head that does not typecheck and pass its
+tests, each on its real exit code.
 
 ## Documentation
 
