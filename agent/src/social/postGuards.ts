@@ -89,6 +89,9 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   // improvise one: a presale, an airdrop, a whitelist or a TGE announced by a
   // model is a false market claim.
   [/\btge\b|\bairdrop\b|\bpresale\b|\bpre-sale\b|\btoken sale\b|\bwhitelist\b|\bnew listing\b|\bgets? listed\b/i, "token sale vocabulary"],
+  // The desk is a seasoned Robinhood Chain professional (operator's rule, 2026-09-08): a line that sounds new to
+  // trading never goes out, whatever the model felt like saying.
+  [/\b(i'?m new (?:to|at|here)|new here|new to (?:this|trading|the chain|the tape)|just (?:started|getting started|starting)(?: out)?(?: trading)?|still learning|(?:my|a) first (?:trade|day) (?:ever|trading)|beginner|newbie|noob|rookie)\b/i, "a newcomer's line; the desk is seasoned"],
   // Exactly one address is publishable: the token's own, which the site
   // shows. Any OTHER 40-hex string is a wallet, a deposit address, or an
   // impersonator's lookalike, and none belong on a timeline. A deposit

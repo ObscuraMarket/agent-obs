@@ -46,6 +46,7 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   assert.match(p, /ONE IDEA PER POST/);
   assert.match(p, /Token symbols stay in capitals/);
   assert.match(p, /never telegraphs its next buy/);
+  assert.match(p, /seasoned Robinhood Chain professional: never sound new/);
   assert.match(p, /operator's hand is the operator's move/);
   assert.match(p, /HOW IT SHOULD SOUND: like you telling a friend at dinner/);
   assert.ok(TRADER_FORMS.every((f) => /^[A-Z][A-Z ,-]+\. /.test(f) && f.length < 320));

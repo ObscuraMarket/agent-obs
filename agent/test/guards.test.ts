@@ -30,6 +30,10 @@ test("the hard boundaries catch what the prompt forbids", () => {
   assert.match(forbiddenReason("Send it to 0x000000000000000000000000000000000000dEaD and wait.") ?? "", /not the token/);
   assert.equal(forbiddenReason(`The token lives at ${OBS_CONTRACT} and the site shows it.`), null);
   assert.match(forbiddenReason("Obscura partnered with Robinhood on this.") ?? "", /affiliation/);
+  assert.match(forbiddenReason("i'm new to this so be gentle with the record.") ?? "", /newcomer/);
+  assert.match(forbiddenReason("just started trading launches and already down.") ?? "", /newcomer/);
+  assert.equal(forbiddenReason("the timeline is new. the desk is not."), null);
+  assert.equal(forbiddenReason("a new token on the board, nothing new about the dance."), null);
   assert.match(forbiddenReason("Dark Orders are coming soon.") ?? "", /timing hint/);
   assert.match(forbiddenReason("We will burn a slice of supply next month.") ?? "", /future burn/);
   assert.match(forbiddenReason("Use it to get around KYC.") ?? "", /illicit-use/);
