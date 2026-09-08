@@ -1,7 +1,15 @@
-# The relay: every push to main that touches dashboard/ (the Agent page, its
-# desk service, the reference page, the API contract) is copied onto the
-# site repo's own paths and opened there as a pull request, so the site team
-# reviews and merges on their side and never pulls from here by hand.
+# The relay: every push to main that touches dashboard/ (the Agent and console
+# pages, their desk service, the reference page, the API contract) is applied
+# to a checkout of the site repo and opened there as a pull request, so the
+# site team reviews and merges on their side and never pulls from here by hand.
+#
+# The mapping lives in scripts/relay-apply.sh alone. This workflow and
+# scripts/relay-dashboard.sh (the same relay, run from the operator's machine)
+# both call it and both write the branch obs-dashboard-relay, which
+# stage-site.sh deploys and ship-site.sh merges, so the two writers produce the
+# same tree for the same commit. Until 2026-09-08 the workflow carried its own
+# copy of the mapping from before the console existed, and a push to main would
+# have rebuilt that branch without the console page the operator had staged.
 #
 # Configure once on this repo (Settings, Secrets and variables, Actions):
 #   variable RELAY_REPO   owner/name of the site repo (JohnDevving/obscura-exchange)
@@ -10,8 +18,9 @@
 #   variable RELAY_DOCS   folder in the site repo for the contract and the reference page (default docs/obs)
 #   variable RELAY_ASSETS the site's assets folder, which receives the page's images and video (default src/assets)
 #   secret   RELAY_TOKEN  a token with Contents and Pull requests write on the site repo
-# Until RELAY_REPO is set the job skips itself. Environments, routing and
-# the app module are the site's own and are never relayed.
+# A run without RELAY_REPO or RELAY_TOKEN fails and names what is missing.
+# Until 2026-09-08 it passed with a notice, so a green run could mean that
+# nothing had been relayed.
 name: Relay the dashboard to the site repo
 
 on:
@@ -25,27 +34,25 @@ permissions:
 
 jobs:
   relay:
-    if: ${{ vars.RELAY_REPO != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check the relay is configured
-        id: cfg
         env:
+          REPO: ${{ vars.RELAY_REPO }}
           TOKEN: ${{ secrets.RELAY_TOKEN }}
         run: |
-          if [ -z "$TOKEN" ]; then
-            echo "::notice::RELAY_TOKEN is not set on this repo; nothing relayed"
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ok=true" >> "$GITHUB_OUTPUT"
+          missing=""
+          [ -n "$REPO" ] || missing="$missing RELAY_REPO"
+          [ -n "$TOKEN" ] || missing="$missing RELAY_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::the relay is not configured on this repo (missing:$missing); nothing relayed"
+            exit 1
           fi
 
       - name: Check out this repo
-        if: steps.cfg.outputs.ok == 'true'
         uses: actions/checkout@v4
 
       - name: Check out the site repo
-        if: steps.cfg.outputs.ok == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.RELAY_REPO }}
@@ -53,27 +60,17 @@ jobs:
           ref: ${{ vars.RELAY_BASE || 'main' }}
           path: site
 
-      - name: Copy the Agent page, its service, the contract and the reference page onto the site's paths
-        if: steps.cfg.outputs.ok == 'true'
+      - name: Apply the relay's mapping to the site checkout
+        env:
+          RELAY_PATH: ${{ vars.RELAY_PATH }}
+          RELAY_DOCS: ${{ vars.RELAY_DOCS }}
+          RELAY_ASSETS: ${{ vars.RELAY_ASSETS }}
         run: |
-          app="site/${{ vars.RELAY_PATH || 'src/app' }}"
-          docs="site/${{ vars.RELAY_DOCS || 'docs/obs' }}"
-          mkdir -p "$app/pages/agent" "$app/service" "$docs"
-          rsync -a --delete dashboard/angular/src/app/pages/agent/ "$app/pages/agent/"
-          cp dashboard/angular/src/app/service/obs-desk.service.ts "$app/service/obs-desk.service.ts"
-          cp dashboard/INTEGRATION.md "$docs/INTEGRATION.md"
-          cp dashboard/index.html "$docs/reference.html"
-          echo "relayed from ${{ github.repository }}@${{ github.sha }} on $(date -u +%FT%TZ)" > "$docs/RELAY.txt"
-          # The assets the Agent page references, added beside the site's own (never deleted).
-          assets="dashboard/angular/src/assets"
-          site_assets="site/${{ vars.RELAY_ASSETS || 'src/assets' }}"
-          mkdir -p "$site_assets/images/tokenized-stocks" "$site_assets/video"
-          for f in bnb-icon.png btc-icon.png sol-icon.png obs-icon.png usdg.png maskspin-poster.jpg; do cp "$assets/images/$f" "$site_assets/images/$f"; done
-          rsync -a "$assets/images/tokenized-stocks/" "$site_assets/images/tokenized-stocks/"
-          cp "$assets/video/maskspin.mp4" "$site_assets/video/maskspin.mp4"
+          # The call scripts/relay-dashboard.sh makes: the site checkout and the short sha that
+          # RELAY.txt records. An unset variable is passed empty and relay-apply.sh applies its default.
+          bash scripts/relay-apply.sh "$GITHUB_WORKSPACE/site" "$(git rev-parse --short "$GITHUB_SHA")"
 
       - name: Open or update the pull request on the site repo
-        if: steps.cfg.outputs.ok == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           path: site
@@ -87,4 +84,4 @@ jobs:
 
             What changed on our side: ${{ github.event.head_commit.message }}
 
-            Files: `pages/agent/`, `service/obs-desk.service.ts`, the page's images and video under `src/assets/` (added, never removed), `docs/obs/INTEGRATION.md` (the API contract), `docs/obs/reference.html` (the dependency-free reference page). Environments, routing and the app module are yours and are not touched. Fields in `/api/obs/*` are only ever added, never renamed or removed.
+            Files: `${{ vars.RELAY_PATH || 'src/app' }}/pages/agent/`, `${{ vars.RELAY_PATH || 'src/app' }}/pages/console/`, `${{ vars.RELAY_PATH || 'src/app' }}/service/obs-desk.service.ts`, the page's images and video under `${{ vars.RELAY_ASSETS || 'src/assets' }}/` (added, never removed), `${{ vars.RELAY_DOCS || 'docs/obs' }}/INTEGRATION.md` (the API contract), `${{ vars.RELAY_DOCS || 'docs/obs' }}/reference.html` (the dependency-free reference page). The console page is registered once in `app-routing.module.ts` (route `console`) and `app.module.ts` (its declaration), the way the Agent page is. The header (`dapp-layout/header/`) lists Console, Agent, Docs and Roadmap: Trade, Rewards, Cards and Yield are console views now (`/trade`, `/rewards`, `/cards`, `/yield` on the console page) and keep their routes for deep links; the referral section is removed (its page, route and declaration), while the ReferralService that attributes a ?ref= visitor stays; the module hands those five components to the console (`CONSOLE_VIEWS`), and the header's spec is replaced by one describing this header. Nothing else in your routing, module or environments is touched. Fields in `/api/obs/*` are added and never renamed; the few removed are listed in `INTEGRATION.md` with their dates.
