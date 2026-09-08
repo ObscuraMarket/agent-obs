@@ -16,10 +16,10 @@
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createPublicClient, http, parseAbi, parseAbiItem } from "viem";
-import { RPC_URL, NEVER_TRADE, dataPath } from "../config.ts";
+import { RPC_URL, NEVER_TRADE, USDG_CONTRACT, dataPath } from "../config.ts";
 import { chainMemory } from "../obscura/pools.ts";
-import { rememberCurve, curvePoolIdFor } from "./candidates.ts";
-import { chainLaunchRow, pairSymbolOf, ignitionAt, ignitionRow, ignitionRulesFromEnv, type ChainLaunchFacts, type IgnitionSample } from "./chainlaunch.ts";
+import { rememberCurve, curvePoolIdFor, ZERO } from "./candidates.ts";
+import { chainLaunchRow, sidePoolRow, pairSymbolOf, ignitionAt, ignitionRow, ignitionRulesFromEnv, type ChainLaunchFacts, type IgnitionSample } from "./chainlaunch.ts";
 import { lastSampledEth } from "../obscura/reads.ts";
 
 const FEED = process.env.OBS_CHAIN_FEED ?? (process.env.OBS_CANDIDATE_FEED ? join(dirname(process.env.OBS_CANDIDATE_FEED), "launch-chain.jsonl") : dataPath("feed/launch-chain.jsonl"));
@@ -178,12 +178,25 @@ async function pull(): Promise<void> {
     emit(f);
     console.log(`[launchpull] ${f.symbol || token.slice(0, 10)} launched ${((Date.now() - f.at) / 1000).toFixed(0)} s ago on ${pairSymbolOf(f.pairToken) ?? "an unnamed pair"}${f.creatorTaxBps != null ? `, creator tax ${(f.creatorTaxBps / 100).toFixed(1)}%` : ""}; no pool yet`);
   }
-  // Pools created under the launchpad's hook: the launch's first buy, and the moment the desk can trade it.
+  // Pools created under the launchpad's hook: the launch's first buy, and the moment the desk can trade it. A hookless
+  // pool pairing USDG with a launched token is that token's side pool, the desk's way in past the curve: one side-pool
+  // row in the watcher's shape, so the feed's spacing lookup and the early launch's sidePools have it from its block.
+  // The watcher wrote those rows; since it stopped (2026-09-07) every early launch traded only through its curve.
   for (const l of await pub.getLogs({ address: poolManager, event: INITIALIZE, fromBlock: from, toBlock: to })) {
-    if (String(l.args.hooks).toLowerCase() !== hook) continue;
+    const hooks = String(l.args.hooks).toLowerCase();
     const c0 = (l.args.currency0 as string).toLowerCase() as `0x${string}`;
     const c1 = (l.args.currency1 as string).toLowerCase() as `0x${string}`;
     const id = (l.args.id as string).toLowerCase() as `0x${string}`;
+    if (hooks === ZERO) {
+      const usdg = USDG_CONTRACT.toLowerCase();
+      const side = c0 === usdg ? c1 : c1 === usdg ? c0 : null;
+      if (side && rows.has(side) && !NEVER_TRADE.has(side)) {
+        appendFileSync(FEED, JSON.stringify(sidePoolRow(id, side, Number(l.args.fee), Number(l.args.tickSpacing), "pons-v2", Date.now())) + "\n");
+        console.log(`[launchpull] ${rows.get(side)?.symbol || side.slice(0, 10)} got a USDG side pool at ${(Number(l.args.fee) / 10_000).toFixed(2)}% (spacing ${Number(l.args.tickSpacing)})`);
+      }
+      continue;
+    }
+    if (hooks !== hook) continue;
     rememberCurve({ poolId: id, currency0: c0, currency1: c1, fee: Number(l.args.fee), tickSpacing: Number(l.args.tickSpacing), hooks: hook as `0x${string}` });
     // The token is the side that is not a quote the desk names; when neither is, the launch row already says which.
     const token = pairSymbolOf(c0) ? c1 : pairSymbolOf(c1) ? c0 : (rows.has(c1) ? c1 : rows.has(c0) ? c0 : null);

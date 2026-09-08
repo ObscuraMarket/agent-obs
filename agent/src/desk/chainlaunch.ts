@@ -59,6 +59,15 @@ export function chainLaunchRow(f: ChainLaunchFacts, loggedAt: number): Record<st
   };
 }
 
+/**
+ * PURE: a side-pool row in the watcher's shape: a hookless pool pairing USDG with a launched token, the desk's way
+ * into the token past its curve. The feed parser takes the pool's tick spacing from it (an odd spacing such as 888
+ * cannot be derived from the id) and lists it on the early launch's sidePools. `ts` is in milliseconds.
+ */
+export function sidePoolRow(poolId: string, token: string, fee: number, tickSpacing: number, launch: string, loggedAt: number): Record<string, unknown> {
+  return { ts: loggedAt, kind: "side-pool", id: poolId.toLowerCase(), token: token.toLowerCase(), fee, tickSpacing, launch };
+}
+
 // ---- Ignition: real buyers on the curve, judged by the desk itself. ----
 
 export interface IgnitionRules {
