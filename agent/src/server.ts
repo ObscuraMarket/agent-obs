@@ -59,7 +59,7 @@ import { followState, readFollow, recordFollow, checkSize, followMaxUsd, followB
 import { readEntries } from "./desk/trade-memory.ts";
 import { liveOn, canStartLive } from "./desk/mirror.ts";
 import { latestEthUsd } from "./desk/onchain.ts";
-import { walletsOn, agentWalletAddress, rememberWallet, fundTx, withdrawEth, agentBalanceEth, verifyFunding, walletLines, walletBook, readAgentCapital } from "./desk/agentWallet.ts";
+import { walletsOn, agentWalletAddress, agentWalletAddressOrNull, WalletDerivationError, rememberWallet, fundTx, withdrawEth, agentBalanceEth, verifyFunding, walletLines, walletBook, readAgentCapital } from "./desk/agentWallet.ts";
 import type { Prices } from "./desk/book.ts";
 import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL, DEFAULT_MODEL_INFO } from "./desk/models.ts";
 import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, freeUsd, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
@@ -520,7 +520,8 @@ async function agentsPayload(now: number): Promise<{ ok: true; agents: PublicAge
   for (const a of addresses) {
     const state = followState(rows, a);
     const book = state.mode === "live" ? liveBook(a, state, tradeRows, notes, prices, null) : followBook(deskTrades, state, prices);
-    const wallet = walletsOn() ? agentWalletAddress(a) : null;
+    // No wallet shown for one the seed no longer derives (the operator is paged inside), and one such wallet never hides the list.
+    const wallet = agentWalletAddressOrNull(a);
     agents.push({
       name: agentDisplayName(a),
       wallet: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : null,
@@ -1138,7 +1139,14 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           // The agent's own wallet: made from the seed and the person's address, funded by them, emptied back to them only.
           const a = address as string;
           if (!walletsOn()) { json(res, 200, { ok: false, effect: "none", lines: ["Agent wallets aren't switched on here yet."], suggest: ["/agent", "/help"] }); return; }
-          const wallet = agentWalletAddress(a);
+          // A wallet the desk remembers that today's seed does not derive is the console's line and a page to the
+          // operator, for /wallet, /fund and /withdraw alike; never a fresh, empty address in its place (2026-09-08).
+          let wallet: `0x${string}`;
+          try { wallet = agentWalletAddress(a); } catch (e) {
+            if (!(e instanceof WalletDerivationError)) throw e;
+            json(res, 200, { ok: false, effect: "none", lines: [e.message], suggest: ["/agent", "/help"] });
+            return;
+          }
           rememberWallet(a, wallet, undefined, now);
           const act = routed.effect.action;
           if (act === "fund") {
@@ -1184,6 +1192,14 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
               const forced = routed.effect.mode;
               mode = "paper";
               if (forced !== "paper" && walletsOn() && liveOn()) {
+                // A wallet today's seed does not derive is no wallet to start from. Without this the balance read
+                // fell to 0 and the start went to paper on "holds 0 ETH, /fund it first", sending the person to fund
+                // a wallet that is not theirs, or live on a ledger holding the mirror could not sell (2026-09-08).
+                try { agentWalletAddress(a); } catch (e) {
+                  if (!(e instanceof WalletDerivationError)) throw e;
+                  json(res, 200, { ok: false, effect: "follow", lines: [e.message], suggest: ["/agent", "/wallet", "/start paper"] });
+                  return;
+                }
                 const bal = await agentBalanceEth(a).catch(() => 0);
                 const px = (await cachedPrices(["ETH"]).catch(() => ({} as Record<string, number | null>))).ETH ?? latestEthUsd(now);
                 // The same bar the mirror holds an entry to, and an agent holding live tokens stays live regardless.
