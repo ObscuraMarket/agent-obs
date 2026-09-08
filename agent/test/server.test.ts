@@ -7,6 +7,7 @@ import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX, TtlCache, a
 import { publicAgentPayload, PUBLIC_AGENT_TRADES } from "../src/server.ts";
 import { agentWalletAddressOrNull } from "../src/desk/agentWallet.ts";
 import { getAddress } from "viem";
+import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 import { mintSession } from "../src/desk/accounts.ts";
 import { followState, followBook, recordFollow } from "../src/desk/follow.ts";
@@ -454,4 +455,48 @@ test("a hidden follower (OBS_AGENTS_HIDDEN) is off the public board and its publ
     process.env.OBS_AGENT_WALLET_SEED = seed;
     if (hiddenBefore === undefined) delete process.env.OBS_AGENTS_HIDDEN; else process.env.OBS_AGENTS_HIDDEN = hiddenBefore;
   }
+});
+
+// ---- Signing out: the wallet's earlier bearers die on the desk, not only in one browser's storage. ----
+
+const send = async (api: string, path: string, body: unknown, token?: string): Promise<{ status: number; j: Record<string, any> }> => {
+  const r = await fetch(api + path, { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) }, body: JSON.stringify(body) });
+  return { status: r.status, j: (await r.json().catch(() => ({}))) as Record<string, any> };
+};
+
+test("sign in, sign out, and the old bearer is refused on a signed route while a fresh sign-in works again (audit 2026-09-08: a stolen bearer kept its week)", async () => {
+  const me = privateKeyToAccount(generatePrivateKey());
+  await withServer(async (api) => {
+    const signIn = async (): Promise<string> => {
+      const ch = await send(api, "/api/obs/account/challenge", { address: me.address });
+      assert.equal(ch.status, 200, JSON.stringify(ch.j));
+      const signature = await me.signMessage({ message: ch.j.message });
+      const link = await send(api, "/api/obs/account/link", { address: me.address, nonce: ch.j.nonce, signature });
+      assert.equal(link.status, 200, JSON.stringify(link.j));
+      assert.equal(typeof link.j.session?.token, "string");
+      return link.j.session.token as string;
+    };
+    const token = await signIn();
+    const before = await read(api, "/api/obs/my-agent/book", token);
+    assert.equal(before.status, 200, "the bearer reads the wallet's own book before signing out");
+    const noBearer = await send(api, "/api/obs/account/logout", {});
+    assert.equal(noBearer.status, 401, "signing out needs the bearer it ends");
+    const out = await send(api, "/api/obs/account/logout", {}, token);
+    assert.equal(out.status, 200, JSON.stringify(out.j));
+    assert.deepEqual(out.j, { ok: true });
+    const dead = await read(api, "/api/obs/my-agent/book", token);
+    assert.equal(dead.status, 401, "the old bearer is refused like an expired one");
+    assert.deepEqual(dead.j, { ok: false, error: "sign in with your wallet first" });
+    const twice = await send(api, "/api/obs/account/logout", {}, token);
+    assert.equal(twice.status, 401, "a revoked bearer cannot sign out again either");
+    const guest = await send(api, "/api/obs/console/cli", { line: "/agent" }, token);
+    assert.equal(guest.j.ok, false, "at the console the old bearer is a guest");
+    const firstLine = guest.j.lines?.[0];
+    assert.match(String(typeof firstLine === "string" ? firstLine : firstLine?.text ?? ""), /^Connect your wallet first/);
+    const fresh = await signIn();
+    assert.notEqual(fresh, token);
+    const after = await read(api, "/api/obs/my-agent/book", fresh);
+    assert.equal(after.status, 200, "a bearer minted after signing out passes");
+    assert.equal(after.j.ok, true);
+  });
 });

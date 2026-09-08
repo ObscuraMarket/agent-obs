@@ -3,10 +3,12 @@
 // signature proves control only: it authorises no transaction and moves no funds. No email, no password, no
 // server-side session store: the bearer is an HMAC over `address:expiry`, and the challenge nonce is an HMAC over
 // `address:issuedAt`, so both verify on any instance and survive a restart when OBS_SESSION_SECRET is set (without
-// it a random per-boot secret is used and everyone signs in again after a redeploy).
+// it a random per-boot secret is used and everyone signs in again after a redeploy). The one thing kept per wallet
+// is a revocation moment (obs-accounts.jsonl, below): a bearer issued before it is dead, so /logout ends a stolen
+// bearer's week at once.
 import { randomBytes, createHmac, timingSafeEqual } from "node:crypto";
 import { verifyMessage } from "viem";
-import { appendLedger } from "../ledger.ts";
+import { appendLedger, readLedger } from "../ledger.ts";
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NONCE_TTL_MS = 10 * 60 * 1000;
@@ -52,7 +54,57 @@ export function verifySession(token: string | null | undefined, now = Date.now()
   if (idx < 0) return null;
   const addr = decoded.slice(0, idx);
   const exp = Number(decoded.slice(idx + 1));
-  return isAddress(addr) && Number.isFinite(exp) && now <= exp ? addr : null;
+  if (!isAddress(addr) || !Number.isFinite(exp) || now > exp) return null;
+  // The bearer carries its expiry only, so its issue moment is the expiry less the fixed week: that keeps every
+  // bearer minted before the revocation row existed valid across the deploy, where a new payload shape would have
+  // signed everyone out at once (2026-09-08).
+  return issuedBeforeRevocation(exp - SESSION_TTL_MS, revokedBefore(addr)) ? null : addr;
+}
+
+// ---- per-wallet revocation: the one piece of session state the desk keeps ---------------------------------------
+// Audit finding 2026-09-08: a seven-day bearer could not be revoked per wallet (no server-side list, no logout
+// route), so a stolen bearer kept /sell, /stop, resize and /start live for a week. A wallet's /logout records the
+// moment in obs-accounts.jsonl as {address, revokedBefore, at}; verifySession refuses a bearer issued before it,
+// with the same null a stale one gets, and a fresh sign-in after it mints a bearer that passes.
+//
+// Next step, not built here: a fresh wallet signature on /sell, /withdraw and /start live, so the bearer alone
+// (a week of console reads and shaping) never moves money, revoked or not.
+
+/** PURE: the revocation rule. Dead when issued strictly before the moment; issued at it or after it lives. */
+export function issuedBeforeRevocation(issuedAt: number, revokedBefore: number | undefined): boolean {
+  return revokedBefore !== undefined && Number.isFinite(revokedBefore) && issuedAt < revokedBefore;
+}
+
+interface RevocationRow {
+  address?: unknown;
+  revokedBefore?: unknown;
+}
+
+let revocations: Map<string, number> | null = null;
+
+/** The moments, read once from the ledger and then kept in memory: verifySession runs on every signed request. */
+function revocationMap(): Map<string, number> {
+  if (revocations) return revocations;
+  revocations = new Map();
+  for (const row of readLedger<RevocationRow>("obs-accounts.jsonl")) {
+    if (!isAddress(row.address) || typeof row.revokedBefore !== "number" || !Number.isFinite(row.revokedBefore)) continue;
+    const addr = row.address.toLowerCase();
+    revocations.set(addr, Math.max(revocations.get(addr) ?? 0, row.revokedBefore));
+  }
+  return revocations;
+}
+
+/** The wallet's revocation moment, or undefined when it never signed out. */
+export function revokedBefore(address: string): number | undefined {
+  return revocationMap().get(address.toLowerCase());
+}
+
+/** Sign the wallet out everywhere: every bearer issued before now is dead from here. Says whether the row landed. */
+export function revokeSessions(address: string, now = Date.now()): boolean {
+  const addr = address.toLowerCase();
+  const map = revocationMap();
+  map.set(addr, Math.max(map.get(addr) ?? 0, now));
+  return appendLedger("obs-accounts.jsonl", { address: addr, revokedBefore: now, at: now });
 }
 
 /** The bearer out of an Authorization header, or null. */

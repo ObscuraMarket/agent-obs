@@ -266,6 +266,35 @@ async function walk(): Promise<void> {
   }
   const verify = await post("/api/obs/my-agent/wallet/verify", { txHash: "0x" + "ab".repeat(32) }, token);
   check("a funding that is not on the chain is refused, not recorded", verify.status === 409 && verify.j.ok === false, `${verify.status} ${JSON.stringify(verify.j).slice(0, 120)}`);
+
+  // Last, because it ends the bearer every check above used: signing out revokes it on the desk, and a fresh sign-in
+  // works again (audit 2026-09-08: a stolen bearer kept its week). On a deployed desk this signs the wallet out
+  // everywhere, its browser included, so it runs there only with --mutate; a desk without the route yet answers the
+  // 404 route list and is said plainly rather than failed.
+  console.log("sign out");
+  if (!LOCAL && !MUTATE) {
+    console.log("  skip sign out: it would end this wallet's sessions everywhere; --mutate walks it");
+  } else {
+    const noBearer = await post("/api/obs/account/logout", {});
+    if (!LOCAL && noBearer.status === 404 && Array.isArray(noBearer.j.routes)) {
+      console.log("  skip sign out: this desk does not serve /api/obs/account/logout yet; its checks run after the deploy");
+    } else {
+      check("signing out needs the bearer", noBearer.status === 401 && noBearer.j.ok === false, String(noBearer.status));
+      const out = await post("/api/obs/account/logout", {}, token);
+      check("signing out answers ok", out.status === 200 && out.j.ok === true, `${out.status} ${JSON.stringify(out.j).slice(0, 120)}`);
+      const dead = await get("/api/obs/my-agent/book", token);
+      check("the old bearer is refused after signing out", dead.status === 401 && dead.j.ok === false, String(dead.status));
+      const deadCli = await cli("/agent");
+      check("the old bearer is a guest at the console", deadCli.j.ok === false && has(deadCli, /^Connect your wallet first/), first(deadCli));
+      const ch2 = await post("/api/obs/account/challenge", { address: me.address });
+      const signature2 = typeof ch2.j.message === "string" ? await me.signMessage({ message: ch2.j.message }) : "0x00";
+      const link2 = await post("/api/obs/account/link", { address: me.address, nonce: ch2.j.nonce, signature: signature2 });
+      const token2: string | undefined = link2.j.session?.token;
+      check("a fresh sign-in after signing out works", link2.status === 200 && !!token2, `${link2.status} ${JSON.stringify(link2.j).slice(0, 120)}`);
+      const alive = await get("/api/obs/my-agent/book", token2);
+      check("the fresh bearer reads the book", alive.status === 200 && alive.j.ok === true, String(alive.status));
+    }
+  }
 }
 
 try {

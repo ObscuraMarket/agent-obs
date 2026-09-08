@@ -660,9 +660,15 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     this.status = this.wallet ? 'connected' : 'guest';
   }
 
-  /** /logout, /disconnect: sign out of the console here. The wallet stays connected in its own app; a page cannot disconnect it. */
+  /**
+   * /logout, /disconnect: sign out of the console here and, through the desk, everywhere: the bearer is revoked on
+   * the desk before it leaves this device, so a copy of it elsewhere dies too (audit 2026-09-08). The call is not
+   * waited on and a failure of it is ignored: the local drop happens either way, and the bearer ages out on its own.
+   * The wallet stays connected in its own app; a page cannot disconnect it.
+   */
   private logout(): void {
     const had = !!this.token;
+    if (this.token) { this.obs.accountLogout(this.token).subscribe({ next: () => {}, error: () => {} }); }
     this.dropSession();
     this.print([{ kind: 'system', text: had ? 'Signed out on this device. Your wallet stays connected in its own app; /connect signs in again.' : 'You weren\'t signed in. /connect signs in.', suggest: ['/connect', '/status'] }]);
   }

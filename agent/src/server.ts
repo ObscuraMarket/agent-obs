@@ -48,7 +48,7 @@ import { walletBalances } from "./obscura/reads.ts";
 import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL, dataPath } from "./config.ts";
 import { xLive, xConfigured } from "./social/xClient.ts";
 import { consoleQuote, verifySwap, consoleStanding, isAddress } from "./desk/console.ts";
-import { issueChallenge, linkAccount, verifySession, bearerOf } from "./desk/accounts.ts";
+import { issueChallenge, linkAccount, verifySession, bearerOf, revokeSessions } from "./desk/accounts.ts";
 import { getSettings, updateSettings, sanitizeSettings, describeSettings } from "./desk/userSettings.ts";
 import { refreshModel, modelFor, personaFor, approveTool, ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
 import { shouldEndTurn, meteredReply, type TurnState } from "./desk/chatTurn.ts";
@@ -1111,7 +1111,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   const path = url.pathname.replace(/\/+$/, "") || "/";
   // Read-only, with one exception: the console's report of a swap a person sent from their own wallet, which the
   // desk verifies on the chain before it counts anything. Nothing else is written through this API.
-  const WRITES = new Set(["/api/obs/console/swap", "/api/obs/my-agent/wallet/verify", "/api/obs/account/challenge", "/api/obs/account/link", "/api/obs/console/cli", "/api/obs/my-agent/ensure", "/api/obs/my-agent/stream", "/api/obs/my-agent/settings", "/api/obs/my-agent/approve", "/api/obs/credits/verify"]);
+  const WRITES = new Set(["/api/obs/console/swap", "/api/obs/my-agent/wallet/verify", "/api/obs/account/challenge", "/api/obs/account/link", "/api/obs/account/logout", "/api/obs/console/cli", "/api/obs/my-agent/ensure", "/api/obs/my-agent/stream", "/api/obs/my-agent/settings", "/api/obs/my-agent/approve", "/api/obs/credits/verify"]);
   if (req.method !== "GET" && !(req.method === "POST" && WRITES.has(path))) {
     json(res, 405, { error: "read-only" });
     return;
@@ -1357,6 +1357,18 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       console.log(`[account] signed in ${r.session.address}${gate.invited ? " (invited)" : ""}`);
       json(res, 200, { ok: true, session: r.session, standing: consoleStanding(r.session.address) });
     }).catch((err) => json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" }));
+    return;
+  }
+  // Sign out everywhere: every bearer this wallet was issued before now is refused from here, a fresh sign-in
+  // mints one that passes. The bearer alone is asked for, not the door: a wallet taken off the list still ends
+  // its own sessions (audit 2026-09-08, a stolen bearer kept its week with no way to cut it short).
+  if (path === "/api/obs/account/logout") {
+    res.setHeader("Cache-Control", "no-store");
+    const address = verifySession(bearerOf(req.headers.authorization), now);
+    if (!address) { json(res, 401, { ok: false, error: "sign in with your wallet first" }); return; }
+    const landed = revokeSessions(address, now);
+    console.log(`[account] signed out ${address}${landed ? "" : " (the revocation row did not land; the bearer dies with this process)"}`);
+    json(res, 200, { ok: true });
     return;
   }
   // The console: one typed line in, lines out. The routing is pure (src/cli/router.ts); this is the only place
@@ -1865,7 +1877,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/dashboard?hours=168&trades=50&feed=30", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/agents", "/api/obs/agents/0x... (the agent's own wallet)", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/swaps?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET /api/obs/my-agent/book (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/dashboard?hours=168&trades=50&feed=30", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/agents", "/api/obs/agents/0x... (the agent's own wallet)", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/swaps?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/account/logout (bearer)", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET /api/obs/my-agent/book (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in

@@ -622,6 +622,14 @@ export class ObsDeskService {
     return this.http.post<ObsLinkReply>(`${this.base}/api/obs/account/link`, { address, nonce, signature });
   }
 
+  /**
+   * `/api/obs/account/logout` (bearer): the desk refuses every bearer this wallet was issued before now, on every
+   * device, not only the one whose storage is dropped. Until 2026-09-08 a bearer kept its week wherever it had gone.
+   */
+  accountLogout(token: string): Observable<{ ok: boolean }> {
+    return this.http.post<{ ok: boolean }>(`${this.base}/api/obs/account/logout`, {}, this.bearer(token));
+  }
+
   private bearer(token: string): { headers: { Authorization: string } } {
     return { headers: { Authorization: `Bearer ${token}` } };
   }
