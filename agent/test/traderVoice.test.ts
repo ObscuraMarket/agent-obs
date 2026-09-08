@@ -44,6 +44,7 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   assert.match(p, /HARD LIMIT: 280 characters/);
   assert.match(p, /reply with PASS on the first line/);
   assert.match(p, /ONE IDEA PER POST/);
+  assert.match(p, /Token symbols stay in capitals/);
   assert.match(p, /operator's hand is the operator's move/);
   assert.ok(!p.includes("Anchors for the register"));
   const withAnchors = traderPrompt({ handle: "AgentOBS", block, journal: "", recent: [], performance: "", form: TRADER_FORMS[0], maxChars: 280, examples: "- i left LENNY at 12:52 UTC, the trail took it." });
