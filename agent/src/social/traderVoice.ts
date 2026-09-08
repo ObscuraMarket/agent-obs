@@ -114,12 +114,16 @@ If nothing is genuinely worth saying right now: reply with PASS on the first lin
 /**
  * PURE: what the desk holds, for the post. The book's latest snapshot carries the wallet as the chain read it, and that
  * is the truth the post may speak from; the ledger's own arithmetic (holdingsFrom) is the fallback when no fresh
- * chain snapshot exists. Without this the job posted about a KOFUKU remainder the ledger still carried and the
+ * chain snapshot exists and something has traded since the last one. Without this the job posted about a KOFUKU remainder the ledger still carried and the
  * wallet no longer held (rehearsal, 2026-09-08).
  */
 export function traderHoldings(snapshots: BookSnapshot[], flows: CapitalFlow[], trades: Trade[], ledgerEquityUsd: number | null, now: number, maxAgeMs = 60 * 60e3): { holdings: Record<string, number>; equityUsd: number | null; from: "chain" | "ledger" } {
   const last = snapshots.length ? snapshots[snapshots.length - 1] : null;
-  if (last && last.source !== "ledger" && now - last.at <= maxAgeMs && last.holdings) return { holdings: last.holdings, equityUsd: last.equityUsd ?? ledgerEquityUsd, from: "chain" };
+  if (last && last.source !== "ledger" && last.holdings) {
+    // Nothing has traded or moved since the chain was read: the read still holds, however old. Otherwise it holds for an hour.
+    const movedSince = trades.some((t) => t.at > last.at) || flows.some((f) => f.at > last.at);
+    if (!movedSince || now - last.at <= maxAgeMs) return { holdings: last.holdings, equityUsd: last.equityUsd ?? ledgerEquityUsd, from: "chain" };
+  }
   return { holdings: holdingsFrom(flows, trades), equityUsd: ledgerEquityUsd, from: "ledger" };
 }
 
