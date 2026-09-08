@@ -12,7 +12,7 @@
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, DRY, dataPath, AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "../config.ts";
+import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, USDG_CONTRACT, WETH_CONTRACT, DRY, dataPath, AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "../config.ts";
 import { appendLedger, readLedger } from "../ledger.ts";
 import { ASSETS } from "../desk/assets.ts";
 import { readTokens, dynamicPoolSpec, dynamicAssets } from "../desk/candidates.ts";
@@ -86,6 +86,13 @@ export interface WalletRead {
   /** Native ETH on Robinhood Chain and on Ethereum mainnet. */
   ethRobinhood: number | null;
   ethMainnet: number | null;
+  /**
+   * WETH on Robinhood Chain. The desk's wallet since 2026-09-08 is one an app keeps wrapped: ETH that arrives is
+   * turned into WETH within a minute. The book counts it as ETH (walletBalances sums it under the symbol), while
+   * the rails and the lane keep reading the native key alone, since a swap's value and its gas are native ETH.
+   * Absent (not null) when the caller did not read it.
+   */
+  wethRobinhood?: number | null;
   usdg: number | null;
   obs: number | null;
   usdc: number | null;
@@ -115,6 +122,7 @@ export function walletBalances(w: WalletRead): { byKey: Record<string, number>; 
   const pairs: Array<[string, string, number | null]> = [
     ["ETH@eth", "ETH", w.ethMainnet],
     ["ETH@robinhood", "ETH", w.ethRobinhood],
+    ...(w.wethRobinhood !== undefined ? [["WETH@robinhood", "ETH", w.wethRobinhood] as [string, string, number | null]] : []),
     ["USDC@erc20", "USDC", w.usdc],
     ["USDT@erc20", "USDT", w.usdt],
     ["USDG@robinhood", "USDG", w.usdg],
@@ -160,6 +168,7 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
   const mainnetP = Promise.all([nativeBalance(ETH_RPC_URL, address), ...mainnetTokens.map((a) => mainnetTokenBalance(a.contract as string, address, a.decimals))]);
   const tokens: Record<string, number | null> = {};
   const ethRobinhood = await nativeBalance(RPC_URL, address);
+  const wethRobinhood = await tokenBalance(WETH_CONTRACT, address, 18);
   const usdg = await tokenBalance(USDG_CONTRACT, address, 6);
   const obs = await tokenBalance(OBS_CONTRACT, address, 18);
   tokens["USDG@robinhood"] = usdg;
@@ -187,7 +196,7 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
   mainnetTokens.forEach((a, i) => (tokens[`${a.symbol}@${a.network}`] = mainnetBalances[i] ?? null));
   const usdc = tokens["USDC@erc20"] ?? null;
   const usdt = tokens["USDT@erc20"] ?? null;
-  return { address, ethRobinhood, ethMainnet, usdg, obs, usdc, usdt, nvda, tokens, own, rewards };
+  return { address, ethRobinhood, wethRobinhood, ethMainnet, usdg, obs, usdc, usdt, nvda, tokens, own, rewards };
 }
 
 export interface TokenRead {
@@ -527,7 +536,7 @@ export function walletLines(w: WalletRead | null): string[] {
   const extras = Object.entries(w.tokens ?? {})
     .filter(([k, v]) => v != null && v > 0 && !["USDG@robinhood", "OBS@robinhood"].includes(k))
     .map(([k, v]) => `${fmt(v as number, k.startsWith("USD") || k.startsWith("DAI") ? 2 : 6)} ${k.split("@")[0]}${k.endsWith("@erc20") ? " on Ethereum" : ""}`);
-  const out = [`- The desk's wallet (on chain): ${fmt(w.ethRobinhood, 6)} ETH on Robinhood Chain, ${fmt(w.ethMainnet, 6)} ETH on Ethereum, ${fmt(w.usdg, 2)} USDG, ${fmt(w.obs, 2)} OBS${extras.length ? ", " + extras.join(", ") : ""}.`];
+  const out = [`- The desk's wallet (on chain): ${fmt(w.ethRobinhood, 6)} ETH on Robinhood Chain${w.wethRobinhood ? ` plus ${fmt(w.wethRobinhood, 6)} held as WETH (on the book as ETH; a swap spends native ETH, so only the native figure can go out)` : ""}, ${fmt(w.ethMainnet, 6)} ETH on Ethereum, ${fmt(w.usdg, 2)} USDG, ${fmt(w.obs, 2)} OBS${extras.length ? ", " + extras.join(", ") : ""}.`];
   if (w.rewards) out.push(`- Obscura cashback for this wallet: ${w.rewards.swaps} swaps, $${w.rewards.volumeUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} volume, $${w.rewards.rewardsUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} earned, $${w.rewards.paidUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} paid out.`);
   return out;
 }

@@ -62,4 +62,6 @@ export const API_URL = (process.env.OBSCURA_API_URL || "https://api.obscura.mark
 export const WALLET_ADDRESS = /^0x[0-9a-fA-F]{40}$/.test(process.env.OBS_WALLET_ADDRESS ?? "") ? (process.env.OBS_WALLET_ADDRESS as string) : "";
 export const ETH_RPC_URL = process.env.ETH_RPC_URL || "https://ethereum-rpc.publicnode.com";
 export const USDG_CONTRACT = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+/** WETH on Robinhood Chain. The desk's wallet since 2026-09-08 lives in an app that keeps its ETH wrapped; the book reads that WETH as ETH. */
+export const WETH_CONTRACT = (process.env.OBS_WETH_CONTRACT || "0x0bd7d308f8e1639fab988df18a8011f41eacad73").toLowerCase();
 export const EXPLORER_URL = "https://robinhoodchain.blockscout.com";

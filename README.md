@@ -47,7 +47,7 @@ wallet: talk to it, train it, pick its model, turn it on.
 ## Verify it
 
 - **The desk's wallet is public:**
-  [`0x89a2…3F38`](https://robinhoodchain.blockscout.com/address/0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38),
+  [`0x1C3C…0F82`](https://robinhoodchain.blockscout.com/address/0x1C3CAda24a5BEec97E07aefE3673325C07630F82),
   funded twice by the team
   ([0.34 ETH](https://robinhoodchain.blockscout.com/tx/0xcf9c31c03e428609cfa8f5e69b93dd3d3fc0e8a7fb507bc9b19fedacb4d0013f),
   [0.07 ETH](https://robinhoodchain.blockscout.com/tx/0xbce1e0ee8bd2f916565348ed495dac7fd6c17d3c04f441c1306a41199e83d313))

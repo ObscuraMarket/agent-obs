@@ -81,3 +81,15 @@ test("wallet balances fold every registered token in, keep unread ones absent, a
   assert.equal(own.bySymbol.AOBS, undefined, "the desk's own token is read but never on the book");
   assert.equal(own.byKey["AOBS@robinhood"], undefined);
 });
+
+test("walletBalances counts WETH on Robinhood Chain as ETH on the book and keeps the native key apart for the rails", () => {
+  const w = { address: "0xabc", ethRobinhood: 0, wethRobinhood: 0.5888, ethMainnet: null, usdg: null, obs: null, usdc: null, usdt: null, nvda: null, rewards: null };
+  const b = walletBalances(w);
+  assert.equal(b.bySymbol.ETH, 0.5888);
+  assert.equal(b.byKey["ETH@robinhood"], 0);
+  assert.equal(b.byKey["WETH@robinhood"], 0.5888);
+  // A caller that never read WETH has not left it unread.
+  assert.ok(!walletBalances({ ...w, wethRobinhood: undefined }).unread.includes("WETH@robinhood"));
+  // A WETH read the chain did not answer is unread, like any other balance.
+  assert.ok(walletBalances({ ...w, wethRobinhood: null }).unread.includes("WETH@robinhood"));
+});

@@ -70,7 +70,7 @@ operator (keys and switches), and the site team (their page and their zone).
    whenever the quote watchlist failed to parse; the model then held every
    allowed entry "for lack of measured data". Fixed in code and in the
    Railway variable.)
-3. **Capital.** The desk's wallet is `0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38`
+3. **Capital.** The desk's wallet is `0x1C3CAda24a5BEec97E07aefE3673325C07630F82`
    on Robinhood Chain. Every deposit is recorded on the capital ledger or
    it is not on the book (the equity and PnL are marked against it):
    ```
