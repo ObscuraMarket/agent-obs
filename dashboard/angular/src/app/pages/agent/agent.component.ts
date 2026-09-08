@@ -7,7 +7,7 @@ import { REFRESH_MS, nextRefreshMs, tickStatus } from './refresh';
 import { MONTHS, agentsSummary, shortPct, sinceText, sinceTitle, visibleAgents, wholeUsd } from './agents';
 import { SPARK_H, SPARK_W, Spark, sparkline } from './sparkline';
 import {
-  CgMarket, ObsDashboard, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
+  CgMarket, ObsDashboard, ObsDeskService, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
   ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent,
   ObsMyAgentBook, ObsMyAgentBookTrade, ObsAgentDetail, ObsSession, CONSOLE_WALLET, ConsoleWallet, readConsoleSession, dropConsoleSession
 } from '../../service/obs-desk.service';
@@ -125,7 +125,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   obsMarket: ObsMarket | null = null;
   agentToken: ObsAgentToken | null = null;
   agentCopied = false;
-  feed: ObsFeedItem[] = [];
   err = '';
 
   stats: StatCell[] = [];
@@ -537,7 +536,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
    * the agents list never raise the footer: the card keeps its placeholders, the list stands.
    */
   private applyDashboard(d: ObsDashboard): void {
-    const missing = (['status', 'reads', 'pnl', 'market', 'trades', 'feed'] as const).filter((k) => !d[k]);
+    const missing = (['status', 'reads', 'pnl', 'market', 'trades'] as const).filter((k) => !d[k]);
     if (missing.length) { this.err = missing.join(', '); }
     if (d.status) { this.status = d.status; this.buildRails(d.status); }
     if (d.agentToken) { this.agentToken = d.agentToken; }
@@ -546,7 +545,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (d.agents) { this.allAgents = d.agents.agents ?? []; this.agents = visibleAgents(this.allAgents, this.pickedWallet); }
     if (d.market) { this.obsMarket = d.market; }
     if (d.trades) { this.buildTicker(d.trades.items); }
-    if (d.feed) { this.feed = d.feed.items.slice(0, 6); }
     this.buildStats();
     this.updateChart();
   }
@@ -1693,11 +1691,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   get handle(): string {
     return this.status?.agent?.handle || 'ObscuraCEX';
-  }
-
-  get feedHead(): string {
-    const mode = this.status?.agent?.mode;
-    return '@' + this.handle + (mode === 'live' ? ' · live' : mode === 'draft' ? ' · drafts' : '');
   }
 
   get streamPillCls(): string {

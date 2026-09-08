@@ -557,58 +557,6 @@
     </div>
   </div>
 
-  <!-- X feed -->
-  <div class="card block">
-    <div class="card-head ico-head feed-head">
-      <h2>
-        <svg class="feed-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-          <path class="dot dot-0" d="M8 10h.01"/>
-          <path class="dot dot-1" d="M12 10h.01"/>
-          <path class="dot dot-2" d="M16 10h.01"/>
-        </svg>
-        Feed
-      </h2>
-      <span>{{ feedHead }}</span>
-    </div>
-    <div class="none" *ngIf="!feed.length">Nothing yet.</div>
-    <div class="feedgrid" *ngIf="feed.length">
-      <div class="post" *ngFor="let it of feed">
-        <div class="m">
-          <span class="top-tags">
-            <span class="badge" [class.lime]="it.posted">{{ it.posted ? 'Posted' : it.mode }}</span>
-            <span class="reply-tag" *ngIf="it.kind === 'reply'">
-              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
-                  <path stroke-dasharray="70" stroke-dashoffset="70" d="M3 19.5v-15.5c0 -0.55 0.45 -1 1 -1h16c0.55 0 1 0.45 1 1v12c0 0.55 -0.45 1 -1 1h-14.5Z">
-                    <animate attributeName="stroke-dashoffset" dur="2.4s" repeatCount="indefinite" values="70;0;0" keyTimes="0;0.25;1"/>
-                  </path>
-                  <g stroke-dasharray="10" stroke-dashoffset="10">
-                    <path d="M8 7h8">
-                      <animate attributeName="stroke-dashoffset" dur="2.4s" repeatCount="indefinite" values="10;10;0;0" keyTimes="0;0.29;0.375;1"/>
-                    </path>
-                    <path d="M8 10h8">
-                      <animate attributeName="stroke-dashoffset" dur="2.4s" repeatCount="indefinite" values="10;10;0;0" keyTimes="0;0.333;0.417;1"/>
-                    </path>
-                  </g>
-                  <path stroke-dasharray="6" stroke-dashoffset="6" d="M8 13h4">
-                    <animate attributeName="stroke-dashoffset" dur="2.4s" repeatCount="indefinite" values="6;6;0;0" keyTimes="0;0.375;0.458;1"/>
-                  </path>
-                </g>
-              </svg>
-              <span>Reply</span>
-            </span>
-          </span>
-          <span class="top-tags when">
-            <span>{{ when(it.at) }}</span>
-            <a *ngIf="it.url" [href]="it.url" target="_blank" rel="noopener">x.com</a>
-          </span>
-        </div>
-        <p>{{ it.text }}</p>
-      </div>
-    </div>
-  </div>
-
   <div class="foot" *ngIf="err">
     <div class="err">could not reach the desk API ({{ err }})</div>
   </div>

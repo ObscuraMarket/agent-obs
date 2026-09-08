@@ -1227,46 +1227,6 @@ table.tbl {
   box-shadow: 0 0 8px rgba(184, 255, 61, 0.4);
 }
 
-/* ---- Feed ---- */
-
-.feedgrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-@media (max-width: 760px) {
-  .feedgrid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.post {
-  border: 1px solid var(--row-line);
-  border-radius: 10px;
-  padding: 14px 16px;
-  transition: all 0.3s ease;
-}
-
-.post:hover {
-  border-color: var(--line-strong);
-  background: rgba(22, 24, 22, 0.5);
-}
-
-.post .m {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.post p {
-  margin: 0;
-  font-size: 14px;
-  color: var(--white);
-}
-
 .when {
   font-size: 12px;
   color: var(--white);
@@ -1443,38 +1403,9 @@ table.tbl {
 /* Animated message mark (ported from Lucide Animated) on the Feed card: the
    three dots blink out together and come back one after another, twice per
    pass. Plays on its own every few seconds and continuously while hovered. */
-.feed-ico {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
-  display: block;
-  color: var(--lime);
-}
 
-.feed-ico .dot { animation: 3s linear infinite; }
-.feed-ico .dot-0 { animation-name: feed-dot-0; }
-.feed-ico .dot-1 { animation-name: feed-dot-1; }
-.feed-ico .dot-2 { animation-name: feed-dot-2; }
-
-.feed-head:hover .feed-ico .dot { animation-duration: 1.5s; }
-
-@keyframes feed-dot-0 {
-  0% { opacity: 1; } 5% { opacity: 0; } 10% { opacity: 1; }
-  25% { opacity: 1; } 30% { opacity: 0; } 35%, 100% { opacity: 1; }
-}
-
-@keyframes feed-dot-1 {
-  0% { opacity: 1; } 5%, 10% { opacity: 0; } 15% { opacity: 1; }
-  25% { opacity: 1; } 30%, 35% { opacity: 0; } 40%, 100% { opacity: 1; }
-}
-
-@keyframes feed-dot-2 {
-  0% { opacity: 1; } 5%, 15% { opacity: 0; } 20% { opacity: 1; }
-  25% { opacity: 1; } 30%, 40% { opacity: 0; } 45%, 100% { opacity: 1; }
-}
 
 @media (prefers-reduced-motion: reduce) {
-  .feed-ico .dot { animation: none; }
 }
 
 /* Animated terminal mark (ported from Lucide Animated) on the Terminal card:
@@ -1523,30 +1454,6 @@ table.tbl {
 
 @media (prefers-reduced-motion: reduce) {
   .wallet-ico { animation: none; }
-}
-
-/* Reply marker in the feed: speech bubble + label, sitting next to the mode badge. */
-.reply-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: 6px;
-  border: 1.5px solid rgba(184, 255, 61, 0.35);
-  background: rgba(184, 255, 61, 0.08);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-  color: var(--lime);
-  line-height: 1;
-}
-
-.reply-tag svg {
-  width: 13px;
-  height: 13px;
-  flex: 0 0 13px;
-  display: block;
 }
 
 .badge.lime {
