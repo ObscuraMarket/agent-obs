@@ -23,9 +23,9 @@ import { ledgerWriteFailures } from "../ledger.ts";
 import { raiseAlert, type AlertKind } from "./alerts.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, resolveAny, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
-import { readTape, tapeStats } from "./tape.ts";
-import { readEntries, recordClose, positionSpans, openSpanStart, closeFromSpan, entryForSpan, closeRow, ethUsdAt, type TradeClose } from "./trade-memory.ts";
-import { positions } from "./book.ts";
+import { readTape, tapeStats, tapeWindowMin } from "./tape.ts";
+import { readEntries, recordClose, positionSpans, closeFromSpan, entryForSpan, closeRow, ethUsdAt, type TradeClose } from "./trade-memory.ts";
+import { railInput, quoteUsd, tapeLastUsd } from "./railInput.ts";
 import type { QuoteRead } from "./thoughts.ts";
 
 export const NATIVE = "0x0000000000000000000000000000000000000000" as const;
@@ -484,29 +484,28 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
   const dyn = dynamicAssets(feed);
   const book = readBook();
   const allTrades = [...book.trades, ...extraTrades];
-  const pos = positions(book.flows, allTrades, balances, prices).positions;
+  const samples = readPrices();
   // Only what the desk bought is ever sold: an airdrop in the wallet is not a position and is never touched.
   const bought = boughtSymbols(allTrades);
   for (const a of Object.values(dyn)) {
     const held = balances[a.symbol] ?? 0;
     if (a.contract && NEVER_TRADE.has(a.contract.toLowerCase())) continue;
     if (!bought.has(a.symbol) || !isHolding(held) || !a.candidate) continue;
-    const p = pos.find((x) => x.asset === a.symbol);
     const hourly = feed.hourly[a.candidate.poolId.toLowerCase()] ?? [];
-    const buys = allTrades.filter((t) => t.to.asset === a.symbol && (t.status === "settled" || t.status === "pending"));
+    const rows = readTape(a.candidate.poolId);
+    const tape = tapeStats(rows, a.symbol, now, 15);
+    // The mark is the tape's last swap in dollars, the price the watch reads the rails at, so a rail the watch saw
+    // tripped is the rail this pass sees; the price feed stands in only when the pool has not traded in the window.
+    // Priced from the feed alone, this pass dismissed a floor the watch had tripped at the tape's price, and the
+    // watch had raised it once (2026-09-08).
+    const priceUsd = tapeLastUsd(rows, quoteUsd(dynamicPoolSpec(a)?.quote ?? "USDG", prices, samples, now), now, tapeWindowMin()) ?? prices[a.symbol] ?? null;
     // The position held now, not a round trip closed earlier today: its peak, its age and its take-profit memory
-    // start at this span's first buy. A pending buy that has not settled yet still opens the clock.
-    const firstBuy = openSpanStart(allTrades, a.symbol) ?? buys.map((t) => t.at).sort().pop() ?? a.candidate.seenAt;
-    // The peak since entry, from the desk's own price samples, against the position's average cost.
-    const avgCost = p?.avgCostUsd ?? null;
-    const peakPx = readPrices().filter((s) => s.symbol === a.symbol && s.at >= firstBuy).reduce((m, s) => Math.max(m, s.priceUsd), prices[a.symbol] ?? 0);
-    const peakPnlPct = avgCost != null && avgCost > 0 && peakPx > 0 ? ((peakPx - avgCost) / avgCost) * 100 : null;
-    const tookProfit = allTrades.some((t) => t.from.asset === a.symbol && t.exit && t.at >= firstBuy && /take profit|buyers are thinning/.test(t.note ?? ""));
-    const tape = a.candidate ? tapeStats(readTape(a.candidate.poolId), a.symbol, now, 15) : null;
-    const v = exitVerdict({ ageH: (now - firstBuy) / 3600e3, pnlPct: p?.unrealizedPct != null ? p.unrealizedPct * 100 : null, hourly, peakPnlPct, tookProfit, tapeTrend: tape?.trend ?? null, tapeBuyPressurePct: tape?.buyPressurePct ?? null }, ctx.rails);
+    // start at this span's first buy, or at the candidate's first sighting when the ledger has no buy (railInput.ts).
+    const input = railInput({ symbol: a.symbol, qty: held, priceUsd, trades: allTrades, flows: book.flows, samples, hourly, tapeTrend: tape.trend, tapeBuyPressurePct: tape.buyPressurePct, now, seenAt: a.candidate.seenAt });
+    const v = exitVerdict(input, ctx.rails);
     if (!v) continue;
     const amount = v.share >= 1 ? held : Number((held * v.share).toPrecision(8));
-    const usd = prices[a.symbol] != null ? amount * (prices[a.symbol] as number) : null;
+    const usd = priceUsd != null ? amount * priceUsd : null;
     const exitIntent: Intent = { from: a, to: eth, amount, usd, exit: true };
     const r = await exec(exitIntent, ctx, now);
     if (r.ok) {
@@ -519,7 +518,7 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
       out.push(row);
       // A close is remembered from a settled sell only: a receipt still pending has no ETH leg yet, and the close it
       // produced read as a full loss in the desk's memory (2026-09-08). settleOnChain remembers it once it lands.
-      if (v.share >= 1 && row.status === "settled") rememberClose(a.symbol, a.contract ?? "", [...allTrades, row], ethUsdAt(readPrices(), prices.ETH ?? null), peakPnlPct, v.kind, exec !== executeOnChain, now);
+      if (v.share >= 1 && row.status === "settled") rememberClose(a.symbol, a.contract ?? "", [...allTrades, row], ethUsdAt(samples, prices.ETH ?? null), input.peakPnlPct, v.kind, exec !== executeOnChain, now);
     } else if ("trade" in r && r.trade) out.push(r.trade);
     else {
       // A position the rails wanted out of and could not sell: the one failure a person must hear about at once.

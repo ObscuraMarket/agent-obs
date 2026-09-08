@@ -45,6 +45,8 @@ export interface WatchRules {
   giveBackPct: number;
   /** A held token whose buy pressure falls under this is an exit trigger (the buyers are thinning). */
   thinPressurePct: number;
+  /** A held token whose rail still trips this many minutes after its last cycle fires the exit trigger again (OBS_LIVE_RAIL_REFIRE_MIN). */
+  railRefireMin: number;
 }
 
 export function watchRulesFromEnv(env: NodeJS.ProcessEnv = process.env): WatchRules {
@@ -55,6 +57,7 @@ export function watchRulesFromEnv(env: NodeJS.ProcessEnv = process.env): WatchRu
     entryEveryMin: n("OBS_LIVE_ENTRY_EVERY_MIN", 15),
     giveBackPct: Number(env.OBS_LIVE_GIVEBACK_PCT ?? env.OBS_CANDIDATE_TRAIL_PCT ?? 25),
     thinPressurePct: Number(env.OBS_LIVE_THIN_PRESSURE_PCT ?? env.OBS_CANDIDATE_TAPE_EXIT_PRESSURE_PCT ?? 45),
+    railRefireMin: n("OBS_LIVE_RAIL_REFIRE_MIN", 3),
   };
 }
 
@@ -86,8 +89,16 @@ export function triggersFor(prev: Record<string, WatchState>, next: WatchState[]
     const p = prev[s.symbol];
     const sinceMin = lastThinkAt[s.symbol] != null ? (now - lastThinkAt[s.symbol]) / 60e3 : Infinity;
     if (s.role === "held") {
-      // A rail tripping at the tape's price is the most urgent thing the watch can see: fired the look it appears.
-      if (s.railKind && s.rail && p?.railKind !== s.railKind) out.push({ symbol: s.symbol, kind: "exit", reason: `held ${s.symbol} tripped its ${s.railKind} rail: ${s.rail}`, what: s.rail });
+      // A rail tripping at the tape's price is the most urgent thing the watch can see: fired the look it appears,
+      // and again while it still trips once the re-fire gap has passed since the token's last cycle. Fired once per
+      // change only, a floor the cycle had dismissed (it priced the position from the feed, the watch from the tape)
+      // was never raised again, and the position kept sliding through it (2026-09-08).
+      const rail = s.railKind && s.rail ? { kind: s.railKind, text: s.rail } : null;
+      if (rail && p?.railKind !== rail.kind) out.push({ symbol: s.symbol, kind: "exit", reason: `held ${s.symbol} tripped its ${rail.kind} rail: ${rail.text}`, what: rail.text });
+      else if (rail && sinceMin >= r.railRefireMin) {
+        const since = sinceMin === Infinity ? "with no cycle yet" : `${sinceMin.toFixed(0)} min after its last cycle`;
+        out.push({ symbol: s.symbol, kind: "exit", reason: `held ${s.symbol} is still through its ${rail.kind} rail ${since}: ${rail.text}`, what: rail.text });
+      }
       else if (s.trend === "rolling over" && p?.trend !== "rolling over") out.push({ symbol: s.symbol, kind: "exit", reason: `the tape rolled over on held ${s.symbol}`, what: "the tape rolled over" });
       else if (s.offPeakPct != null && s.offPeakPct >= r.giveBackPct && (p?.offPeakPct == null || p.offPeakPct < r.giveBackPct)) out.push({ symbol: s.symbol, kind: "exit", reason: `held ${s.symbol} is ${s.offPeakPct.toFixed(0)}% off its tape peak`, what: `${s.offPeakPct.toFixed(0)}% off its tape peak` });
       else if (s.buyPressurePct != null && s.buyPressurePct < r.thinPressurePct && (p?.buyPressurePct == null || p.buyPressurePct >= r.thinPressurePct)) out.push({ symbol: s.symbol, kind: "exit", reason: `the buyers are thinning on held ${s.symbol}: buy pressure ${s.buyPressurePct.toFixed(0)}%`, what: "the buyers are thinning" });

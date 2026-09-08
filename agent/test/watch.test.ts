@@ -49,6 +49,27 @@ test("a rail tripping at the tape's price fires an exit the look it appears, onc
   assert.match(triggersFor({ HLD: held }, [both], { HLD: now - 1 * M }, now, R)[0].reason, /tripped its take-profit rail/);
 });
 
+test("a rail still tripped fires again once the re-fire gap has passed since the token's last cycle, while it is held", () => {
+  const floored = st({ symbol: "HLD", role: "held", rail: "floor: down 31% from cost, through the 30% floor", railKind: "floor" });
+  assert.equal(R.railRefireMin, 3, "three minutes unless set");
+  assert.deepEqual(triggersFor({ HLD: floored }, [floored], { HLD: now - 1 * M }, now, R), [], "a minute after the cycle: not yet");
+  assert.deepEqual(triggersFor({ HLD: floored }, [floored], { HLD: now - 2.9 * M }, now, R), [], "just under the gap: not yet");
+  const t = triggersFor({ HLD: floored }, [floored], { HLD: now - 3 * M }, now, R);
+  assert.equal(t.length, 1);
+  assert.equal(t[0].kind, "exit");
+  assert.equal(t[0].reason, "held HLD is still through its floor rail 3 min after its last cycle: floor: down 31% from cost, through the 30% floor");
+  assert.equal(t[0].what, "floor: down 31% from cost, through the 30% floor", "the short form is still the rail's own sentence");
+  assert.equal(triggersFor({ HLD: floored }, [floored], { HLD: now - 6 * M }, now, R)[0]?.kind, "exit", "past the review cadence it is the rail that fires, not a review");
+  assert.equal(triggersFor({ HLD: floored }, [floored], {}, now, R)[0]?.reason, "held HLD is still through its floor rail with no cycle yet: floor: down 31% from cost, through the 30% floor", "never thought about, it fires until a cycle runs");
+  const R10 = watchRulesFromEnv({ OBS_LIVE_RAIL_REFIRE_MIN: "10" } as NodeJS.ProcessEnv);
+  assert.equal(R10.railRefireMin, 10);
+  assert.deepEqual(triggersFor({ HLD: floored }, [floored], { HLD: now - 5 * M }, now, R10).map((x) => x.kind), ["held"], "a longer gap waits longer: the review cadence runs, the rail does not re-fire yet");
+  assert.equal(triggersFor({ HLD: floored }, [floored], { HLD: now - 10 * M }, now, R10)[0]?.kind, "exit");
+  // Sold: the token is no longer held, and a stale rail on it fires nothing.
+  const sold = st({ symbol: "HLD", role: "launch", rail: floored.rail, railKind: floored.railKind });
+  assert.deepEqual(triggersFor({ HLD: floored }, [sold], { HLD: now - 10 * M }, now, R), [], "not held: no rail, no re-fire");
+});
+
 test("the cycle's lock counts as held only while its pid lives and it is under fifteen minutes old", () => {
   assert.equal(lockHeld({ pid: 146, at: now - 60e3 }, now, () => true), true);
   assert.equal(lockHeld({ pid: 146, at: now - 60e3 }, now, () => false), false, "a dead pid is a stale lock");

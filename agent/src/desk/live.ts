@@ -17,14 +17,13 @@ import { updateTapes, tapeStats, tapeWindowMin, type SwapRow } from "./tape.ts";
 import { entryRead, entryRulesFromEnv } from "./entry.ts";
 import { liveReads, walletBalances } from "../obscura/reads.ts";
 import { readPaper, paperBalances } from "./paper.ts";
-import { readBook, boughtSymbols, positions, type Trade } from "./book.ts";
+import { readBook, boughtSymbols, type Trade } from "./book.ts";
 import { readScout } from "./scout.ts";
 import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, lockHeld, type WatchState, type Role, type Trigger } from "./watch.ts";
 import { exitVerdict, type HourlyStat } from "./candidates.ts";
 import { railsFromEnv } from "./rails.ts";
 import { readPrices } from "./analysis.ts";
-import { openSpanStart } from "./trade-memory.ts";
-import { latestEthUsd } from "./onchain.ts";
+import { railInput, quoteUsd, tapeLastUsd } from "./railInput.ts";
 import { xConfigured } from "../social/xClient.ts";
 import { raiseAlert, cycleVerdict } from "./alerts.ts";
 
@@ -101,27 +100,20 @@ function railInputs(now: number): { trades: Trade[]; flows: ReturnType<typeof re
 /**
  * A held token's exit rails at the tape's last price: the same pure verdict the cycle applies, on the position the
  * book says the desk holds, so the floor, the trail and the take-profit are seen within a look of the tape crossing
- * them rather than at the next review. The cycle still decides and sells; this only says "now".
+ * them rather than at the next review. The cycle still decides and sells; this only says "now". The mark and the
+ * verdict's input are built the way the cycle's exit pass builds them (railInput.ts): a rail seen here is a rail
+ * seen there, where the two once priced the position apart and the cycle dismissed the watch's floor (2026-09-08).
  */
-function railRead(symbol: string, st: WatchState, poolId: string, feedHourly: Record<string, HourlyStat[]>, now: number): { rail: string | null; railKind: string | null } {
+function railRead(symbol: string, st: WatchState, rows: SwapRow[], poolId: string, feedHourly: Record<string, HourlyStat[]>, now: number): { rail: string | null; railKind: string | null } {
   const none = { rail: null, railKind: null };
-  if (PAPER || st.lastPrice == null || !(st.lastPrice > 0) || !st.quote) return none;
+  if (PAPER) return none;
   const qty = heldBalances[symbol];
   if (!(qty > 0)) return none;
-  const ethUsd = latestEthUsd(now);
-  const quoteUsd = st.quote === "ETH" ? ethUsd : /^USD/.test(st.quote) ? 1 : null;
-  if (quoteUsd == null) return none;
-  const usdPrice = st.lastPrice * quoteUsd;
   const { trades, flows, samples } = railInputs(now);
-  const p = positions(flows, trades, { [symbol]: qty }, { [symbol]: usdPrice, ...(ethUsd != null ? { ETH: ethUsd } : {}) }).positions.find((x) => x.asset === symbol);
-  if (!p || p.unrealizedPct == null) return none;
-  const buys = trades.filter((t) => t.to.asset === symbol && (t.status === "settled" || t.status === "pending"));
-  const firstBuy = openSpanStart(trades, symbol) ?? buys.map((t) => t.at).sort().pop() ?? now;
-  const avgCost = p.avgCostUsd;
-  const peakPx = samples.filter((s) => s.symbol === symbol && s.at >= firstBuy).reduce((m, s) => Math.max(m, s.priceUsd), usdPrice);
-  const peakPnlPct = avgCost != null && avgCost > 0 ? ((peakPx - avgCost) / avgCost) * 100 : null;
-  const tookProfit = trades.some((t) => t.from.asset === symbol && t.exit && t.at >= firstBuy && /take profit|buyers are thinning/.test(t.note ?? ""));
-  const v = exitVerdict({ ageH: (now - firstBuy) / 3600e3, pnlPct: p.unrealizedPct * 100, hourly: feedHourly[poolId.toLowerCase()] ?? [], peakPnlPct, tookProfit, tapeTrend: st.trend, tapeBuyPressurePct: st.buyPressurePct ?? null }, railsFromEnv());
+  // Unpriced (no swap in the window, or a quote with no dollar read), the rails that need no price still read.
+  const priceUsd = st.quote ? tapeLastUsd(rows, quoteUsd(st.quote, {}, samples, now), now, tapeWindowMin()) : null;
+  const input = railInput({ symbol, qty, priceUsd, trades, flows, samples, hourly: feedHourly[poolId.toLowerCase()] ?? [], tapeTrend: st.trend, tapeBuyPressurePct: st.buyPressurePct ?? null, now });
+  const v = exitVerdict(input, railsFromEnv());
   return v ? { rail: v.reason, railKind: v.kind } : none;
 }
 
@@ -305,7 +297,7 @@ async function step(now: number): Promise<void> {
     const er = entryRead(rows, symbol, now, entryRules, role !== "launch");
     const state: WatchState = { symbol, role, entryState: er.state, entryOk: er.ok, trend: st.trend, offPeakPct: st.offPeakPct, buyPressurePct: st.buyPressurePct, swaps: st.swaps, lastSwapAgoMin: st.lastSwapAgoMin, why: er.why, lastPrice: rows.length ? rows[rows.length - 1].price : null, quote: spec.token0 === symbol ? spec.token1 : spec.token0 };
     if (role === "held") {
-      try { Object.assign(state, railRead(symbol, state, spec.id as string, feed.hourly, now)); } catch (e) { console.log(`[live] rail read of ${symbol} failed: ${e instanceof Error ? e.message : String(e)}`); }
+      try { Object.assign(state, railRead(symbol, state, rows, spec.id as string, feed.hourly, now)); } catch (e) { console.log(`[live] rail read of ${symbol} failed: ${e instanceof Error ? e.message : String(e)}`); }
     }
     states.push(state);
   }
