@@ -390,11 +390,14 @@ export interface SendJob {
 
 /**
  * Send, with the book ahead of the chain. The row goes into the ledger as pending with no hash BEFORE the
- * transaction is signed, is written again with the hash and its outcome after, and is written failed when the send
- * throws; every writing carries the same id, and the latest row per id is the one the book reads. Until 2026-09-08
- * the first row was written after the receipt, up to two minutes after the send: a process that died in between
- * left the token in the wallet with no row, and the exit scan sells only what the ledger says was bought. A row the
- * ledger would not take is an alarm, since the book has just lost sight of money in motion.
+ * transaction is signed, again with its hash the moment the send returns, again with its outcome after the
+ * receipt, and failed when the send throws; every writing carries the same id, and the latest row per id is the
+ * one the book reads. Until 2026-09-08 the first row was written after the receipt, up to two minutes after the
+ * send: a process that died in between left the token in the wallet with no row, and the exit scan sells only what
+ * the ledger says was bought. The hash row came the same day: written only after the receipt, a redeploy inside
+ * the wait left a landed swap as a hashless pending row, the settle pass failed it after its allowance, and a $200
+ * position left the book with no rails on it. A row the ledger would not take is an alarm, since the book has just
+ * lost sight of money in motion.
  */
 export async function sendSwap(job: SendJob, lane: SendLane = LIVE_LANE): Promise<OnChainResult> {
   const { intent: i, base, tx, quote: q, address, ethUsd, now, runAs } = job;
@@ -411,12 +414,12 @@ export async function sendSwap(job: SendJob, lane: SendLane = LIVE_LANE): Promis
     return { ok: false, reason: failed.note ?? "send failed", trade: failed };
   }
   const explorerUrl = chainOf(i.from).explorerTx(hash);
+  // The hash row before the wait: the send has returned, the swap is on the chain, and this is the row a process
+  // killed inside the receipt wait leaves behind (2026-09-08).
+  const pending: Trade = { ...base, updatedAt: lane.clock(), settlementTx: hash, explorerUrl, note: `${base.note}; sent, awaiting the receipt` };
+  await put(pending);
   const receipt = await lane.wait(i.from, hash);
-  if (!receipt) {
-    const pending: Trade = { ...base, updatedAt: lane.clock(), settlementTx: hash, explorerUrl, note: `${base.note}; sent, awaiting the receipt` };
-    await put(pending);
-    return { ok: true, trade: pending };
-  }
+  if (!receipt) return { ok: true, trade: pending };
   if (receipt.status !== "success") {
     const failed: Trade = { ...base, status: "failed", updatedAt: lane.clock(), settlementTx: hash, explorerUrl, note: `reverted on chain` };
     await put(failed);

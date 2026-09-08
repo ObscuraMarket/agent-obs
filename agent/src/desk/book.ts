@@ -79,6 +79,12 @@ export type Prices = Record<string, number | null>;
 
 const STABLES = new Set(["USDG", "USDC", "USDT", "DAI", "USDE"]);
 const EPS = 1e-12;
+/**
+ * How far off its lot a sell may land and still be the whole lot, relative: a whole-balance sell is sized from the
+ * wallet's float and can come out a few ulps over the book's figure (900245.8452585366 sold against a lot of
+ * 900245.8452585362, 2026-09-08), which is not an oversell.
+ */
+const WHOLE_LOT_REL = 1e-8;
 
 /** PURE: whether a balance is a position or the dust a full sell leaves behind (OBS_DUST_QTY, whole units). A billionth of a token is not a holding, not a position on the page, not an exit and not a slot taken. */
 export function isHolding(qty: number | null | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
@@ -297,13 +303,19 @@ export function costBasis(flows: CapitalFlow[], trades: Trade[]): CostBasis {
   const take = (a: string, q: number): number | null => {
     const l = lot(a);
     const c = avg(a);
-    if (q > l.qty + EPS) l.known = false;
+    if (Math.abs(q - l.qty) <= l.qty * WHOLE_LOT_REL) q = l.qty;
+    const over = q > l.qty + EPS;
+    if (over) l.known = false;
     const cost = c == null ? null : c * Math.min(q, l.qty);
     l.qty -= q;
     if (cost != null) l.usd -= cost;
     if (l.qty <= EPS) {
       l.qty = 0;
       l.usd = 0;
+      // An emptied lot has nothing left whose cost is unknown, so the next buy starts a known basis. The flag never
+      // reset until 2026-09-08, and one sell flagged by a float ulp killed the floor, the trail and the take-profit
+      // for the token for good. A real oversell keeps its flag: units the ledger never saw just left.
+      if (!over) l.known = true;
     }
     return cost;
   };

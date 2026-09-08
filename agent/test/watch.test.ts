@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, lockHeld, type WatchState } from "../src/desk/watch.ts";
+import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, lockHeld, displaces, swapLanded, type WatchState, type Trigger } from "../src/desk/watch.ts";
 
 const R = watchRulesFromEnv({} as NodeJS.ProcessEnv);
 const now = 1_800_000_000_000;
@@ -94,4 +94,38 @@ test("a held token's line is what its tape is doing, not its entry read", () => 
   assert.equal(holdingNote(st({ role: "held", trend: "thin", offPeakPct: null, swaps: 0 })), "tape thin, no swaps in the last 15 min");
   const held = st({ symbol: "HLD", role: "held", entryOk: true, entryState: "pullback" });
   assert.equal(heartbeatLine([held], 1, null), "[live] block 1: HLD held holding", "an entry read on a held token is not an ENTRY");
+});
+
+test("a trigger that fires while the desk is busy takes the kept one's place only by rank", () => {
+  // Only an exit could displace until 2026-09-08: an entry that flipped behind a queued review waited the fifteen
+  // minutes for its refire.
+  const exit: Trigger = { symbol: "A", kind: "exit", reason: "held A tripped its floor rail", what: "floor" };
+  const entry: Trigger = { symbol: "B", kind: "entry", reason: "B gave an entry", what: "pullback" };
+  const review: Trigger = { symbol: "A", kind: "held", reason: "held A, 6 min since its last review", what: "6 min" };
+  assert.equal(displaces(entry, null), true, "nothing kept: this one is");
+  assert.equal(displaces(entry, review), true, "a flipped entry does not wait behind a queued review");
+  assert.equal(displaces(exit, entry), true);
+  assert.equal(displaces(exit, review), true);
+  assert.equal(displaces(review, entry), false, "a review never displaces an entry; it comes back on its own cadence");
+  assert.equal(displaces(entry, exit), false, "nothing displaces an exit");
+  assert.equal(displaces(exit, exit), false, "the same rank keeps the first");
+  assert.equal(displaces(review, review), false);
+});
+
+test("the cycle's lines say whether a swap changed the wallet, so the held list is re-read at once", () => {
+  // The held list refreshed on its own minute until 2026-09-08: a fresh buy had no rails for up to a minute, and a
+  // token just sold could still trip a trigger.
+  assert.equal(swapLanded("[desk] pool-3 -> settled (0xabc)"), true, "the settle pass landed a row");
+  assert.equal(swapLanded("[desk] pool-3 -> failed"), false, "a failed row moved nothing");
+  assert.equal(swapLanded("[desk] forced exit pool-4 settled: exit (floor); received 0.08 ETH"), true);
+  assert.equal(swapLanded("[desk] forced exit pool-4 pending: sent, awaiting the receipt"), false, "not on the wallet yet; the minute's refresh reads it");
+  assert.equal(swapLanded("[desk] recorded, proposal p1 on the board, swap pool-5 settled (https://explorer/tx/0xabc)."), true);
+  assert.equal(swapLanded("[desk] recorded, swap pool-5 pending (no receipt yet)."), false);
+  assert.equal(swapLanded("[desk] recorded (paper session), paper trade paper-2."), true, "the paper watch holds through the paper book");
+  assert.equal(swapLanded("[desk] paper exit paper-2: exit (trail)"), true);
+  assert.equal(swapLanded("[desk] recorded."), false, "a cycle that held");
+  assert.equal(swapLanded("[desk] mark not recorded: unread balances (all)"), false);
+  assert.equal(swapLanded("[follow] 0x111111 pool-9 -> settled (0xabc)"), false, "a follower's row is not the desk's wallet");
+  assert.equal(swapLanded("[desk] pool-3 -> settled (0xabc)\r"), true, "the relay's lines keep their line ending");
+  assert.equal(swapLanded(""), false);
 });

@@ -46,9 +46,10 @@ test("the row is on the book before the send, and the same id is written again w
   const rows: Trade[] = [];
   const log: string[] = [];
   const r = await sendSwap(job(rows, log), lane(log));
-  assert.deepEqual(log, ["record pending no hash", "send", "wait", "record settled with hash"], "the ledger sees the swap before the chain does");
+  assert.deepEqual(log, ["record pending no hash", "send", "record pending with hash", "wait", "record settled with hash"], "the ledger sees the swap before the chain does, and the hash before the receipt");
   assert.ok(r.ok);
-  const [intent, settled] = rows;
+  const [intent, sent, settled] = rows;
+  assert.deepEqual([sent.id, sent.status, sent.settlementTx], ["pool-1", "pending", HASH]);
   assert.deepEqual([intent.id, intent.status, intent.settlementTx ?? null, intent.at], ["pool-1", "pending", null, T]);
   assert.match(intent.note ?? "", /no hash yet$/);
   assert.deepEqual([settled.id, settled.status, settled.settlementTx, settled.to.amount, settled.to.usd], ["pool-1", "settled", HASH, 0.5, 100]);
@@ -82,7 +83,31 @@ test("no receipt in time leaves the row pending with its hash; a revert fails it
   const reverted: Trade[] = [];
   const r2 = await sendSwap(job(reverted, []), lane([], { wait: async () => ({ status: "reverted", gasCostWei: 0n }) }));
   assert.equal(r2.ok, false);
-  assert.deepEqual(reverted.map((t) => [t.status, t.settlementTx ?? null]), [["pending", null], ["failed", HASH]]);
+  assert.deepEqual(reverted.map((t) => [t.status, t.settlementTx ?? null]), [["pending", null], ["pending", HASH], ["failed", HASH]]);
+});
+
+test("the hash is on the book the moment the send returns, before the receipt is waited for", async () => {
+  // 2026-09-08: the hash was written only after the receipt, up to two minutes after the send. A redeploy in that
+  // window left a landed swap as a hashless pending row, the settle pass failed it after the allowance, and a $200
+  // position left the book with no rails. The rows here are what such a death leaves behind.
+  const rows: Trade[] = [];
+  const log: string[] = [];
+  let release: (r: null) => void = () => undefined;
+  const noReceipt = new Promise<null>((r) => { release = r; });
+  let entered: () => void = () => undefined;
+  const inWait = new Promise<void>((r) => { entered = r; });
+  const p = sendSwap(job(rows, log), lane(log, { wait: async () => { log.push("wait"); entered(); return noReceipt; } }));
+  await inWait;
+  // The lane is inside its wait for a receipt that is not coming; the process could die here.
+  assert.deepEqual(log, ["record pending no hash", "send", "record pending with hash", "wait"]);
+  assert.deepEqual(rows.map((t) => [t.status, t.settlementTx ?? null]), [["pending", null], ["pending", HASH]]);
+  const left = latestTrades(rows)[0];
+  assert.equal(left.settlementTx, HASH, "the row left behind carries the hash the settle pass follows");
+  assert.equal(intentTimedOut(left, T + 3600e3), false, "with its hash it is never failed by the clock");
+  release(null);
+  const r = await p;
+  assert.ok(r.ok);
+  assert.equal(rows.length, 2, "no receipt in time adds no row: the hashed row already says it all");
 });
 
 test("a row the ledger did not take raises the cycle alarm, and the swap still returns", async () => {
@@ -90,7 +115,7 @@ test("a row the ledger did not take raises the cycle alarm, and the swap still r
   const log: string[] = [];
   const r = await sendSwap(job(rows, log, false), lane(log));
   assert.ok(r.ok);
-  assert.deepEqual(log, ["record pending no hash", "alert cycle", "send", "wait", "record settled with hash", "alert cycle"]);
+  assert.deepEqual(log, ["record pending no hash", "alert cycle", "send", "record pending with hash", "alert cycle", "wait", "record settled with hash", "alert cycle"]);
 });
 
 test("a pool row pending with no hash is failed after the allowance, never settled, and an Obscura order is not judged", () => {
