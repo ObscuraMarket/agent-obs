@@ -30,11 +30,16 @@ separation the split exists to create.
 ## The self-commit loop
 
 `scripts/_obs-backup.sh` runs after each desk cycle (and after each posting
-tick, when the voice is on a timer): copy the files, `git add -A`, commit
-as `obs memory <date>`, `git push`. Throttled to about once a day. If
+tick, when the voice is on a timer): `git pull --rebase`, copy the files,
+`git add -A`, commit as `obs memory <date>`, `git push`. Throttled to
+about once a day (the stamp is `.backup-stamp` in the data directory). If
 nothing changed, no commit. The checkout is `OBS_MEMORY_REPO_DIR`, a clone
 of the private `obscura-memory` repo; if it is not set up, the step is
-skipped quietly and says so once per run.
+skipped quietly and says so once per run. A pull whose rebase will not apply
+is abandoned and the commit goes on the current head. A push that fails (or
+hangs past two minutes) leaves `obs-backup-failed.json` in the data
+directory, which the dashboard raises as a `backup` alert on its heartbeat
+clock until a run lands and removes it; a failed run retries in an hour.
 
 ## Why the contents are private
 
