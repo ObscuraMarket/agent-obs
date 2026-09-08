@@ -24,6 +24,7 @@ import { readThoughts, type Thought } from "./desk/thoughts.ts";
 import { digestThought, watchEvent, type WatchEvent } from "./desk/digest.ts";
 import { readResearch } from "./desk/research.ts";
 import { readScout } from "./desk/scout.ts";
+import { recentAlerts, raiseAlert, staleVerdict, alertRulesFromEnv } from "./desk/alerts.ts";
 import { readAgentToken, rememberAgentTokenRead, lastAgentTokenPrice, type AgentTokenRead } from "./desk/agentToken.ts";
 import { AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "./config.ts";
 
@@ -793,7 +794,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/health") {
-    json(res, 200, { status: "ok", at: now });
+    // "ok" while the live watch is looking; "stale" once it has been quiet past OBS_ALERT_STALE_MIN, so an outside
+    // uptime check can read the word off the body. The latest alerts ride along.
+    const beat = livePayload() as { at?: number; lastCycleAt?: number | null; lastCycleCode?: number | null };
+    const stale = staleVerdict(typeof beat.at === "number" ? beat.at : null, now, alertRulesFromEnv().staleMin);
+    json(res, 200, { status: stale ? "stale" : "ok", at: now, ...(stale ? { reason: stale } : {}), live: { at: beat.at ?? null, lastCycleAt: beat.lastCycleAt ?? null, lastCycleCode: beat.lastCycleCode ?? null }, alerts: recentAlerts(now) });
     return;
   }
   if (path === "/api/obs/status") {
@@ -1388,6 +1393,16 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   const heldSymbols = () => { const w = readsCache?.value.wallet; return w ? ["ETH", ...Object.keys(walletBalances(w).bySymbol)] : ["ETH"]; };
   void cachedReads().then(() => cachedPrices(heldSymbols())).catch(() => undefined);
   setInterval(() => { void cachedReads().then(() => cachedPrices(heldSymbols())).catch(() => undefined); }, READS_TTL_MS).unref();
+  // The heartbeat check: the live watch writes its look every few seconds; once it has been quiet past the stale
+  // bar while trading is on, that is raised as an alert from here, since a hung loop cannot raise its own.
+  const checkHeartbeat = () => {
+    const now = Date.now();
+    if (!railsFromEnv().tradingOn) return;
+    const beat = livePayload() as { at?: number };
+    const stale = staleVerdict(typeof beat.at === "number" ? beat.at : null, now, alertRulesFromEnv().staleMin);
+    if (stale) void raiseAlert("stale", stale, now);
+  };
+  setInterval(checkHeartbeat, 60_000).unref();
   createServer(handle).listen(PORT, process.env.OBS_DASHBOARD_HOST || "127.0.0.1", () => {
     console.log(`[obs] dashboard API on http://localhost:${PORT} (page at /, JSON under /api/obs/*)`);
   });

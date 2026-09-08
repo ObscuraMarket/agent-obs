@@ -21,6 +21,7 @@ import { readBook, boughtSymbols } from "./book.ts";
 import { readScout } from "./scout.ts";
 import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, type WatchState, type Role, type Trigger } from "./watch.ts";
 import { xConfigured } from "../social/xClient.ts";
+import { raiseAlert, cycleVerdict } from "./alerts.ts";
 
 const POLL_MS = Number(process.env.OBS_LIVE_POLL_MS ?? 3000);
 const BALANCES_MS = Number(process.env.OBS_LIVE_BALANCES_MS ?? 60_000);
@@ -35,6 +36,11 @@ const wantIgnition = (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off";
 let prev: Record<string, WatchState> = {};
 const lastThinkAt: Record<string, number> = {};
 let running: ChildProcess | null = null;
+// The last cycle's end, its exit code and the last error line it printed: on the heartbeat file for the health
+// route, and a failed cycle is raised as an alert from here, since the cycle that could not think has exited.
+let lastCycleAt: number | null = null;
+let lastCycleCode: number | null = null;
+let lastCycleError: string | null = null;
 
 // Agent OBS on X. Once the account's keys are set, the posting job runs every OBS_X_EVERY_MIN minutes from this
 // loop (the job keeps its own post gap and decides whether to speak; without X_LIVE=true it drafts to the ledger,
@@ -129,13 +135,21 @@ function runCycle(t: Trigger, state: WatchState | undefined, now: number): void 
     stdio: ["ignore", "pipe", "pipe"],
   });
   running = child;
+  lastCycleError = null;
   const relay = (chunk: Buffer) => {
-    for (const line of chunk.toString("utf8").split("\n")) if (/^\[desk\]|^Holding|paper trade|refused|Error/.test(line)) console.log(`  ${line.slice(0, 400)}`);
+    for (const line of chunk.toString("utf8").split("\n")) {
+      if (/^\[desk\]|^Holding|paper trade|refused|Error/.test(line)) console.log(`  ${line.slice(0, 400)}`);
+      if (/could not think|Error|failed/.test(line)) lastCycleError = line.trim();
+    }
   };
   child.stdout?.on("data", relay);
   child.stderr?.on("data", relay);
   child.on("exit", (code) => {
     console.log(`[live] desk cycle done (exit ${code ?? "?"})`);
+    lastCycleAt = Date.now();
+    lastCycleCode = code;
+    const failed = cycleVerdict(code, lastCycleError);
+    if (failed) void raiseAlert("cycle", failed, lastCycleAt);
     running = null;
     tapeCache.clear();
     if (pendingExit) {
@@ -251,7 +265,7 @@ async function step(now: number): Promise<void> {
   }
   const lookMs = Date.now() - now;
   looks.push(lookMs);
-  writeFileSync(dataPath(LIVE_FILE), JSON.stringify({ at: Date.now(), block, paper: PAPER, pollMs: POLL_MS, lookMs, watching: states, lastTrigger, lastTriggerKind, cycles, cycleRunning: !!running }));
+  writeFileSync(dataPath(LIVE_FILE), JSON.stringify({ at: Date.now(), block, paper: PAPER, pollMs: POLL_MS, lookMs, watching: states, lastTrigger, lastTriggerKind, cycles, cycleRunning: !!running, lastCycleAt, lastCycleCode }));
   if (now - lastBeat >= 60_000) {
     lastBeat = now;
     const mean = looks.reduce((s, v) => s + v, 0) / Math.max(1, looks.length);

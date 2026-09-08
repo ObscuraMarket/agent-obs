@@ -13,6 +13,7 @@ import { readNativeBalance, readTokenBalance } from "./signer.ts";
 import { agentWallet, walletsOn } from "./agentWallet.ts";
 import { readFollow, followState, readFollowTrades, recordFollowTrade, recordFollowNote, liveHoldings, type FollowRow, type FollowTradeRow } from "./follow.ts";
 import type { Trade } from "./book.ts";
+import { raiseAlert } from "./alerts.ts";
 
 /** Live mirroring runs when agent wallets exist and the operator has not switched it off (OBS_FOLLOW_LIVE=off). */
 export const liveOn = (env: NodeJS.ProcessEnv = process.env): boolean => (env.OBS_FOLLOW_LIVE ?? "on").trim().toLowerCase() !== "off" && walletsOn(env);
@@ -105,7 +106,11 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
         const c2: RailContext = { rails, balances: { [assetKey(token)]: tokenBal, "ETH@robinhood": ethBal }, nativeOnFromChain: ethBal, openOrders: 0, now };
         const r = await executeOnChain(i2, c2, now, { wallet: w, record: (t) => recordFollowTrade(address, deskTrade.id, t) });
         if (r.ok) console.log(`[follow] ${address.slice(0, 8)} sold ${amount} ${token.symbol} (${Math.round(share * 100)}%): ${r.trade.status}`);
-        else recordFollowNote(address, deskTrade.id, `exit of ${token.symbol} refused: ${r.reason}`, now);
+        else {
+          recordFollowNote(address, deskTrade.id, `exit of ${token.symbol} refused: ${r.reason}`, now);
+          // Someone else's money that the desk could not get out: the operator hears about it at once.
+          await raiseAlert("exit", `an agent's exit of ${token.symbol} was refused (wallet ${address.slice(0, 8)}, ${Math.round(share * 100)}% of its holding): ${r.reason}`, now);
+        }
       }
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);

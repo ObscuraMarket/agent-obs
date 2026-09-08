@@ -19,6 +19,7 @@ import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { recordTrade, readBook, latestTrades, boughtSymbols, type Trade } from "./book.ts";
 import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet } from "./signer.ts";
 import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
+import { raiseAlert } from "./alerts.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
 import { readTape, tapeStats } from "./tape.ts";
@@ -466,7 +467,11 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
       out.push(row);
       if (v.share >= 1) rememberClose(a.symbol, a.contract ?? "", [...allTrades, row], ethUsdAt(readPrices(), prices.ETH ?? null), peakPnlPct, v.kind, exec !== executeOnChain, now);
     } else if ("trade" in r && r.trade) out.push(r.trade);
-    else console.error(`[desk] exit of ${a.symbol} refused: ${r.reason}`);
+    else {
+      // A position the rails wanted out of and could not sell: the one failure a person must hear about at once.
+      console.error(`[desk] exit of ${a.symbol} refused: ${r.reason}`);
+      if (exec === executeOnChain) await raiseAlert("exit", `the desk could not sell ${a.symbol} (${v.kind}: ${v.reason}); the chain refused it: ${r.reason}`, now);
+    }
   }
   return out;
 }
