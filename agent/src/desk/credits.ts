@@ -2,10 +2,15 @@
 // of grants (a little on the house), deposits (a payment the desk read off the chain: ETH, USDG, AOBS or a
 // tokenized stock sent to the credits treasury) and charges (each turn, at the chosen model's price plus the
 // desk's margin). The treasury is the operator's address, never the desk's trading wallet; the desk holds no key
-// for it and only reads what arrived. Prices for a payment are what the pools pay right now, or the stock's own
-// print, so a deposit is worth what it was worth when it landed.
+// for it and only reads what arrived. A payment is priced at its block, from the desk's own price samples, so a
+// deposit is worth what it was worth when it landed; only when no sample is near the block do the pools' price
+// right now, or the stock's own print, stand in, and the row says so. A payment counts once it has a few blocks on
+// top of it, within a day of landing, and only for the wallet that sent it. Until 2026-09-08 any successful
+// transaction of any age was priced at verification time, and a hash already counted was answered with the row
+// whoever asked, so one wallet could read another's payment and an old transfer could be credited at today's price.
 import { createPublicClient, encodeFunctionData, parseAbi, type Hex } from "viem";
 import { appendLedger, readLedger } from "../ledger.ts";
+import { readPrices, type PriceSample } from "./analysis.ts";
 import { ASSETS, resolveAsset, type Asset } from "./assets.ts";
 import { viemChain, transport } from "./signer.ts";
 import { quoteOnChain } from "./onchain.ts";
@@ -36,6 +41,10 @@ export interface CreditRow {
   token?: string;
   amount?: number;
   txHash?: string;
+  /** A deposit: when its block was sealed, in ms. */
+  blockAt?: number;
+  /** A deposit: priced "block" from the desk's own sample nearest its block (a dollar token at face counts as that), or "now" because no sample was within an hour of it. */
+  pricedAt?: "block" | "now";
   model?: string;
   tokensIn?: number;
   tokensOut?: number;
@@ -67,6 +76,67 @@ export const bonusPct = (symbol: string, env: NodeJS.ProcessEnv = process.env): 
  * counter: a default-model turn cost about three times what a 2,000-token allowance priced, so 8,000 is the floor.
  */
 export const contextTokens = (env: NodeJS.ProcessEnv = process.env): number => Math.max(0, Number(env.OBS_CREDITS_CONTEXT_TOKENS ?? 8000) || 0);
+/** A payment counts within this many hours of its block (OBS_CREDITS_MAX_AGE_H); blank or broken, a day. */
+export const maxAgeH = (env: NodeJS.ProcessEnv = process.env): number => { const h = Number(env.OBS_CREDITS_MAX_AGE_H); return h > 0 ? h : 24; };
+/** Blocks a payment needs under it before it is counted, its own included (OBS_CREDITS_CONFIRMATIONS); at least one, blank or broken, three. */
+export const confirmationsNeeded = (env: NodeJS.ProcessEnv = process.env): number => { const n = Math.floor(Number(env.OBS_CREDITS_CONFIRMATIONS)); return n >= 1 ? n : 3; };
+
+/**
+ * PURE: a transaction the ledger already holds is answered from the ledger, and only to the wallet it was recorded
+ * for. Until 2026-09-08 the lookup was by hash alone, so any wallet naming another's payment was told it was
+ * counted and handed the row.
+ */
+export function priorRecord<R extends { address: string; txHash?: string }>(rows: R[], hash: string, address: string): { row: R } | { reason: string } | null {
+  const h = hash.toLowerCase();
+  const prior = rows.find((r) => (r.txHash ?? "").toLowerCase() === h);
+  if (!prior) return null;
+  if (prior.address.toLowerCase() !== address.toLowerCase()) return { reason: "that transaction is already counted for the address that sent it" };
+  return { row: prior };
+}
+
+/** PURE: how many blocks confirm a transaction: its own and every one on top. Zero or less when the node is behind it. */
+export const confirmationsOf = (blockNumber: bigint, head: bigint): number => Number(head - blockNumber) + 1;
+
+/**
+ * PURE: whether a landed transaction may be counted yet: deep enough that a reorg will not take it back, and, when
+ * a window is given, recent enough that the desk still has the price it landed at. Too shallow is a refusal for
+ * now; too old is a refusal for good, since an old transfer priced at today's price is not what it was worth.
+ */
+export function judgeBlock(b: { blockNumber: bigint; head: bigint; blockAt: number }, now: number, rule: { confirmations: number; maxAgeH: number | null }): { ok: true; confirmations: number; ageH: number } | { reason: string } {
+  const confirmations = confirmationsOf(b.blockNumber, b.head);
+  if (confirmations < rule.confirmations) return { reason: `that transaction has ${Math.max(0, confirmations)} confirmation${confirmations === 1 ? "" : "s"} and ${rule.confirmations} are needed; give it a moment and try again` };
+  const ageH = (now - b.blockAt) / 3600e3;
+  if (rule.maxAgeH != null && ageH > rule.maxAgeH) return { reason: `that transaction landed ${ageH < 48 ? `${Math.round(ageH)} hours` : `${Math.round(ageH / 24)} days`} ago and only the last ${rule.maxAgeH} hours count` };
+  return { ok: true, confirmations, ageH };
+}
+
+/** PURE: the desk's own sample of a symbol nearest `at`, within the window, or null when it has none that close. */
+export function sampleNear(samples: ReadonlyArray<PriceSample>, symbol: string, at: number, windowMs = 3600e3): PriceSample | null {
+  const s = symbol.toUpperCase();
+  let best: PriceSample | null = null;
+  for (const r of samples) {
+    if (r.symbol.toUpperCase() !== s || Math.abs(r.at - at) > windowMs) continue;
+    if (best == null || Math.abs(r.at - at) < Math.abs(best.at - at)) best = r;
+  }
+  return best;
+}
+
+/**
+ * PURE: what an amount of a token was worth at a moment, from the desk's own samples: a dollar token at face,
+ * anything else at the sample nearest that moment within an hour. Null when the desk has nothing that close.
+ */
+export function valueUsdAt(t: PayToken, amount: number, at: number, samples: ReadonlyArray<PriceSample>): { usd: number; sampleAt: number | null } | null {
+  if (!(amount > 0)) return null;
+  if (t.group === "dollar") return { usd: amount, sampleAt: null };
+  const s = sampleNear(samples, t.symbol, at);
+  return s ? { usd: s.priceUsd * amount, sampleAt: s.at } : null;
+}
+
+/** PURE: the deposit row's note: the bonus when there is one, and that the price is today's when the desk had no sample near the block. */
+export function depositNote(symbol: string, bonus: number, pricedAt: "block" | "now"): string | undefined {
+  const parts = [bonus ? `+${bonus}% for paying in ${symbol}` : "", pricedAt === "now" ? "priced now: the desk had no price sample within an hour of the block" : ""].filter(Boolean);
+  return parts.length ? parts.join("; ") : undefined;
+}
 
 export function readCredits(): CreditRow[] {
   return readLedger<CreditRow>(CREDITS_LEDGER).filter((r) => r && isAddress(r.address) && Number.isFinite(Number(r.usd)));
@@ -222,24 +292,34 @@ export function judgePayment(tx: { from: string; to: string | null; value: bigin
   return { reason: "nothing in that transaction reached the credits treasury" };
 }
 
-/** Read a payment off the chain and credit it once. */
+/**
+ * Read a payment off the chain and credit it once, to the wallet that sent it: landed, confirmed, within the window,
+ * and priced at its block from the desk's own samples, or at today's price when no sample is near enough.
+ */
 export async function verifyPayment(hash: string, address: string, now = Date.now()): Promise<{ ok: true; row: CreditRow; already: boolean } | { ok: false; reason: string }> {
   const to = treasury();
   if (!to) return { ok: false, reason: "Buying credits isn't switched on here yet." };
   if (!isTxHash(hash) || !isAddress(address)) return { ok: false, reason: "a transaction hash and a wallet are required" };
-  const prior = readCredits().find((r) => r.kind === "deposit" && r.txHash?.toLowerCase() === hash.toLowerCase());
-  if (prior) return { ok: true, row: prior, already: true };
+  const prior = priorRecord(readCredits().filter((r) => r.kind === "deposit"), hash, address);
+  if (prior) return "reason" in prior ? { ok: false, reason: prior.reason } : { ok: true, row: prior.row, already: true };
   const eth = ASSETS["ETH@robinhood"];
   const pub = createPublicClient({ chain: viemChain(eth), transport: transport(eth) });
-  const receipt = await pub.getTransactionReceipt({ hash: hash as Hex });
+  let receipt: Awaited<ReturnType<typeof pub.getTransactionReceipt>>;
+  try { receipt = await pub.getTransactionReceipt({ hash: hash as Hex }); } catch { return { ok: false, reason: "that transaction is not on Robinhood Chain yet; give it a moment and try again" }; }
   if (receipt.status !== "success") return { ok: false, reason: "that transaction did not succeed" };
   const tx = await pub.getTransaction({ hash: hash as Hex });
   const j = judgePayment({ from: tx.from, to: tx.to ?? null, value: tx.value }, receipt.logs, address, to, payTokens());
   if ("reason" in j) return { ok: false, reason: j.reason };
-  const usd = await valueUsd(j.token, j.amount);
+  const [head, block] = await Promise.all([pub.getBlockNumber(), pub.getBlock({ blockNumber: receipt.blockNumber })]);
+  const blockAt = Number(block.timestamp) * 1000;
+  const depth = judgeBlock({ blockNumber: receipt.blockNumber, head, blockAt }, now, { confirmations: confirmationsNeeded(), maxAgeH: maxAgeH() });
+  if ("reason" in depth) return { ok: false, reason: depth.reason };
+  const sampled = valueUsdAt(j.token, j.amount, blockAt, readPrices());
+  const usd = sampled ? sampled.usd : await valueUsd(j.token, j.amount);
   if (usd == null) return { ok: false, reason: `${j.token.symbol} arrived but can't be priced right now; it will be credited when it can.` };
+  const pricedAt: CreditRow["pricedAt"] = sampled ? "block" : "now";
   const bonus = bonusPct(j.token.symbol);
-  const row: CreditRow = { at: now, address: address.toLowerCase(), kind: "deposit", usd: Math.round(usd * (1 + bonus / 100) * 100) / 100, token: j.token.symbol, amount: j.amount, txHash: hash.toLowerCase(), note: bonus ? `+${bonus}% for paying in ${j.token.symbol}` : undefined };
+  const row: CreditRow = { at: now, address: address.toLowerCase(), kind: "deposit", usd: Math.round(usd * (1 + bonus / 100) * 100) / 100, token: j.token.symbol, amount: j.amount, txHash: hash.toLowerCase(), blockAt, pricedAt, note: depositNote(j.token.symbol, bonus, pricedAt) };
   appendLedger(CREDITS_LEDGER, row as unknown as Record<string, unknown>);
   if (treasuryIsDesk()) recordCapital(capitalRowFor(address, j.token.symbol, j.amount, usd, hash, now));
   return { ok: true, row, already: false };
