@@ -8,6 +8,11 @@
 // (OBS_AGENT_WALLET_SEED). The desk keeps no key file per person, and the same seed gives the same wallet again.
 // The seed is the whole custody: whoever holds it holds every agent wallet, and losing it loses them all, so it
 // lives only in the desk's environment and is never logged, returned, or written to disk.
+//
+// The wallets ledger remembers each wallet the first time it was shown, and every derivation after that is held
+// against the row: a rotated or mistyped seed derives a different, empty wallet for everyone, and until 2026-09-08
+// nothing noticed, so every /wallet would have shown a fresh address with the funded one gone quiet behind it. Now
+// that is an error the console names and a page to the operator, never a fresh address.
 import { createHmac } from "node:crypto";
 import { createPublicClient, createWalletClient, formatEther, parseEther, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -15,6 +20,7 @@ import { appendLedger, readLedger } from "../ledger.ts";
 import { ASSETS } from "./assets.ts";
 import { viemChain, transport, readNativeBalance, type Wallet } from "./signer.ts";
 import { resolvePayToken, valueUsd } from "./credits.ts";
+import { raiseAlert, type AlertKind } from "./alerts.ts";
 import { EXPLORER_URL } from "../config.ts";
 
 export const WALLETS_LEDGER = "obs-agent-wallets.jsonl";
@@ -44,24 +50,85 @@ export function deriveKey(seed: string, address: string): Hex {
   throw new Error("could not derive a key");
 }
 
-/** The account that signs for a person's agent wallet. Only withdraw and, later, live trades hold one, briefly. */
-function agentAccount(address: string, env: NodeJS.ProcessEnv = process.env) {
+export interface WalletRow { address: string; wallet: string; at: number }
+export const readAgentWallets = (): WalletRow[] => readLedger<WalletRow>(WALLETS_LEDGER);
+
+/** What the console says when the seed no longer derives the wallet the desk remembers. Never the seed, never a fresh address. */
+export const WALLET_DERIVATION_LINE = "Your agent's wallet cannot be derived right now; the operator has been paged.";
+
+/** A derivation the ledger contradicts. Its message is the console's line; the detail is in the page, not here. */
+export class WalletDerivationError extends Error {
+  constructor(public readonly address: string) {
+    super(WALLET_DERIVATION_LINE);
+    this.name = "WalletDerivationError";
+  }
+}
+
+/** The alarm this module raises; injectable so a test sees the page without a ledger or a webhook. */
+export type Pager = (kind: AlertKind, text: string, now?: number) => Promise<boolean>;
+
+/**
+ * PURE: today's derivation against the wallet the ledger remembers for this person. Null when they agree, or when
+ * nothing is remembered yet (the first showing is what writes the row). The row is what rememberWallet wrote, so
+ * both sides are compared in lower case.
+ */
+export function walletMismatch(address: string, derived: string, rows: WalletRow[]): { remembered: string; derived: string } | null {
+  const a = address.toLowerCase();
+  const row = rows.find((r) => r.address === a && typeof r.wallet === "string");
+  if (!row) return null;
+  const d = derived.toLowerCase();
+  if (row.wallet.toLowerCase() === d) return null;
+  return { remembered: row.wallet.toLowerCase(), derived: d };
+}
+
+const short = (a: string) => `${a.slice(0, 6)}...${a.slice(-4)}`;
+
+/** PURE: the page's words. Addresses only; the seed's value is the one thing this module never lets out. */
+export function seedAlertText(address: string, m: { remembered: string; derived: string }): string {
+  return `an agent wallet cannot be derived: the desk remembers ${short(m.remembered)} for ${short(address)} and today's OBS_AGENT_WALLET_SEED derives ${short(m.derived)}; the seed was rotated or mistyped, and every agent wallet is orphaned until the seed that made them is back`;
+}
+
+/**
+ * The account that signs for a person's agent wallet. Only withdraw and live trades hold one, briefly. Every
+ * derivation passes here, so every one of them is held against the ledger: a wallet the desk remembers that today's
+ * seed does not derive is a page to the operator (once per cooldown, the alarm's own rule) and an error, and no
+ * caller ever sees, funds, or trades from the wrong one.
+ */
+function agentAccount(address: string, env: NodeJS.ProcessEnv = process.env, rows: WalletRow[] = readAgentWallets(), page: Pager = raiseAlert, now = Date.now()) {
   if (!walletsOn(env)) throw new Error("agent wallets are not switched on: OBS_AGENT_WALLET_SEED is not set");
-  return privateKeyToAccount(deriveKey(seedOf(env), address));
+  const account = privateKeyToAccount(deriveKey(seedOf(env), address));
+  const bad = walletMismatch(address, account.address, rows);
+  if (bad) {
+    // The page goes out before the throw and is not awaited: the alarm never fails or delays the caller, and logs its own trouble.
+    void page("cycle", seedAlertText(address, bad), now).catch(() => { /* raiseAlert never throws; a stand-in might */ });
+    throw new WalletDerivationError(address);
+  }
+  return account;
 }
 
 /** The agent wallet's address for this person: the same every time, and nothing secret about it. */
-export function agentWalletAddress(address: string, env: NodeJS.ProcessEnv = process.env): `0x${string}` {
-  return agentAccount(address, env).address;
+export function agentWalletAddress(address: string, env: NodeJS.ProcessEnv = process.env, rows: WalletRow[] = readAgentWallets(), page: Pager = raiseAlert, now = Date.now()): `0x${string}` {
+  return agentAccount(address, env, rows, page, now).address;
 }
 
-/** The agent wallet as a signer, for the lane: made at call time, held only for the trade. */
-export function agentWallet(address: string, env: NodeJS.ProcessEnv = process.env): Wallet {
-  const account = agentAccount(address, env);
+/**
+ * The address, or null: wallets off, or a wallet today's seed does not derive (paged inside). For the persona and
+ * the public list of agents, which say nothing about a wallet rather than fail whole on one, and must never show a
+ * fresh address in its place.
+ */
+export function agentWalletAddressOrNull(address: string, env: NodeJS.ProcessEnv = process.env, rows: WalletRow[] = readAgentWallets(), page: Pager = raiseAlert, now = Date.now()): `0x${string}` | null {
+  if (!walletsOn(env)) return null;
+  try { return agentWalletAddress(address, env, rows, page, now); } catch (e) {
+    if (e instanceof WalletDerivationError) return null;
+    throw e;
+  }
+}
+
+/** The agent wallet as a signer, for the lane: made at call time, held only for the trade, and held against the ledger like every derivation. */
+export function agentWallet(address: string, env: NodeJS.ProcessEnv = process.env, rows: WalletRow[] = readAgentWallets(), page: Pager = raiseAlert, now = Date.now()): Wallet {
+  const account = agentAccount(address, env, rows, page, now);
   return { address: account.address, account };
 }
-
-export interface WalletRow { address: string; wallet: string; at: number }
 export interface AgentCapitalRow {
   address: string;
   at: number;
@@ -73,7 +140,7 @@ export interface AgentCapitalRow {
 }
 
 /** The wallet as recorded the first time it was shown, so the operator can list every agent wallet that exists. */
-export function rememberWallet(address: string, wallet: string, rows: WalletRow[] = readLedger<WalletRow>(WALLETS_LEDGER), now = Date.now()): void {
+export function rememberWallet(address: string, wallet: string, rows: WalletRow[] = readAgentWallets(), now = Date.now()): void {
   const a = address.toLowerCase();
   if (rows.some((r) => r.address === a)) return;
   appendLedger(WALLETS_LEDGER, { address: a, wallet: wallet.toLowerCase(), at: now });
@@ -136,7 +203,12 @@ export async function verifyFunding(hash: string, address: string, now = Date.no
   if (!isTxHash(hash) || !isAddress(address)) return { ok: false, reason: "a transaction hash and a wallet are required" };
   const prior = readAgentCapital().find((r) => r.kind === "deposit" && r.txHash.toLowerCase() === hash.toLowerCase());
   if (prior) return { ok: true, row: prior, already: true };
-  const wallet = agentWalletAddress(address);
+  let wallet: `0x${string}`;
+  try { wallet = agentWalletAddress(address); } catch (e) {
+    // A funding is never judged against a wallet the seed no longer derives; the person hears the console's line.
+    if (e instanceof WalletDerivationError) return { ok: false, reason: e.message };
+    throw e;
+  }
   const eth = ASSETS["ETH@robinhood"];
   const pub = createPublicClient({ chain: viemChain(eth), transport: transport(eth) });
   let receipt: Awaited<ReturnType<typeof pub.getTransactionReceipt>>;

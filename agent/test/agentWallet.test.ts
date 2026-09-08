@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { privateKeyToAccount } from "viem/accounts";
-import { deriveKey, agentWalletAddress, walletsOn, fundTx, judgeFunding, walletBook, walletLines, MIN_FUND_ETH } from "../src/desk/agentWallet.ts";
+import { deriveKey, agentWalletAddress, agentWalletAddressOrNull, agentWallet, walletMismatch, WalletDerivationError, WALLET_DERIVATION_LINE, walletsOn, fundTx, judgeFunding, walletBook, walletLines, MIN_FUND_ETH, type Pager } from "../src/desk/agentWallet.ts";
 
 const SEED = "a-seed-for-the-tests-that-is-long-enough-to-count-0123456789";
 const A = "0x1111111111111111111111111111111111111111";
@@ -21,6 +21,43 @@ test("an agent wallet is derived from the seed and the person's address: the sam
   assert.equal(w, privateKeyToAccount(k1).address, "the address is the derived key's");
   assert.equal(agentWalletAddress(A, env), w, "stable across calls");
   assert.throws(() => agentWalletAddress(A, {} as NodeJS.ProcessEnv), /not switched on/);
+});
+
+test("a wallet the ledger remembers is held against today's derivation: a rotated or mistyped seed is the console's line and a page, never a fresh address", () => {
+  const env = { OBS_AGENT_WALLET_SEED: SEED } as NodeJS.ProcessEnv;
+  const rotated = { OBS_AGENT_WALLET_SEED: SEED + "-rotated-by-mistake" } as NodeJS.ProcessEnv;
+  const paged: Array<{ kind: string; text: string; now: number | undefined }> = [];
+  const page: Pager = async (kind, text, now) => { paged.push({ kind, text, now }); return true; };
+  const w = agentWalletAddress(A, env, [], page);
+  // The row as rememberWallet writes it: the address and the wallet as first shown, both in lower case.
+  const rows = [{ address: A, wallet: w.toLowerCase(), at: 1 }];
+  assert.equal(walletMismatch(A, w, rows), null, "the same seed derives the remembered wallet");
+  assert.equal(walletMismatch(A.toUpperCase().replace("0X", "0x"), w.toUpperCase().replace("0X", "0x"), rows), null, "case is not a mismatch");
+  assert.equal(walletMismatch(B, w, rows), null, "no row yet, nothing to hold against");
+  assert.equal(agentWalletAddress(A, env, rows, page), w, "a wallet that matches its row is the wallet");
+  assert.equal(agentWallet(A, env, rows, page).address, w);
+  assert.equal(agentWalletAddressOrNull(A, env, rows, page), w);
+  assert.equal(paged.length, 0, "nothing to page while the seed derives what is remembered");
+
+  const fresh = agentWalletAddress(A, rotated, [], page);
+  assert.notEqual(fresh, w, "the rotated seed derives some other wallet");
+  assert.deepEqual(walletMismatch(A, fresh, rows), { remembered: w.toLowerCase(), derived: fresh.toLowerCase() });
+  assert.throws(() => agentWalletAddress(A, rotated, rows, page, 1234), (e: unknown) => e instanceof WalletDerivationError && e.message === WALLET_DERIVATION_LINE && e.address === A);
+  assert.throws(() => agentWallet(A, rotated, rows, page, 1234), WalletDerivationError, "the signer the mirror and withdraw use is held to the same row");
+  assert.equal(paged.length, 2, "each refused derivation pages; the alarm's own cooldown makes them one message");
+  assert.equal(paged[0].kind, "cycle");
+  assert.equal(paged[0].now, 1234);
+  assert.match(paged[0].text, /^an agent wallet cannot be derived: the desk remembers 0x[0-9a-f]{4}\.\.\.[0-9a-f]{4} for 0x1111\.\.\.1111 and today's OBS_AGENT_WALLET_SEED derives 0x[0-9a-f]{4}\.\.\.[0-9a-f]{4}; the seed was rotated or mistyped/);
+  for (const t of [paged[0].text, paged[1].text, WALLET_DERIVATION_LINE]) {
+    assert.ok(!t.includes(SEED), "the seed is never in the page or the line");
+    assert.ok(!t.toLowerCase().includes(fresh.toLowerCase()), "nor is the fresh address in full");
+    assert.ok(!t.includes("—"));
+  }
+  assert.equal(WALLET_DERIVATION_LINE, "Your agent's wallet cannot be derived right now; the operator has been paged.");
+
+  assert.equal(agentWalletAddressOrNull(A, rotated, rows, page), null, "the persona and the public list get null, not a fresh address");
+  assert.equal(agentWalletAddressOrNull(B, rotated, rows, page), agentWalletAddress(B, rotated, [], page), "an address with no row derives as before");
+  assert.equal(agentWalletAddressOrNull(A, {} as NodeJS.ProcessEnv, rows, page), null, "wallets off is null, not a throw");
 });
 
 test("funding is ETH to the agent's wallet and nothing else; a landed transaction is judged by sender, destination and value", () => {

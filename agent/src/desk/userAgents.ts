@@ -11,7 +11,7 @@ import { getSettings, DEFAULT_NAME, type UserSettings } from "./userSettings.ts"
 import { DEFAULT_MODEL } from "./models.ts";
 import { gateMode, type GateMode } from "./gate.ts";
 import { followState, readFollow, readFollowTrades, readFollowNotes, liveTrades, liveHoldings, mirrorTrades, mirrorHoldings } from "./follow.ts";
-import { walletsOn, agentWalletAddress } from "./agentWallet.ts";
+import { agentWalletAddressOrNull } from "./agentWallet.ts";
 import { readBook } from "./book.ts";
 
 /** What the console offers, for the persona's teaching: apps only while Composio is switched on (its only switch is the key), and the door as the gate keeps it. */
@@ -44,7 +44,9 @@ function standingNow(address: string): Standing | null {
     // What it holds, so it answers "what are you holding" from its own instruction instead of reaching for a tool it does not have.
     const held = st.mode === "live" ? liveHoldings(readFollowTrades(), address) : mirrorHoldings(mirrorTrades(readBook().trades, st));
     const holding = Object.entries(held).filter(([, q]) => q > 0).map(([sym]) => sym);
-    return { on: st.on, mode: st.mode, sizeUsd: st.sizeUsd, since: st.since, wallet: walletsOn() ? agentWalletAddress(address) : null, holding, recent };
+    // A wallet today's seed does not derive is null here, not a fresh address for the agent to quote, and not the
+    // loss of the whole standing: the rest is still true (2026-09-08).
+    return { on: st.on, mode: st.mode, sizeUsd: st.sizeUsd, since: st.since, wallet: agentWalletAddressOrNull(address), holding, recent };
   } catch {
     return null;
   }
