@@ -10,7 +10,8 @@
 import { GatewayClient } from "@openhermit/sdk";
 import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { DRY, ENGAGE_CAP, X_AGENT_ID, X_HANDLE, MAX_TWEET_CHARS, ROOT_DIR, dataPath } from "./config.ts";
+import { DRY, ENGAGE_CAP, X_AGENT_ID, X_HANDLE, X_VOICE, MAX_TWEET_CHARS, ROOT_DIR, dataPath } from "./config.ts";
+import { traderBlock, traderData, traderReplyPrompt } from "./social/traderVoice.ts";
 import { getMentions, postReply } from "./social/xClient.ts";
 import { cleanReply, forbiddenReason, isSkip, isJunk } from "./social/postGuards.ts";
 
@@ -95,6 +96,8 @@ try {
   /* no list: nothing avoided */
 }
 const voice = readFileSync(join(ROOT_DIR, "OBS_X_VOICE.md"), "utf8");
+// Agent OBS's own account replies as the trader, from its book this cycle; the copywriter's prompt is Obscura's voice.
+const block = X_VOICE === "trader" ? traderBlock(traderData()) : "";
 
 let replied = 0;
 for (const m of mentions) {
@@ -113,7 +116,7 @@ for (const m of mentions) {
     continue;
   }
 
-  const prompt = `You are Obscura's copywriter, running @${X_HANDLE} on X. Your voice guide, in full:
+  const copywriterReply = `You are Obscura's copywriter, running @${X_HANDLE} on X. Your voice guide, in full:
 
 ${voice}
 
@@ -134,6 +137,9 @@ If someone asks where a price is going, do NOT skip them and do NOT predict. Say
 
 This is a conversation, not a broadcast, so write like you are talking to one person. Usually one sentence is plenty. Match their energy. Do not restate what they said, do not lecture, do not pitch Obscura, never open with their handle. No hashtags, no em dashes, no quotation marks. If you have nothing true and useful to say, SKIP.`;
 
+  const prompt = X_VOICE === "trader"
+    ? traderReplyPrompt({ handle: X_HANDLE, block, authorHandle: m.authorHandle, text: m.text, parentText: m.parentText, parentIsMine: m.parentIsMine, maxChars: MAX_TWEET_CHARS })
+    : copywriterReply;
   const resp = await gw.agent(X_AGENT_ID).postMessageSync(sessionId, { text: prompt }, { timeout: 90000 }).catch(() => null);
   const reply = cleanReply(resp?.text ?? "");
   if (!resp || isSkip(reply) || reply.length < 5) {

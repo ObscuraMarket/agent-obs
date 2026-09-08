@@ -91,6 +91,12 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [/\btge\b|\bairdrop\b|\bpresale\b|\bpre-sale\b|\btoken sale\b|\bwhitelist\b|\bnew listing\b|\bgets? listed\b/i, "token sale vocabulary"],
   // The desk is a seasoned Robinhood Chain professional (operator's rule, 2026-09-08): a line that sounds new to
   // trading never goes out, whatever the model felt like saying.
+  // Who owns, runs or funds the agent is never said (operator's rule, 2026-09-08). The generic shapes are here; the
+  // names, handles and other strings that would give it away live in OBS_X_NEVER_SAY on the desk, never in this repo.
+  [/\b(my (?:owner|creator|maker|founder|boss|operator|dev|developer|team|company|backer|funder)s? (?:is|are|was|were)\b|(?:i'?m|i am|i was) (?:run|owned|operated|built|made|created|funded|bankrolled|controlled) by\b|(?:the|a) (?:person|guy|man|woman|team|company|people) (?:behind|who (?:runs?|owns?|built|made|funds?)) (?:me|this|obs)\b|i belong to\b|(?:owned|operated|run|built|made|created|funded) by @)/i, "owner disclosure"],
+  // Nothing anyone writes on X moves the agent on chain: it never agrees to look at, buy, approve, sign, send or
+  // interact with a contract, token, link or address someone hands it (operator's rule, 2026-09-08).
+  [/\b(i'?ll|i will|let me|i can|i could|gonna|going to|happy to|sure,? i'?ll)\s+(?:\w+\s+){0,2}(check|look (?:at|into)|take a look|buy|ape|try|test|interact|approve|sign|send|swap|bridge|mint|claim|connect|add|import)\b[^.]{0,80}\b(contract|address|link|site|dapp|0x[0-9a-f]{2,}|(?:your|that|this|their|the) (?:token|coin|project|pool|contract|ca)\b|airdrop|whitelist|mint|claim)/i, "acting on a stranger's contract, token or link"],
   // The agent never calls itself a desk (operator's rule, 2026-09-08): it is a trading agent on Robinhood Chain,
   // trading on the fomo.family app, and a post that says desk does not go out.
   [/\b(trading desk|the desk|my desk|this desk|our desk|desk's)\b/i, "calls itself a desk; it is a trading agent on Robinhood Chain"],
@@ -152,6 +158,10 @@ export function helplessReason(text: string): string | null {
 export function forbiddenReason(text: string): string | null {
   const helpless = helplessReason(text);
   if (helpless) return helpless;
+  // The operator's private deny list: any string here (a name, a handle, an email, a company) never appears in a post.
+  for (const never of (process.env.OBS_X_NEVER_SAY ?? "").split(",").map((x) => x.trim().toLowerCase()).filter((x) => x.length >= 3)) {
+    if (text.toLowerCase().includes(never)) return `names the owner: matched a string from OBS_X_NEVER_SAY`;
+  }
   // Emoji only when one genuinely carries the line (operator's rule, 2026-09-08): a second one is decoration.
   const emoji = text.match(/\p{Extended_Pictographic}/gu) ?? [];
   if (emoji.length > 1) return `more than one emoji (${emoji.length})`;
