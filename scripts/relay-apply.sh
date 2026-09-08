@@ -4,11 +4,10 @@
 # handed to the console, the docs and the assets. Called by relay-dashboard.sh on a fresh clone, and runnable on
 # any checkout to look at the result or build it:
 #   scripts/relay-apply.sh <site checkout> [source sha]
-# CONSOLE_LIVE=yes rewires the header so Trade, Rewards, Cards and Yield are console views and Console is the
-# first link. The default, no, keeps the site's own links, removes only Referral, and shows Console first, greyed
-# out with the site's Soon treatment, until the user says the console is open. The route is registered either way.
+# The header becomes Console, Trade, Agent, Docs, Roadmap: Rewards, Cards and Yield live in the console (their
+# routes stay for deep links), Referral is gone, and Console follows the connected wallet, a live link when the
+# desk's door lets that wallet in and the site's own greyed Soon item otherwise.
 set -e
-CONSOLE_LIVE="${CONSOLE_LIVE:-no}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SITE="${1:?usage: relay-apply.sh <site checkout> [sha]}"
 SHA="${2:-$(git -C "$ROOT" rev-parse --short HEAD)}"
@@ -113,13 +112,15 @@ fi
 HEADER="$APP/dapp-layout/header/header.component.html"
 HEADER_TS="$APP/dapp-layout/header/header.component.ts"
 HEADER_SPEC="$APP/dapp-layout/header/header.component.spec.ts"
-if [ -f "$HEADER" ] && grep -q 'routerLink="/rewards"' "$HEADER" && [ "$CONSOLE_LIVE" != "yes" ]; then
+if [ -f "$HEADER" ] && { grep -q 'routerLink="/rewards"' "$HEADER" || ! grep -q 'consoleOpen; else consoleSoon' "$HEADER"; }; then
   python3 - "$HEADER" <<'PY'
 import sys, re
 p = sys.argv[1]; s = open(p).read()
-# The referral link goes with its section; every other link stays.
-s = re.sub(r'\n[ \t]*<li><a routerLink="/referral"[^>]*>.*?</a></li>', "", s, count=1, flags=re.S)
-s = re.sub(r'\n[ \t]*<a routerLink="/referral"[^>]*>.*?</a>', "", s, count=1, flags=re.S)
+# Rewards, Cards and Yield are console views and Referral is gone: their links leave the header (desktop and the
+# mobile menu); Trade, Agent, Docs and Roadmap stay. Each removal is one match, so a header already folded is left as it is.
+for path in ["rewards", "cards", "referral", "yield"]:
+    s = re.sub(r'\n[ \t]*<li><a routerLink="/%s"[^>]*>.*?</a></li>' % path, "", s, count=1, flags=re.S)
+    s = re.sub(r'\n[ \t]*<a routerLink="/%s"[^>]*>.*?</a>' % path, "", s, count=1, flags=re.S)
 s = s.replace("\n      <!-- Referral routes to the live waitlist page. -->", "", 1)
 # Console first. It follows the connected wallet: a live link when the desk's door lets that wallet in (the header's
 # consoleOpen, from /api/obs/console/door), and otherwise the site's own Soon treatment, dimmed and taking no click.
@@ -181,7 +182,7 @@ open(p, "w").write(s)
 PY
 fi
 # The header asks the desk's door about the connected wallet, once per connection, and lights the link on yes.
-if [ -f "$HEADER_TS" ] && ! grep -q "consoleOpen" "$HEADER_TS" && [ "$CONSOLE_LIVE" != "yes" ]; then
+if [ -f "$HEADER_TS" ] && ! grep -q "consoleOpen" "$HEADER_TS"; then
   python3 - "$HEADER_TS" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p).read()
@@ -194,19 +195,6 @@ s = s.replace("  setActiveLink(link: string) {", "  ngOnDestroy(): void {\n    t
 open(p, "w").write(s)
 PY
 fi
-if [ -f "$HEADER" ] && grep -q 'routerLink="/rewards"' "$HEADER" && [ "$CONSOLE_LIVE" = "yes" ]; then
-  python3 - "$HEADER" <<'PY'
-import sys, re
-p = sys.argv[1]; s = open(p).read()
-for path in ["app", "rewards", "cards", "referral", "yield"]:
-    s = re.sub(r'\n[ \t]*<li><a routerLink="/%s"[^>]*>.*?</a></li>' % path, "", s, count=1, flags=re.S)
-    s = re.sub(r'\n[ \t]*<a routerLink="/%s"[^>]*>.*?</a>' % path, "", s, count=1, flags=re.S)
-s = s.replace("\n      <!-- Referral routes to the live waitlist page. -->", "", 1)
-s = s.replace('      <a routerLink="/agent" class="nav-link"', '      <a routerLink="/console" class="nav-link" data-testid="nav-console" [class.active]="activeLink === \'console\'" (click)="setActiveLink(\'console\')">Console</a>\n      <a routerLink="/agent" class="nav-link"', 1)
-s = s.replace('          <li><a routerLink="/agent" class="nav-menu-link"', '          <li><a routerLink="/console" class="nav-menu-link" data-testid="mobile-console" (click)="setActiveLink(\'console\'); toggleMenu()">Console</a></li>\n          <li><a routerLink="/agent" class="nav-menu-link"', 1)
-open(p, "w").write(s)
-PY
-fi
 if [ -f "$HEADER_TS" ] && ! grep -q "'/console'" "$HEADER_TS"; then
   python3 - "$HEADER_TS" <<'PY'
 import sys
@@ -215,8 +203,9 @@ s = s.replace("    if (url.startsWith('/cards')) {\n      this.activeLink = 'car
 open(p, "w").write(s)
 PY
 fi
-if [ -f "$HEADER_SPEC" ] && grep -q 'nav-rewards' "$HEADER_SPEC"; then
-  if [ "$CONSOLE_LIVE" = "yes" ]; then cp "$ROOT/dashboard/relay/header.component.spec.ts" "$HEADER_SPEC"; else cp "$ROOT/dashboard/relay/header.component.soon.spec.ts" "$HEADER_SPEC"; fi
+# The header's spec describes the header the relay makes; ours replaces the site's whenever they differ.
+if [ -f "$HEADER_SPEC" ] && ! cmp -s "$ROOT/dashboard/relay/header.component.spec.ts" "$HEADER_SPEC"; then
+  cp "$ROOT/dashboard/relay/header.component.spec.ts" "$HEADER_SPEC"
 fi
 cp "$ROOT/dashboard/angular/src/app/service/obs-desk.service.ts" "$APP/service/obs-desk.service.ts"
 cp "$ROOT/dashboard/INTEGRATION.md" "$DOCS/INTEGRATION.md"
