@@ -4,7 +4,7 @@
 // they are handed, and tested offline; only traderData() reads the disk.
 import { readFileSync } from "node:fs";
 import { dataPath } from "../config.ts";
-import { readBook, snapshot, positions, holdingsFrom, type Prices } from "../desk/book.ts";
+import { readBook, snapshot, positions, holdingsFrom, type Prices, type BookSnapshot, type CapitalFlow, type Trade } from "../desk/book.ts";
 import { readCloses, launchRecord, launchRecordLine, type TradeClose } from "../desk/trade-memory.ts";
 import { readThoughts, type Thought } from "../desk/thoughts.ts";
 import { readPrices } from "../desk/analysis.ts";
@@ -111,13 +111,26 @@ Hard rules: no advice, no prediction, never tell anyone to buy or sell, never ca
 If nothing is genuinely worth saying right now: reply with PASS on the first line, then your NOTE.`;
 }
 
+/**
+ * PURE: what the desk holds, for the post. The book's latest snapshot carries the wallet as the chain read it, and that
+ * is the truth the post may speak from; the ledger's own arithmetic (holdingsFrom) is the fallback when no fresh
+ * chain snapshot exists. Without this the job posted about a KOFUKU remainder the ledger still carried and the
+ * wallet no longer held (rehearsal, 2026-09-08).
+ */
+export function traderHoldings(snapshots: BookSnapshot[], flows: CapitalFlow[], trades: Trade[], ledgerEquityUsd: number | null, now: number, maxAgeMs = 60 * 60e3): { holdings: Record<string, number>; equityUsd: number | null; from: "chain" | "ledger" } {
+  const last = snapshots.length ? snapshots[snapshots.length - 1] : null;
+  if (last && last.source !== "ledger" && now - last.at <= maxAgeMs && last.holdings) return { holdings: last.holdings, equityUsd: last.equityUsd ?? ledgerEquityUsd, from: "chain" };
+  return { holdings: holdingsFrom(flows, trades), equityUsd: ledgerEquityUsd, from: "ledger" };
+}
+
 /** The desk's own numbers now, from its ledgers: the book at the latest prices, today's closes, the record, the thoughts, the watch. */
 export function traderData(now = Date.now()): TraderInput {
   const book = readBook();
   const prices: Prices = {};
   for (const s of readPrices().filter((x) => now - x.at <= 3 * 3600e3).sort((a, b) => a.at - b.at)) prices[s.symbol.toUpperCase()] = s.priceUsd;
-  const holdings = holdingsFrom(book.flows, book.trades);
   const snap = snapshot(book.flows, book.trades, prices, now);
+  const held = traderHoldings(book.snapshots, book.flows, book.trades, snap.equityUsd, now);
+  const holdings = held.holdings;
   const pos = positions(book.flows, book.trades, holdings, prices);
   const closes = readCloses().filter((c) => !c.paper);
   const dayStart = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate());
@@ -129,7 +142,7 @@ export function traderData(now = Date.now()): TraderInput {
   const thoughts = readThoughts(3).filter((t: Thought) => !t.paper).map((t: Thought) => ({ at: t.at, text: t.thoughts.join(" "), decision: t.decision.kind }));
   const entryAt = (asset: string) => book.trades.filter((t) => t.to.asset === asset && t.status === "settled").map((t) => t.at).sort().pop() ?? null;
   return {
-    equityUsd: snap.equityUsd,
+    equityUsd: held.equityUsd,
     rules: rulesLine(railsFromEnv()),
     positions: pos.positions.filter((p) => p.asset !== "ETH").map((p) => ({ asset: p.asset, valueUsd: p.valueUsd, unrealizedPct: p.unrealizedPct != null ? p.unrealizedPct * 100 : null, ageH: entryAt(p.asset) != null ? (now - (entryAt(p.asset) as number)) / 3600e3 : null })),
     closesToday: closes.filter((c) => c.at >= dayStart).sort((a, b) => a.at - b.at).map((c) => ({ symbol: c.symbol, realizedUsd: c.realizedUsd, realizedPct: c.realizedPct, exitKind: c.exitKind, holdH: c.holdH, at: c.at })),

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { traderBlock, traderPrompt, rulesLine, TRADER_FORMS } from "../src/social/traderVoice.ts";
+import { traderBlock, traderPrompt, rulesLine, traderHoldings, TRADER_FORMS } from "../src/social/traderVoice.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
 const T = Date.UTC(2026, 8, 7, 23, 40);
@@ -60,4 +60,20 @@ test("the rules line quotes the rails as they are set, so a mechanic post carrie
   const line = rulesLine(railsFromEnv({ OBS_MAX_SWAP_USD: "200", OBS_MIN_HOURS_BETWEEN_ENTRIES: "0.5", OBS_DAILY_LOSS_USD: "250", OBS_DAILY_LOSS_PCT: "15", OBS_CANDIDATE_FLOOR_PCT: "30", OBS_CANDIDATE_TRAIL_ARM_PCT: "20", OBS_CANDIDATE_TRAIL_PCT: "15", OBS_CANDIDATE_TAKE_PROFIT_PCT: "30", OBS_CANDIDATE_TAKE_PROFIT_SHARE: "0.33", OBS_CANDIDATE_TAPE_EXIT_MIN_PCT: "10", OBS_CANDIDATE_TAPE_EXIT_PRESSURE_PCT: "45", OBS_CANDIDATE_TAPE_EXIT_SHARE: "0.6", OBS_CANDIDATE_REMAINDER_FLOOR_PCT: "5", OBS_CANDIDATE_MAX_HOLD_H: "8" } as NodeJS.ProcessEnv));
   assert.equal(line, "enter with at most $200 a trade, 0.5 h apart, and not at all once the day is down $250 or 15%. Exits, whichever comes first: the floor at -30%; the trailing stop, armed at +20% and out when 15% of the peak is given back; the take-profit, 33% sold at +30%; the tape exit, 60% sold past +10% once buyers fall under 45% of the tape; a remainder floor at -5% after a partial sale; and the time stop at 8 h.");
   assert.ok(!line.includes("—"));
+});
+
+
+test("the post speaks from the wallet as the chain read it, not from the ledger's arithmetic, while the snapshot is fresh", () => {
+  const flows = [{ at: T - 10 * 3600e3, kind: "deposit", asset: "ETH", amount: 1, usd: 2500 }] as any;
+  const trades = [{ at: T - 5 * 3600e3, id: "t1", status: "settled", venue: "pool", from: { asset: "ETH", network: "robinhood", amount: 0.1, usd: 250 }, to: { asset: "KOFUKU", network: "robinhood", amount: 1_000_000, usd: 250 } }] as any;
+  const chain = [{ at: T - 5 * 60e3, source: "chain", holdings: { ETH: 0.9 }, equityUsd: 2250 }] as any;
+  const fresh = traderHoldings(chain, flows, trades, 2400, T);
+  assert.equal(fresh.from, "chain");
+  assert.equal(fresh.holdings.KOFUKU, undefined);
+  assert.equal(fresh.equityUsd, 2250);
+  const stale = traderHoldings([{ ...chain[0], at: T - 3 * 3600e3 }], flows, trades, 2400, T);
+  assert.equal(stale.from, "ledger");
+  assert.equal(stale.holdings.KOFUKU, 1_000_000);
+  assert.equal(stale.equityUsd, 2400);
+  assert.equal(traderHoldings([], flows, trades, null, T).from, "ledger");
 });
