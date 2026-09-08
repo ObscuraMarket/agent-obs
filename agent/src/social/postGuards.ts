@@ -36,7 +36,7 @@ export function stripSelfEcho(s: string): string {
 // the echo junction's exact shape and ALSO the exact shape of every domain. It
 // would publish "obscura. market". So URLs are masked through the pipeline
 // with a control-character sentinel and restored at the end.
-const URL_RE = /(https?:\/\/\S+|\b[a-z0-9][a-z0-9-]*\.(?:xyz|com|io|net|org|fi|finance|app|dev|market|link)\b(?:\/[^\s]*)?)/gi;
+const URL_RE = /(https?:\/\/\S+|\b[a-z0-9][a-z0-9-]*\.(?:xyz|com|io|net|org|fi|finance|app|dev|market|link|family|fun|trade|exchange)\b(?:\/[^\s]*)?)/gi;
 const MASK = "";
 
 /** Normalize a raw model reply into something postable. */
