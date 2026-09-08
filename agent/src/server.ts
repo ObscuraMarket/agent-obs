@@ -637,8 +637,8 @@ const MY_AGENT_BOOK_TRADES = 20;
 /**
  * PURE: the owner's view of a follow book. Unrealized is the sum over the positions, null while one of them is
  * unpriced (a partial sum would read as the whole). Equity is the wallet's ETH in dollars plus what the positions
- * are worth: null when the wallet could not be read or ETH is unpriced; a paper agent moves no money, so its equity
- * is what its paper positions are worth. Wins and losses count the exits by their realized result. Exported for tests.
+ * are worth: null when the wallet could not be read, ETH is unpriced or a position is unpriced (a partial sum is never
+ * shown as the whole); a paper agent moves no money, so its equity is what its paper positions are worth. Wins and losses count the exits by their realized result. Exported for tests.
  */
 export function myAgentBookPayload(name: string, book: FollowBook, wallet: string | null, walletEth: number | null, ethUsd: number | null, now: number): MyAgentBook {
   const s = book.state;
@@ -650,9 +650,12 @@ export function myAgentBookPayload(name: string, book: FollowBook, wallet: strin
   const walletUsd = walletEth != null && ethUsd != null ? walletEth * ethUsd : null;
   const equityUsd = s.mode === "paper" ? positionsUsd : walletUsd == null || positionsUsd == null ? null : walletUsd + positionsUsd;
   const resultOf = new Map(pos.events.map((e) => [e.id, e.usd] as const));
-  const rows = [...book.trades].sort((a, b) => a.at - b.at);
+  // Sorted by the stamp each row shows: sorting by the entry time and showing the settlement time put a settled exit
+  // after an entry that came later, and "newest last" broke on the card (2026-09-08).
+  const stamp = (t: Trade) => t.updatedAt ?? t.at;
+  const rows = [...book.trades].sort((a, b) => stamp(a) - stamp(b));
   const trades: MyAgentBookTrade[] = rows.slice(-MY_AGENT_BOOK_TRADES).map((t) => ({
-    at: t.updatedAt ?? t.at,
+    at: stamp(t),
     kind: t.exit ? "exit" : "entry",
     asset: t.exit ? t.from.asset : t.to.asset,
     usd: t.exit ? t.to.usd : t.from.usd,
@@ -671,10 +674,28 @@ export function myAgentBookPayload(name: string, book: FollowBook, wallet: strin
 }
 const myAgentBookCache = new TtlCache<MyAgentBook>(10_000);
 const walletEthCache = new TtlCache<number | null>(30_000);
-/** The agent wallet's ETH, one chain read per wallet per thirty seconds; null when the read fails, and no read at all when there is no wallet. */
+/** How long the book waits on the wallet's chain read before answering without it. */
+export const WALLET_ETH_DEADLINE_MS = 3_000;
+/**
+ * PURE: the read's value, or null once the deadline passes or the read fails. The book awaits the wallet's ETH on
+ * the request path, and a stalled RPC held it for viem's full retry run (up to forty seconds) before answering
+ * with null anyway (2026-09-08); a read that does not answer in time is dropped and the card shows the balance as
+ * not read yet. The timer is unref'd and cleared when the read wins, so it never holds the process. Exported for tests.
+ */
+export function withinDeadline<T>(read: () => Promise<T>, ms: number): Promise<T | null> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); timer.unref?.(); });
+  return Promise.race([read(), late]).catch(() => null).finally(() => { if (timer) clearTimeout(timer); });
+}
+/**
+ * The agent wallet's ETH, one chain read per wallet per thirty seconds, within the deadline; null when the read
+ * fails or is late (held for the thirty seconds, so a slow RPC is not asked again at once), and no read at all when
+ * there is no wallet. A paper agent's wallet is read too, on purpose: its owner funds the wallet before /start goes
+ * live and the card is where they see the ETH land (one balance read per wallet per thirty seconds, no more).
+ */
 function walletEthCached(address: string, wallet: string | null, now: number): Promise<number | null> {
   if (!wallet) return Promise.resolve(null);
-  return walletEthCache.get(address.toLowerCase(), () => agentBalanceEth(address).catch(() => null), now);
+  return walletEthCache.get(address.toLowerCase(), () => withinDeadline(() => agentBalanceEth(address), WALLET_ETH_DEADLINE_MS), now);
 }
 function myAgentBook(address: string, now: number): Promise<MyAgentBook> {
   return myAgentBookCache.get(address.toLowerCase(), async () => {

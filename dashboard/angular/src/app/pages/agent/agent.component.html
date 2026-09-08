@@ -353,8 +353,9 @@
       <div class="boxes mine-boxes">
         <div class="box">
           <div class="lbl">Wallet ETH</div>
-          <div class="val num" [class.mutedtx]="b.walletEth == null">{{ b.walletEth == null ? (b.wallet ? 'unread' : 'no wallet') : num(b.walletEth, 5) + ' ETH' }}</div>
+          <div class="val num" [class.mutedtx]="b.walletEth == null">{{ b.walletEth == null ? (b.wallet ? 'not read yet' : 'no wallet') : num(b.walletEth, 5) + ' ETH' }}</div>
           <div class="sub num" *ngIf="b.walletEth != null && b.ethUsd != null">{{ usd(b.walletEth * b.ethUsd) }}</div>
+          <div class="sub" *ngIf="b.walletEth == null && b.wallet">the next read tries again</div>
         </div>
         <div class="box">
           <div class="lbl">Equity</div>
@@ -409,7 +410,7 @@
       </div>
       <div class="mine-foot">
         <span class="mutedtx" *ngIf="b.wallet">Its wallet: <a class="num" [href]="b.walletUrl" target="_blank" rel="noopener noreferrer">{{ b.wallet }}</a></span>
-        <span class="mutedtx" *ngIf="!b.wallet">Its wallet is not set up here yet.</span>
+        <span class="mutedtx" *ngIf="!b.wallet">Its wallet is not set up yet. /wallet in the console sets one up.</span>
         <a class="cta mine-cta" href="/console">Open the console</a>
       </div>
     </ng-container>

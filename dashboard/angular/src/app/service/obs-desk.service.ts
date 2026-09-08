@@ -471,7 +471,8 @@ export interface ObsMyAgentBookTrade { at: number; kind: 'entry' | 'exit'; asset
  * `/api/obs/my-agent/book` (bearer): the wallet's own agent in full, for the Agent page's "Your agent" card. The
  * public list shows every agent by name; this is the owner's view of theirs: the full wallet address, the wallet's
  * ETH, every position with its cost and result, the last twenty trades newest last. `equityUsd` is the wallet's ETH
- * in dollars plus the positions (a paper agent: the positions alone), null when the wallet could not be read.
+ * in dollars plus the positions (a paper agent: the positions alone), null when the wallet could not be read, ETH is
+ * unpriced or a position is unpriced (a partial sum is never shown as the whole).
  */
 export interface ObsMyAgentBook {
   ok: boolean;

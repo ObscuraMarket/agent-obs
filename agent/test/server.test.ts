@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter, tapePrices, pnlFingerprint } from "../src/server.ts";
-import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX, TtlCache, attempt, dashboardQuery, handle, myAgentBookPayload } from "../src/server.ts";
+import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX, TtlCache, attempt, dashboardQuery, handle, myAgentBookPayload, withinDeadline, WALLET_ETH_DEADLINE_MS } from "../src/server.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 import { mintSession } from "../src/desk/accounts.ts";
 import { followState, followBook, recordFollow } from "../src/desk/follow.ts";
@@ -212,7 +212,7 @@ test("the book is behind the bearer: no bearer, no book, and nothing about any w
   });
 });
 
-test("a paper agent's book has the owner's shape: its state, its empty book, no wallet leg and no chain read", async () => {
+test("a paper agent's book has the owner's shape: its state, its empty book; wallets off: no address, no balance", async () => {
   const address = "0x1111111111111111111111111111111111111111";
   const now = Date.UTC(2026, 8, 8, 12, 0, 0);
   recordFollow(address, "start", 25, now, "paper");
@@ -224,7 +224,7 @@ test("a paper agent's book has the owner's shape: its state, its empty book, no 
     assert.equal(r.j.ok, true);
     assert.equal(typeof r.j.name, "string");
     assert.deepEqual([r.j.on, r.j.mode, r.j.sizeUsd, r.j.since], [true, "paper", 25, now]);
-    assert.deepEqual([r.j.wallet, r.j.walletUrl, r.j.walletEth], [null, null, null], "wallets are off here: no address, no balance, no read");
+    assert.deepEqual([r.j.wallet, r.j.walletUrl, r.j.walletEth], [null, null, null], "wallets are off here (no seed): no address, so no balance and nothing to read");
     assert.deepEqual([r.j.positions, r.j.trades, r.j.tradeCount, r.j.wins, r.j.losses, r.j.realizedUsd], [[], [], 0, 0, 0, 0]);
     assert.equal(r.j.equityUsd, 0, "a paper book with nothing in it is worth nothing, and that is a number");
     assert.equal(r.j.unrealizedUsd, 0);
@@ -295,4 +295,33 @@ test("the owner's payload: positions with their cost and result, the last twenty
   assert.equal(myAgentBookPayload("Sable", { ...book, state: { ...state, mode: "live" } }, null, null, 2500, t0).equityUsd, null, "a wallet that could not be read is no equity figure");
   const unpriced = myAgentBookPayload("Sable", followBook(desk, state, { ETH: 2500 }), null, null, 2500, t0);
   assert.deepEqual([unpriced.unrealizedUsd, unpriced.equityUsd], [null, null], "an unpriced position is not summed as zero");
+});
+
+test("the wallet's chain read is held to a deadline: a read that never answers is null in time, a quick one is its value", async () => {
+  const t0 = Date.now();
+  const never = await withinDeadline(() => new Promise<number>(() => { /* a stalled RPC: no answer, ever */ }), 50);
+  assert.equal(never, null, "late is null, never a hang");
+  assert.ok(Date.now() - t0 < 1_000, "answered on the deadline, not on viem's retries");
+  assert.equal(await withinDeadline(() => Promise.resolve(0.25), 50), 0.25);
+  assert.equal(await withinDeadline(() => Promise.reject(new Error("rpc down")), 50), null, "a failed read is null, not a throw");
+  assert.ok(WALLET_ETH_DEADLINE_MS <= 5_000, "the book must answer well inside the page's own patience");
+  // The book with the late read: its shape is whole, the wallet leg alone is null, and a live equity stays null.
+  const state = followState([{ address: "0xabc", at: t0 - 1, action: "start", sizeUsd: 50, mode: "live" }], "0xabc");
+  const book = followBook([], state, { ETH: 2500 });
+  const p = myAgentBookPayload("Sable", book, "0x9999999999999999999999999999999999999999", never, 2500, t0);
+  assert.deepEqual([p.wallet, p.walletEth, p.equityUsd], ["0x9999999999999999999999999999999999999999", null, null]);
+});
+
+test("the last trades are ordered by the stamp they show: a settled exit stamped after a later entry comes after it", () => {
+  const t0 = Date.UTC(2026, 8, 8, 9, 0, 0);
+  const desk: Trade[] = [
+    { at: t0, id: "b0", status: "settled", from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "NSDX", amount: 1000, usd: 100 }, partner: null },
+    // Placed at 09:10, settled at 09:30: after the entry at 09:20 by the time the card shows.
+    { at: t0 + 600e3, updatedAt: t0 + 1800e3, id: "s0", status: "settled", exit: true, from: { asset: "NSDX", amount: 1000, usd: 110 }, to: { asset: "ETH", amount: 0.044, usd: 110 }, partner: null },
+    { at: t0 + 1200e3, id: "b1", status: "settled", from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "NSDX", amount: 1000, usd: 100 }, partner: null },
+  ];
+  const state = followState([{ address: "0xabc", at: t0 - 1, action: "start", sizeUsd: 50, mode: "paper" }], "0xabc");
+  const p = myAgentBookPayload("Sable", followBook(desk, state, { NSDX: 0.1, ETH: 2500 }), null, null, 2500, t0 + 3600e3);
+  assert.deepEqual(p.trades.map((t) => [t.kind, t.at]), [["entry", t0], ["entry", t0 + 1200e3], ["exit", t0 + 1800e3]], "newest last by the shown stamp");
+  assert.ok(p.trades.every((t, i) => i === 0 || t.at >= p.trades[i - 1].at));
 });

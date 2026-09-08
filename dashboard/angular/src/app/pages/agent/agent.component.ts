@@ -2,7 +2,8 @@ import { AfterViewInit, Component, ElementRef, HostListener, Inject, NgZone, OnD
 import { Meta, Title } from '@angular/platform-browser';
 
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
-import { REFRESH_MS, nextRefreshMs } from './refresh';
+import { timeout } from 'rxjs';
+import { REFRESH_MS, nextRefreshMs, tickStatus } from './refresh';
 import {
   CgMarket, ObsDashboard, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
   ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent,
@@ -42,6 +43,8 @@ const TERM_LINE_CAP = 700;
 const EVENT_REFRESH_MS = 6_000;
 /** CoinGecko's free API refreshes about once a minute; asking it more often only spends the viewer's budget. */
 const CG_EVERY_MS = 60_000;
+/** How long the book read waits for an answer before the next tick may try again. */
+const MY_BOOK_TIMEOUT_MS = 20_000;
 
 /**
  * The OBS desk: every feature of agent-obs's newest dashboard (the typewriter
@@ -75,6 +78,11 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   myBookErr = false;
   private myWalletSub?: { unsubscribe(): void };
   private myBookBusy = false;
+  /** The book met a 429 and has not answered since: the tick's clock doubles until it does, whatever the dashboard says. */
+  private myBookLimited = false;
+  /** The browser provider the fallback path listens to, so the listener can be removed on destroy. */
+  private myProvider: any = null;
+  private readonly onMyAccounts = (accs: string[]) => this.zone.run(() => this.setMyWallet(accs?.[0] ?? null));
   /** What the card shows: one sentence for each state before the book, the book itself after. */
   get myState(): 'no-wallet' | 'no-session' | 'loading' | 'not-started' | 'book' {
     if (!this.myWallet) { return 'no-wallet'; }
@@ -286,6 +294,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     window.removeEventListener('pageshow', this.onVisible);
     this.destroyed = true;
     this.myWalletSub?.unsubscribe();
+    this.myProvider?.removeListener?.('accountsChanged', this.onMyAccounts);
     if (this.refreshClock) { clearTimeout(this.refreshClock); }
     this.es?.close();
     this.ro?.disconnect();
@@ -307,14 +316,16 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
    * One read for the whole page: /api/obs/dashboard carries every payload the page used to poll one route at a time
    * (nine requests every fifteen seconds from an idle tab, hidden or not, until 2026-09-08), fanned out here to the
    * same fields. A hidden tab reads nothing and its clock stops; the tab coming back reads once and the clock
-   * restarts (onVisible). A 429 doubles the wait until a read succeeds.
+   * restarts (onVisible). A 429 doubles the wait until a read succeeds. The dashboard's answer alone sets the
+   * clock, once per tick, and carries the book's 429 with it (tickStatus): the two answers used to race and the
+   * book's 429 lost whenever it answered first (2026-09-08).
    */
   refresh(): void {
     if (document.hidden) { return; }
     this.err = '';
     this.obs.dashboard(this.chartHours, 30, 8).subscribe({
-      next: (d) => { this.applyDashboard(d); this.scheduleRefresh(null); },
-      error: (e: { status?: number }) => { this.err = 'dashboard'; this.scheduleRefresh(e?.status ?? 0); }
+      next: (d) => { this.applyDashboard(d); this.scheduleRefresh(tickStatus(null, this.myBookLimited)); },
+      error: (e: { status?: number }) => { this.err = 'dashboard'; this.scheduleRefresh(tickStatus(e?.status ?? 0, this.myBookLimited)); }
     });
     this.refreshAssetMarkets();
     this.refreshMyAgent();
@@ -338,9 +349,14 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     const w = window as any;
     const p = w.ethereum ?? w.phantom?.ethereum ?? null;
     if (!p || typeof p.request !== 'function') { return; }
-    Promise.resolve(p.request({ method: 'eth_accounts' }))
+    // The call sits inside the chain: a shim whose request() throws before it is initialised threw out of
+    // ngOnInit and took the page down (2026-09-08). A wallet connected or switched after load is heard the way
+    // the console hears it, so the card follows without a reload.
+    Promise.resolve().then(() => p.request({ method: 'eth_accounts' }))
       .then((accs: string[]) => this.zone.run(() => this.setMyWallet(accs?.[0] ?? null)))
       .catch(() => { /* not connected, or the wallet said no: the card asks for a connection */ });
+    this.myProvider = p;
+    try { p.on?.('accountsChanged', this.onMyAccounts); } catch { /* a provider with no events: the next load sees the wallet */ }
   }
 
   private setMyWallet(addr: string | null): void {
@@ -353,10 +369,11 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   /**
    * The wallet's own book, on the page's clock: called from refresh(), so it shares the fifteen-second cadence,
-   * the hidden-tab pause and the 429 backoff (a 429 here sets the same clock), and once when the wallet arrives.
-   * Nothing is asked without a session; a wallet with none is checked for one on every read, so a sign-in on the
-   * console in another tab shows up here on the next read. A 401 drops the stored session the way the console
-   * does, and the card asks for a sign-in.
+   * the hidden-tab pause and the 429 backoff (a 429 here is carried into the clock by the dashboard's answer), and
+   * once when the wallet arrives. Nothing is asked without a session; a wallet with none is checked for one on
+   * every read, so a sign-in on the console in another tab shows up here on the next read. A 401 drops the stored
+   * session the way the console does, and the card asks for a sign-in. The read is given twenty seconds: a socket
+   * a proxy held open left the busy flag set and the card reading for minutes (2026-09-08).
    */
   private refreshMyAgent(): void {
     if (document.hidden || this.myBookBusy) { return; }
@@ -364,18 +381,18 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     const s = this.mySession;
     if (!s) { return; }
     this.myBookBusy = true;
-    this.obs.myAgentBook(s.token).subscribe({
-      next: (b) => { this.myBookBusy = false; this.myBook = b; this.myTrades = [...(b.trades || [])].reverse(); this.myBookErr = false; },
+    this.obs.myAgentBook(s.token).pipe(timeout(MY_BOOK_TIMEOUT_MS)).subscribe({
+      next: (b) => { this.myBookBusy = false; this.myBookLimited = false; this.myBook = b; this.myTrades = [...(b.trades || [])].reverse(); this.myBookErr = false; },
       error: (e: { status?: number }) => {
         this.myBookBusy = false;
         if (e?.status === 401) { dropConsoleSession(); this.mySession = null; this.myBook = null; this.myTrades = []; return; }
         this.myBookErr = true;
-        if (e?.status === 429) { this.scheduleRefresh(429); }
+        if (e?.status === 429) { this.myBookLimited = true; }
       }
     });
   }
 
-  /** The next read, on the clock: fifteen seconds after a success, doubling on a 429. One clock, whichever read last set it. */
+  /** The next read, on the clock: fifteen seconds after a success, doubling on a 429. One clock, set once per tick by the dashboard's answer. */
   private scheduleRefresh(failedStatus: number | null): void {
     if (this.destroyed) { return; }
     this.refreshEveryMs = nextRefreshMs(this.refreshEveryMs, failedStatus);

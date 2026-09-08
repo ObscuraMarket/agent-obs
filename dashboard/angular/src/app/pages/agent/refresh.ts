@@ -17,3 +17,13 @@ export function nextRefreshMs(current: number, failedStatus: number | null): num
   if (failedStatus === 429) { return Math.min(REFRESH_MAX_MS, Math.max(REFRESH_MS, current) * 2); }
   return current;
 }
+
+/**
+ * PURE: what one tick tells the clock. The dashboard read and the book read go out together and the dashboard's
+ * answer sets the clock once per tick; a 429 the book met this tick (or has not recovered from) counts as the
+ * tick's status, whatever the dashboard said. Until 2026-09-08 the two answers raced and the book's 429 lost to
+ * the dashboard's success whenever the book answered first, which its ten-second cache made the usual case.
+ */
+export function tickStatus(dashboardStatus: number | null, bookLimited: boolean): number | null {
+  return bookLimited ? 429 : dashboardStatus;
+}

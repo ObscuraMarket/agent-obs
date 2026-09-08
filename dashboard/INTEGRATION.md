@@ -607,8 +607,10 @@ available yet.
   with its cost and result, and the last twenty trades newest last (`kind`
   entry or exit, `usd`, an exit's `pnlUsd`, `status`, `txUrl`). `equityUsd`
   is the wallet's ETH in dollars plus the positions (a paper agent: the
-  positions alone), null when the wallet could not be read. Cached ten
-  seconds per wallet. A wallet whose door has closed still reads its own
+  positions alone), null when the wallet could not be read, ETH is unpriced,
+  or a position is unpriced (a partial sum is never shown as the whole). The
+  wallet read is held to three seconds; late is null, and the card says so.
+  Cached ten seconds per wallet. A wallet whose door has closed still reads its own
   book, as it keeps `/agent` and `/wallet` in the console; the other signed
   routes answer 403 as before. Never another wallet's data.
 
