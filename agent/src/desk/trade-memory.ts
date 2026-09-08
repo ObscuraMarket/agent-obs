@@ -64,8 +64,8 @@ export function dedupeCloses(rows: TradeClose[]): TradeClose[] {
   return [...byKey.values()].sort((a, b) => a.at - b.at);
 }
 export const readCloses = (): TradeClose[] => dedupeCloses(readLedger<TradeClose>(CLOSES_LEDGER));
-export const recordEntry = (e: TradeEntry): void => appendLedger(ENTRIES_LEDGER, e as unknown as Record<string, unknown>);
-export const recordClose = (c: TradeClose): void => appendLedger(CLOSES_LEDGER, c as unknown as Record<string, unknown>);
+export const recordEntry = (e: TradeEntry): boolean => appendLedger(ENTRIES_LEDGER, e as unknown as Record<string, unknown>);
+export const recordClose = (c: TradeClose): boolean => appendLedger(CLOSES_LEDGER, c as unknown as Record<string, unknown>);
 
 export interface Setup {
   source: string;

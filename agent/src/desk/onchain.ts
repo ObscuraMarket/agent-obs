@@ -16,10 +16,11 @@ import { encodeAbiParameters, encodeFunctionData, parseAbi, type Hex } from "vie
 import { chainMemory, poolRead, type PoolSpec, type PoolRead } from "../obscura/pools.ts";
 import { ASSETS, assetKey, chainOf, type Asset } from "./assets.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
-import { recordTrade, readBook, latestTrades, boughtSymbols, type Trade } from "./book.ts";
+import { recordTrade, readBook, latestTrades, boughtSymbols, intentTimedOut, INTENT_STALE_MIN, type Trade } from "./book.ts";
 import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet } from "./signer.ts";
 import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
-import { raiseAlert } from "./alerts.ts";
+import { ledgerWriteFailures } from "../ledger.ts";
+import { raiseAlert, type AlertKind } from "./alerts.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, resolveAny, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
 import { readTape, tapeStats } from "./tape.ts";
@@ -290,7 +291,18 @@ const balanceOf = (a: Asset, holder: string = WALLET_ADDRESS): Promise<bigint> =
  */
 export interface RunAs {
   wallet: Wallet;
-  record: (t: Trade) => void;
+  /** Where the rows go; false means the ledger did not take the row, and the lane raises an alarm. */
+  record: (t: Trade) => boolean | void;
+}
+
+/**
+ * A row into a trade ledger, or an alarm. A row the ledger did not take is a swap the book has lost sight of, the
+ * very thing the lane's intent row guards against (2026-09-08), so a person hears about it at once.
+ */
+async function recordOrAlert(record: RunAs["record"], t: Trade, now: number, alert: SendLane["alert"] = (k, text, at) => raiseAlert(k, text, at)): Promise<void> {
+  if (record(t) !== false) return;
+  const n = ledgerWriteFailures();
+  await alert("cycle", `the trade ledger did not take the row for ${t.id} (${t.status}: ${t.from.amount} ${t.from.asset} to ${t.to.asset}${t.settlementTx ? `, tx ${t.settlementTx}` : ""}); the wallet holds what the chain says and the book does not know it; ${n} ledger write${n === 1 ? "" : "s"} failed in this process`, now);
 }
 
 /** The lane: rails, route, quote, floor, encode, simulate, approvals, send, receipt, the row. */
@@ -309,7 +321,6 @@ export function legUsd(asset: Asset, amount: number, routePriceUsd: number | nul
 
 export async function executeOnChain(i: Intent, c: RailContext, now = Date.now(), runAs?: RunAs): Promise<OnChainResult> {
   const address = runAs?.wallet.address ?? (WALLET_ADDRESS as `0x${string}`);
-  const record = runAs?.record ?? recordTrade;
   // The last check before anything is signed, independent of the rails object handed in: a never-trade contract on
   // either leg is refused here even if a caller built its own rails.
   for (const leg of [i.from, i.to]) if (leg.contract && NEVER_TRADE.has(leg.contract.toLowerCase())) return { ok: false, reason: `${leg.symbol} is on the never-trade list; not quoted, not approved, not sent` };
@@ -340,7 +351,6 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   }
   const sim = await simulateFromWallet(i.from, tx, address);
   if (!sim.ok) return { ok: false, reason: `the swap would revert: ${sim.reason}` };
-  const before = await balanceOf(i.to, address);
   const base: Trade = {
     at: now,
     id: nextTradeId(now),
@@ -352,45 +362,84 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     partner: "pool",
     note: `${q.route.hops.map((h) => h.key).join(" then ")} on chain; expected ${q.amountOut} ${i.to.symbol}, floor ${q.minOut}${q.costPct != null ? `, route cost ${q.costPct.toFixed(2)}% (fees ${q.feePct.toFixed(2)}%)` : ""}${approvals.length ? `; approvals ${approvals.join(", ")}` : ""}`,
   };
+  return sendSwap({ intent: i, base, tx, quote: q, address, ethUsd, now, runAs });
+}
+
+/** The lane's effects past the quote and the simulation, injectable so the order of the rows can be tested without a chain. */
+export interface SendLane {
+  send: (asset: Asset, tx: RawTx, wallet?: Wallet) => Promise<`0x${string}`>;
+  wait: (asset: Asset, hash: `0x${string}`) => Promise<{ status: "success" | "reverted"; gasCostWei: bigint } | null>;
+  balance: (asset: Asset, holder: string) => Promise<bigint>;
+  alert: (kind: AlertKind, text: string, now: number) => Promise<boolean>;
+  clock: () => number;
+}
+const LIVE_LANE: SendLane = { send: (a, tx, w) => sendTx(a, tx, w), wait: (a, h) => waitReceipt(a, h), balance: (a, holder) => balanceOf(a, holder), alert: (k, text, at) => raiseAlert(k, text, at), clock: () => Date.now() };
+
+export interface SendJob {
+  intent: Intent;
+  /** The row as the lane will write it: pending, no hash, the estimate on the to leg. */
+  base: Trade;
+  tx: RawTx;
+  quote: Pick<PoolQuote, "amountOut" | "amountOutRaw" | "priceOutUsd">;
+  address: `0x${string}`;
+  ethUsd: number | null;
+  now: number;
+  runAs?: RunAs;
+}
+
+/**
+ * Send, with the book ahead of the chain. The row goes into the ledger as pending with no hash BEFORE the
+ * transaction is signed, is written again with the hash and its outcome after, and is written failed when the send
+ * throws; every writing carries the same id, and the latest row per id is the one the book reads. Until 2026-09-08
+ * the first row was written after the receipt, up to two minutes after the send: a process that died in between
+ * left the token in the wallet with no row, and the exit scan sells only what the ledger says was bought. A row the
+ * ledger would not take is an alarm, since the book has just lost sight of money in motion.
+ */
+export async function sendSwap(job: SendJob, lane: SendLane = LIVE_LANE): Promise<OnChainResult> {
+  const { intent: i, base, tx, quote: q, address, ethUsd, now, runAs } = job;
+  const record = runAs?.record ?? recordTrade;
+  const put = (t: Trade) => recordOrAlert(record, t, now, lane.alert);
+  const before = await lane.balance(i.to, address);
+  await put({ ...base, note: `${base.note}; signing and sending, no hash yet` });
   let hash: `0x${string}`;
   try {
-    hash = await sendTx(i.from, tx, runAs?.wallet);
+    hash = await lane.send(i.from, tx, runAs?.wallet);
   } catch (err) {
-    const failed: Trade = { ...base, status: "failed", note: `not sent: ${err instanceof Error ? err.message : String(err)}` };
-    record(failed);
+    const failed: Trade = { ...base, status: "failed", updatedAt: lane.clock(), note: `not sent: ${err instanceof Error ? err.message : String(err)}` };
+    await put(failed);
     return { ok: false, reason: failed.note ?? "send failed", trade: failed };
   }
   const explorerUrl = chainOf(i.from).explorerTx(hash);
-  const receipt = await waitReceipt(i.from, hash);
+  const receipt = await lane.wait(i.from, hash);
   if (!receipt) {
-    const pending: Trade = { ...base, settlementTx: hash, explorerUrl, note: `${base.note}; sent, awaiting the receipt` };
-    record(pending);
+    const pending: Trade = { ...base, updatedAt: lane.clock(), settlementTx: hash, explorerUrl, note: `${base.note}; sent, awaiting the receipt` };
+    await put(pending);
     return { ok: true, trade: pending };
   }
   if (receipt.status !== "success") {
-    const failed: Trade = { ...base, status: "failed", updatedAt: Date.now(), settlementTx: hash, explorerUrl, note: `reverted on chain` };
-    record(failed);
+    const failed: Trade = { ...base, status: "failed", updatedAt: lane.clock(), settlementTx: hash, explorerUrl, note: `reverted on chain` };
+    await put(failed);
     return { ok: false, reason: `swap ${hash} reverted`, trade: failed };
   }
-  const after = await balanceOf(i.to, address);
+  const after = await lane.balance(i.to, address);
   let gotRaw = after - before;
   if (i.to.kind === "native") gotRaw += receipt.gasCostWei;
   const got = gotRaw > 0n ? fromRaw(gotRaw, i.to.decimals) : q.amountOut;
   const settled: Trade = {
     ...base,
     status: "settled",
-    updatedAt: Date.now(),
+    updatedAt: lane.clock(),
     settlementTx: hash,
     explorerUrl,
     to: { ...base.to, amount: got, usd: legUsd(i.to, got, q.priceOutUsd, ethUsd) },
     note: `${base.note}; received ${got} ${i.to.symbol}`,
   };
-  record(settled);
+  await put(settled);
   // The sell proof is the desk's probe on its own first buy; a follower's token was proven by the desk already.
   if (!runAs && i.to.candidate && got > 0) {
     const proof = await proveSellable(i.to, gotRaw > 0n ? gotRaw : q.amountOutRaw, now);
     const withProof: Trade = { ...settled, note: `${settled.note}; ${proof}` };
-    recordTrade(withProof);
+    await put(withProof);
     return { ok: true, trade: withProof };
   }
   return { ok: true, trade: settled };
@@ -464,7 +513,7 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
       // The ETH that came back is priced so the close is recorded as what it was: the exit prices carry ETH for this.
       const toUsd = r.trade.to.usd ?? (prices.ETH != null && r.trade.to.amount != null ? r.trade.to.amount * prices.ETH : null);
       const row: Trade = { ...r.trade, to: { ...r.trade.to, usd: toUsd }, note: `exit (${v.kind}), ${v.reason}; ${r.trade.note ?? ""}` };
-      if (exec === executeOnChain) recordTrade(row);
+      if (exec === executeOnChain) await recordOrAlert(recordTrade, row, now);
       // The desk's real exit is every follower's exit too: what was sold, of what was held, so each sells the same share.
       if (exec === executeOnChain && after) await after(exitIntent, row, held).catch((e) => console.error(`[follow] exit mirror of ${a.symbol}: ${e instanceof Error ? e.message : String(e)}`));
       out.push(row);
@@ -485,7 +534,18 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
 export async function settleOnChain(now = Date.now()): Promise<Trade[]> {
   const updated: Trade[] = [];
   const feed = readFeed();
-  for (const t of latestTrades(readBook().trades).filter((x) => x.status === "pending" && x.venue === "pool" && x.settlementTx)) {
+  for (const t of latestTrades(readBook().trades).filter((x) => x.status === "pending" && x.venue === "pool")) {
+    if (!t.settlementTx) {
+      // The row the lane writes before its send (2026-09-08). With no hash there is no receipt to wait for, and it is
+      // never settled from here: past the allowance it is failed, since the send did not come back (the process died
+      // in it, or the ledger would not take the row after it), and only the wallet says whether the token arrived.
+      if (!intentTimedOut(t, now)) continue;
+      const row: Trade = { ...t, status: "failed", updatedAt: now, note: `${t.note ?? ""}; no hash was recorded within ${INTENT_STALE_MIN} min of the send: failed on the book; the wallet says whether ${t.to.asset} arrived` };
+      await recordOrAlert(recordTrade, row, now);
+      updated.push(row);
+      await raiseAlert("cycle", `swap ${t.id} (${t.from.amount} ${t.from.asset} to ${t.to.asset}, sent ${new Date(t.at).toISOString().slice(11, 16)} UTC) never got its hash on the book and is failed there; check the wallet for ${t.to.asset}, and correct the trade ledger if it arrived`, now);
+      continue;
+    }
     // A launch token is a dynamic asset: the static registry alone left every pending sell of one pending forever (2026-09-08).
     const key = `${t.from.asset}@${t.from.network ?? "robinhood"}`;
     const from = ASSETS[key] ?? resolveAny(key, feed);
@@ -493,7 +553,7 @@ export async function settleOnChain(now = Date.now()): Promise<Trade[]> {
     const r = await waitReceipt(from, t.settlementTx as `0x${string}`, 5_000);
     if (!r) continue;
     const row: Trade = { ...t, status: r.status === "success" ? "settled" : "failed", updatedAt: now, note: `${t.note ?? ""}; ${r.status === "success" ? "landed" : "reverted"} (amount as estimated)` };
-    recordTrade(row);
+    await recordOrAlert(recordTrade, row, now);
     updated.push(row);
     // A sell that landed late closes its position in the desk's memory here, since the exit pass only remembers a
     // close from a sell that settled in its own window (2026-09-08). Closed means the wallet no longer holds the token.

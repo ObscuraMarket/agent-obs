@@ -3,7 +3,8 @@
 // ledgers; the dashboard's PnL is this and nothing else.
 //
 //   obs-capital.jsonl   operator moves: {at, kind: deposit|withdraw, asset, amount, usd}
-//   obs-trades.jsonl    swaps through Obscura: one row per status change, same id
+//   obs-trades.jsonl    swaps, through Obscura or the pools: one row per status change, same id; the pool lane's
+//                       first row is written before the send, pending with no hash, and rewritten after it
 //   obs-book.jsonl      equity snapshots, one per desk cycle
 //
 // A trade is a swap: one asset leaves the wallet (from), another arrives (to).
@@ -100,6 +101,19 @@ export function latestTrades(rows: Trade[]): Trade[] {
     if (!prev || (r.updatedAt ?? r.at) >= (prev.updatedAt ?? prev.at)) byId.set(r.id, r);
   }
   return [...byId.values()].sort((a, b) => b.at - a.at);
+}
+
+/** Minutes a pool row may stand pending with no hash. The lane waits two minutes for a receipt, so a row still without a hash after this was left by a send that did not come back. */
+export const INTENT_STALE_MIN = 15;
+
+/**
+ * PURE: a pool row written before its send and never written again with a hash, older than the allowance. The lane
+ * records the row before it sends (2026-09-08), so a process that dies in the send leaves exactly this; it must not
+ * ride as in flight forever, and it is never settled from the row alone. An Obscura order is pending with no
+ * settlement hash by design until it settles, and is not judged here.
+ */
+export function intentTimedOut(t: Trade, now: number, maxMin = INTENT_STALE_MIN): boolean {
+  return t.venue === "pool" && t.status === "pending" && !t.settlementTx && now - (t.updatedAt ?? t.at) >= maxMin * 60e3;
 }
 
 /** PURE: what the wallet holds after every capital move and every settled or in-flight swap. */
@@ -396,8 +410,9 @@ export function readBook(): { flows: CapitalFlow[]; trades: Trade[]; snapshots: 
 export function recordSnapshot(s: BookSnapshot): void {
   appendLedger("obs-book.jsonl", s as unknown as Record<string, unknown>);
 }
-export function recordTrade(t: Trade): void {
-  appendLedger("obs-trades.jsonl", t as unknown as Record<string, unknown>);
+/** A trade row into the ledger; false when the ledger did not take it, which the pool lane raises as an alarm. */
+export function recordTrade(t: Trade): boolean {
+  return appendLedger("obs-trades.jsonl", t as unknown as Record<string, unknown>);
 }
 export function recordCapital(f: CapitalFlow): void {
   appendLedger("obs-capital.jsonl", f as unknown as Record<string, unknown>);

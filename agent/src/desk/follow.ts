@@ -155,8 +155,9 @@ const NOTES_FILE = "obs-follow-notes.jsonl";
 
 export const readFollowTrades = (): FollowTradeRow[] => readLedger<FollowTradeRow>(TRADES_FILE);
 export const readFollowNotes = (): FollowNote[] => readLedger<FollowNote>(NOTES_FILE);
-export function recordFollowTrade(address: string, deskId: string, t: Trade): void {
-  appendLedger(TRADES_FILE, { ...t, address: address.toLowerCase(), deskId } as unknown as Record<string, unknown>);
+/** An agent's trade row into its ledger; false when the ledger did not take it, which the pool lane raises as an alarm. */
+export function recordFollowTrade(address: string, deskId: string, t: Trade): boolean {
+  return appendLedger(TRADES_FILE, { ...t, address: address.toLowerCase(), deskId } as unknown as Record<string, unknown>);
 }
 export function recordFollowNote(address: string, deskId: string, note: string, now = Date.now()): void {
   appendLedger(NOTES_FILE, { address: address.toLowerCase(), at: now, deskId, note });
