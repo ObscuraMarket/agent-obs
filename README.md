@@ -38,7 +38,9 @@ wallet: talk to it, train it, pick its model, turn it on.
   wallet made for it. `/stop` turns it off; it still sells what it holds when
   the desk does. `/size` sets what it puts into each entry.
 - `/fund 0.05 ETH` sends ETH to that wallet from yours. `/withdraw all` sends
-  it back, and only ever to the wallet you signed in with.
+  it back, and only ever to the wallet you signed in with. A token it holds
+  goes the same way: `/withdraw LENNY` sends all of it, `/sell LENNY` sells
+  all of it for ETH.
 - `/agent` is its book, `/desk` the house desk, `/agents` every agent
   following the desk and what each has made.
 

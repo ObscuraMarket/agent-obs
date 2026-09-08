@@ -60,7 +60,7 @@ import { followState, readFollow, recordFollow, checkSize, followMaxUsd, followB
 import { readEntries } from "./desk/trade-memory.ts";
 import { liveOn, canStartLive } from "./desk/mirror.ts";
 import { latestEthUsd } from "./desk/onchain.ts";
-import { walletsOn, agentWalletAddress, agentWalletAddressOrNull, WalletDerivationError, rememberWallet, fundTx, withdrawEth, agentBalanceEth, verifyFunding, walletLines, walletBook, readAgentCapital } from "./desk/agentWallet.ts";
+import { walletsOn, agentWalletAddress, agentWalletAddressOrNull, WalletDerivationError, rememberWallet, fundTx, withdrawEth, withdrawToken, sellToken, agentBalanceEth, verifyFunding, walletLines, walletBook, readAgentCapital } from "./desk/agentWallet.ts";
 import type { Prices } from "./desk/book.ts";
 import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL, DEFAULT_MODEL_INFO } from "./desk/models.ts";
 import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, freeUsd, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
@@ -638,6 +638,8 @@ const json = (res: ServerResponse, code: number, body: unknown) => {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
 };
+/** A token quantity as a person reads it: whole tokens with the thousands marked, up to four decimals for a small one. */
+const qty = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 
 const DASHBOARD = join(ROOT_DIR, "..", "dashboard", "index.html");
 
@@ -1310,6 +1312,24 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
             const pay = fundTx(wallet, routed.effect.amount ?? 0);
             if ("error" in pay) { json(res, 200, { ok: false, effect: "none", lines: [pay.error], suggest: ["/fund 0.05 ETH", "/wallet"] }); return; }
             json(res, 200, { ok: true, effect: "pay", pay, lines: [`${pay.amount} ETH to your agent's wallet ${wallet}. Sign it in your wallet.`], suggest: ["/wallet"] });
+            return;
+          }
+          if (act === "withdrawToken") {
+            // A token the agent holds, sent to the person's wallet whole; the destination is the signed-in wallet by construction.
+            const r = await withdrawToken(a, routed.effect.symbol ?? "", now);
+            if (!r.ok) { json(res, 200, { ok: false, effect: "none", lines: [r.reason], suggest: ["/agent", "/wallet"] }); return; }
+            void refreshPersona(a);
+            json(res, 200, { ok: true, effect: "agentWallet", lines: [`Sent ${qty(r.amount)} ${r.symbol} to your wallet, all of it. ${r.explorerUrl}`], suggest: ["/wallet", "/agent"] });
+            return;
+          }
+          if (act === "sell") {
+            // A token the agent holds, sold whole for ETH through the desk's lane on the person's word; the row lands in the agent's own ledger.
+            const r = await sellToken(a, routed.effect.symbol ?? "", now);
+            if (!r.ok) { json(res, 200, { ok: false, effect: "none", lines: [r.reason], suggest: ["/agent", "/wallet", "/fund 0.005 ETH"] }); return; }
+            const t = r.trade;
+            void refreshPersona(a);
+            const got = `${t.to.amount.toFixed(5)} ETH${t.to.usd != null ? ` ($${t.to.usd.toFixed(2)})` : ""}`;
+            json(res, 200, { ok: true, effect: "agentWallet", lines: [`Sold ${qty(t.from.amount)} ${t.from.asset} for ${got}, ${t.status === "settled" ? "landed" : "sent, waiting for the chain"}.${t.explorerUrl ? ` ${t.explorerUrl}` : ""}`], suggest: ["/agent", "/wallet", "/withdraw all"] });
             return;
           }
           if (act === "withdraw") {

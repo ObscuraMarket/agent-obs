@@ -13,16 +13,26 @@
 // against the row: a rotated or mistyped seed derives a different, empty wallet for everyone, and until 2026-09-08
 // nothing noticed, so every /wallet would have shown a fresh address with the funded one gone quiet behind it. Now
 // that is an error the console names and a page to the operator, never a fresh address.
+//
+// A token is the person's to take out as much as the ETH is. Only ETH could leave the wallet at first, so a token
+// the desk never sold for the agent (its exit refused, or the desk out of the token before the agent was) sat there
+// with no way out (2026-09-08). /withdraw SYMBOL sends the whole balance to the signed-in wallet; /sell SYMBOL sells
+// it for ETH through the same lane the mirror's exits run, on the person's word rather than the desk's.
 import { createHmac } from "node:crypto";
-import { createPublicClient, createWalletClient, formatEther, parseEther, type Hex } from "viem";
+import { createPublicClient, createWalletClient, encodeFunctionData, erc20Abi, formatEther, parseEther, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { appendLedger, readLedger } from "../ledger.ts";
-import { ASSETS } from "./assets.ts";
-import { viemChain, transport, readNativeBalance, type Wallet } from "./signer.ts";
+import { ASSETS, assetKey, type Asset } from "./assets.ts";
+import { viemChain, transport, readNativeBalance, readTokenBalance, type Wallet } from "./signer.ts";
 import { resolvePayToken, valueUsd, priorRecord, judgeBlock } from "./credits.ts";
 import { raiseAlert, type AlertKind } from "./alerts.ts";
 import { acquire } from "./walletLock.ts";
-import { EXPLORER_URL } from "../config.ts";
+import { resolveAny } from "./candidates.ts";
+import { executeOnChain, quoteOnChain, latestEthUsd } from "./onchain.ts";
+import { railsFromEnv, type Intent, type RailContext } from "./rails.ts";
+import { recordFollowTrade } from "./follow.ts";
+import type { Trade } from "./book.ts";
+import { EXPLORER_URL, NEVER_TRADE } from "../config.ts";
 
 export const WALLETS_LEDGER = "obs-agent-wallets.jsonl";
 export const CAPITAL_LEDGER = "obs-agent-capital.jsonl";
@@ -135,8 +145,12 @@ export function agentWallet(address: string, env: NodeJS.ProcessEnv = process.en
 export interface AgentCapitalRow {
   address: string;
   at: number;
-  kind: "deposit" | "withdraw";
-  asset: "ETH";
+  /** ETH in, ETH out, or a token sent out whole to the signed-in wallet (withdraw-token). */
+  kind: "deposit" | "withdraw" | "withdraw-token";
+  /** ETH, or the token's symbol on a withdraw-token row. */
+  asset: string;
+  /** The token's contract on a withdraw-token row, so the row still names it past a symbol change. */
+  contract?: string;
   amount: number;
   usd: number | null;
   txHash: string;
@@ -160,7 +174,9 @@ export function walletBook(address: string, rows: AgentCapitalRow[]): WalletBook
   for (const r of rows) {
     if (r.address !== a) continue;
     if (r.kind === "deposit") { b.depositedEth += r.amount; b.deposits++; b.netUsd += r.usd ?? 0; }
-    else { b.withdrawnEth += r.amount; b.withdrawals++; b.netUsd -= r.usd ?? 0; }
+    else if (r.kind === "withdraw") { b.withdrawnEth += r.amount; b.withdrawals++; b.netUsd -= r.usd ?? 0; }
+    // A token sent out whole is value out of the wallet where the pools priced it; it is not ETH, so the ETH tallies stand.
+    else b.netUsd -= r.usd ?? 0;
   }
   return b;
 }
@@ -199,6 +215,20 @@ const ethUsd = async (amount: number): Promise<number | null> => {
   const t = resolvePayToken("ETH");
   return t ? valueUsd(t, amount) : null;
 };
+
+const pubClient = (a: Asset) => createPublicClient({ chain: viemChain(a), transport: transport(a) });
+type Pub = ReturnType<typeof pubClient>;
+const shortReason = (e: unknown): string => ((e as { shortMessage?: string; message?: string })?.shortMessage ?? (e instanceof Error ? e.message : String(e))).split("\n")[0].slice(0, 160);
+
+/** The fee cap the chain quotes for the next block, with the tip when it quotes one; the plain gas price when it quotes neither. */
+async function feesNow(pub: Pub): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas?: bigint }> {
+  try {
+    const f = await pub.estimateFeesPerGas();
+    return { maxFeePerGas: f.maxFeePerGas ?? (await pub.getGasPrice()), maxPriorityFeePerGas: f.maxPriorityFeePerGas };
+  } catch {
+    return { maxFeePerGas: await pub.getGasPrice() };
+  }
+}
 
 /**
  * A funding the person sent: read off the chain, recorded once, for the wallet that sent it, once a couple of
@@ -266,22 +296,14 @@ export async function withdrawEth(address: string, amount: number | "all", now =
 async function sendWithdrawal(address: `0x${string}`, amount: number | "all", now: number, keepEth: number): Promise<WithdrawResult> {
   const eth = ASSETS["ETH@robinhood"];
   const chain = viemChain(eth);
-  const pub = createPublicClient({ chain, transport: transport(eth) });
+  const pub = pubClient(eth);
   const account = agentAccount(address);
   const balance = await pub.getBalance({ address: account.address });
   // The gas is reserved the way the transfer will be priced, and the transfer is sent under that same cap: the fee
   // cap the chain quotes for the next block, times the gas the chain says a transfer to this address takes, with a
   // quarter kept in hand. Reserving at "twice the gas price" sent "all" over the balance once the library priced
   // the transfer under its own, higher cap, and the person read the library's error (2026-09-07).
-  let maxFeePerGas: bigint;
-  let maxPriorityFeePerGas: bigint | undefined;
-  try {
-    const f = await pub.estimateFeesPerGas();
-    maxFeePerGas = f.maxFeePerGas ?? (await pub.getGasPrice());
-    maxPriorityFeePerGas = f.maxPriorityFeePerGas;
-  } catch {
-    maxFeePerGas = await pub.getGasPrice();
-  }
+  const { maxFeePerGas, maxPriorityFeePerGas } = await feesNow(pub);
   let gasUnits = TRANSFER_GAS;
   try { gasUnits = await pub.estimateGas({ account: account.address, to: address, value: 1n }); } catch { /* a plain transfer's gas stands */ }
   const gasCost = (gasUnits * maxFeePerGas * 5n) / 4n;
@@ -302,8 +324,7 @@ async function sendWithdrawal(address: `0x${string}`, amount: number | "all", no
   try {
     hash = await wallet.sendTransaction({ to: address, value, gas: gasUnits, maxFeePerGas, ...(maxPriorityFeePerGas != null ? { maxPriorityFeePerGas } : {}) });
   } catch (e) {
-    const m = (e as { shortMessage?: string; message?: string })?.shortMessage ?? (e instanceof Error ? e.message : String(e));
-    return { ok: false, reason: `The transfer was not sent: ${m.split("\n")[0].slice(0, 160)}. Try /withdraw all again in a moment, or a smaller amount.` };
+    return { ok: false, reason: `The transfer was not sent: ${shortReason(e)}. Try /withdraw all again in a moment, or a smaller amount.` };
   }
   const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 180_000 });
   if (receipt.status !== "success") return { ok: false, reason: `the transfer ${hash} reverted` };
@@ -311,6 +332,105 @@ async function sendWithdrawal(address: `0x${string}`, amount: number | "all", no
   const row: AgentCapitalRow = { address: address.toLowerCase(), at: now, kind: "withdraw", asset: "ETH", amount: sent, usd: await ethUsd(sent), txHash: hash.toLowerCase() };
   appendLedger(CAPITAL_LEDGER, row as unknown as Record<string, unknown>);
   return { ok: true, hash, amount: sent, explorerUrl: `${EXPLORER_URL}/tx/${hash}` };
+}
+
+/**
+ * PURE: the token a person names for /withdraw or /sell, as the desk knows it, or why nothing will move. Only a
+ * token the desk itself resolves (its registry, the launch feed, the tokens it has traded) has a contract and
+ * decimals the desk can trust, and the never-trade list holds in a wallet the desk signs for as it does in its own.
+ */
+export function pickToken(symbol: string, resolve: (spec: string) => Asset | null = resolveAny, neverTrade: ReadonlySet<string> = NEVER_TRADE): { ok: true; token: Asset } | { ok: false; reason: string } {
+  const sym = String(symbol ?? "").trim().toUpperCase();
+  if (!sym) return { ok: false, reason: "Say which token: /withdraw LENNY sends it to your wallet, /sell LENNY sells it for ETH." };
+  if (sym === "ETH") return { ok: false, reason: "ETH goes by amount: /withdraw 0.02 or /withdraw all." };
+  // Named with the chain, so a symbol the registry knows elsewhere (USDC on Ethereum) is never taken for a token here.
+  const token = resolve(`${sym}@robinhood`);
+  if (!token) return { ok: false, reason: `The desk doesn't know a token called ${sym} on Robinhood Chain, so it can't move it. /agent shows what your agent holds.` };
+  if (token.kind !== "erc20" || !token.contract) return { ok: false, reason: `${sym} is not a token the desk can transfer.` };
+  if (neverTrade.has(token.contract.toLowerCase())) return { ok: false, reason: `${sym} is on the desk's never-trade list; nothing the desk signs for moves it.` };
+  return { ok: true, token };
+}
+
+/** PURE: the ERC-20 transfer of a whole balance to the signed-in wallet: the token's own transfer, no approval, no route. */
+export function withdrawTokenTx(token: Asset, to: `0x${string}`, raw: bigint): { to: `0x${string}`; data: Hex } {
+  return { to: token.contract as `0x${string}`, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [to, raw] }) };
+}
+
+/** PURE: what a token leg is worth by the pools' quote: its own pool price, else the ETH it fetches at the desk's ETH price, else unpriced. */
+export function quoteUsd(q: { priceInUsd: number | null; amountOut: number } | null, amount: number, ethUsd: number | null): number | null {
+  if (!q) return null;
+  if (q.priceInUsd != null) return amount * q.priceInUsd;
+  return ethUsd != null ? q.amountOut * ethUsd : null;
+}
+
+/** A token's dollar value by the pools right now, for the ledger row; null when no pool prices it. Best effort, never a gate. */
+async function tokenUsd(token: Asset, amount: number, now: number): Promise<number | null> {
+  try { return quoteUsd(await quoteOnChain(token, ASSETS["ETH@robinhood"], amount), amount, latestEthUsd(now)); } catch { return null; }
+}
+
+/**
+ * Send the agent wallet's whole balance of a token to the wallet that signed in, and nowhere else: the destination
+ * is the signed-in address by construction, as with ETH. The transfer's gas is the wallet's ETH. Waits for the receipt.
+ */
+export async function withdrawToken(address: string, symbol: string, now = Date.now()): Promise<{ ok: true; hash: `0x${string}`; amount: number; symbol: string; explorerUrl: string } | { ok: false; reason: string }> {
+  if (!walletsOn()) return { ok: false, reason: "Agent wallets aren't switched on here yet." };
+  if (!isAddress(address)) return { ok: false, reason: "no wallet to send to" };
+  const pick = pickToken(symbol);
+  if (!pick.ok) return pick;
+  const token = pick.token;
+  const eth = ASSETS["ETH@robinhood"];
+  const pub = pubClient(eth);
+  const account = agentAccount(address);
+  const raw = await readTokenBalance(token, token.contract as `0x${string}`, account.address);
+  if (raw <= 0n) return { ok: false, reason: `Your agent's wallet holds no ${token.symbol}.` };
+  const amount = Number(raw) / 10 ** token.decimals;
+  const tx = withdrawTokenTx(token, address, raw);
+  const { maxFeePerGas, maxPriorityFeePerGas } = await feesNow(pub);
+  let gasUnits: bigint;
+  try { gasUnits = await pub.estimateGas({ account: account.address, to: tx.to, data: tx.data }); } catch (e) { return { ok: false, reason: `The transfer of ${token.symbol} would not go through: ${shortReason(e)}.` }; }
+  // Priced the way the transfer is sent, a quarter in hand, as the ETH withdrawal reserves its own gas.
+  const gasCost = (gasUnits * maxFeePerGas * 5n) / 4n;
+  const balance = await pub.getBalance({ address: account.address });
+  if (balance < gasCost) return { ok: false, reason: `Your agent's wallet holds ${formatEther(balance)} ETH, not enough for the transfer's gas (about ${formatEther(gasCost)} ETH). /fund 0.001 ETH first.` };
+  const wallet = createWalletClient({ account, chain: viemChain(eth), transport: transport(eth) });
+  let hash: `0x${string}`;
+  try {
+    hash = await wallet.sendTransaction({ to: tx.to, data: tx.data, gas: gasUnits, maxFeePerGas, ...(maxPriorityFeePerGas != null ? { maxPriorityFeePerGas } : {}) });
+  } catch (e) {
+    return { ok: false, reason: `The transfer was not sent: ${shortReason(e)}. Try /withdraw ${token.symbol} again in a moment.` };
+  }
+  const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 180_000 });
+  if (receipt.status !== "success") return { ok: false, reason: `the transfer ${hash} reverted` };
+  const row: AgentCapitalRow = { address: address.toLowerCase(), at: now, kind: "withdraw-token", asset: token.symbol, contract: (token.contract as string).toLowerCase(), amount, usd: await tokenUsd(token, amount, now), txHash: hash.toLowerCase() };
+  appendLedger(CAPITAL_LEDGER, row as unknown as Record<string, unknown>);
+  return { ok: true, hash, amount, symbol: token.symbol, explorerUrl: `${EXPLORER_URL}/tx/${hash}` };
+}
+
+/**
+ * Sell the agent wallet's whole balance of a token for ETH on the person's word: the lane the mirror's exit runs
+ * (rails, route, quote, floor, simulate, approvals, send, receipt), signed by the agent's wallet, the row in the
+ * agent's own ledger under a manual id so /agent and the events feed show it like any exit. The rails hold: a
+ * never-trade contract, trading switched off, or a wallet under the gas reserve is refused in the rail's own words.
+ */
+export async function sellToken(address: string, symbol: string, now = Date.now()): Promise<{ ok: true; trade: Trade } | { ok: false; reason: string }> {
+  if (!walletsOn()) return { ok: false, reason: "Agent wallets aren't switched on here yet." };
+  if (!isAddress(address)) return { ok: false, reason: "no wallet signed in" };
+  const pick = pickToken(symbol);
+  if (!pick.ok) return pick;
+  const token = pick.token;
+  const eth = ASSETS["ETH@robinhood"];
+  const w = agentWallet(address);
+  const raw = await readTokenBalance(token, token.contract as `0x${string}`, w.address);
+  const tokenBal = Number(raw) / 10 ** token.decimals;
+  if (!(tokenBal > 0)) return { ok: false, reason: `Your agent's wallet holds no ${token.symbol}.` };
+  const ethBal = Number(await readNativeBalance(eth, w.address)) / 1e18;
+  // The rails refuse an unpriced leg, and a manual sale has no desk fill to price it by: the pools price it now.
+  const q = await quoteOnChain(token, eth, tokenBal);
+  if (!q) return { ok: false, reason: `No pool route from ${token.symbol} to ETH right now, or the pools did not answer. Try again in a moment.` };
+  const intent: Intent = { from: token, to: eth, amount: tokenBal, usd: quoteUsd(q, tokenBal, latestEthUsd(now)), exit: true };
+  const ctx: RailContext = { rails: railsFromEnv(), balances: { [assetKey(token)]: tokenBal, "ETH@robinhood": ethBal }, nativeOnFromChain: ethBal, openOrders: 0, now };
+  const r = await executeOnChain(intent, ctx, now, { wallet: w, record: (t) => recordFollowTrade(address, `manual-${now}`, t) });
+  return r.ok ? { ok: true, trade: r.trade } : { ok: false, reason: r.reason };
 }
 
 const usd = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -324,7 +444,7 @@ export function walletLines(wallet: string, balanceEth: number, ethPriceUsd: num
   ];
   if (book.deposits || book.withdrawals) lines.push(`  ${book.depositedEth.toFixed(5)} ETH in over ${book.deposits} funding${book.deposits === 1 ? "" : "s"}, ${book.withdrawnEth.toFixed(5)} ETH out over ${book.withdrawals} withdrawal${book.withdrawals === 1 ? "" : "s"}.`);
   lines.push(
-    "  Fund it from your wallet: /fund 0.05 ETH (you sign the transfer). Take it back any time: /withdraw 0.02 or /withdraw all; it can only ever go to the wallet you signed in with.",
+    "  Fund it from your wallet: /fund 0.05 ETH (you sign the transfer). Take it back any time: /withdraw 0.02 or /withdraw all; it can only ever go to the wallet you signed in with. A token it holds goes the same way: /withdraw LENNY sends all of it, /sell LENNY sells all of it for ETH.",
     "  Your agent trades from this wallet when it trades live. On paper it does not touch it.",
   );
   return lines;
