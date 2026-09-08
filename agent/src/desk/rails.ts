@@ -145,6 +145,13 @@ export interface RailContext {
   /** When the last entry (a non-exit swap) was sent, for the spacing rule. */
   lastEntryAt?: number | null;
   now?: number;
+  /**
+   * The swap is signed by a person's agent wallet (the mirror's leg, or a /sell from the console), not the desk's
+   * own. An exit so signed passes the trading switch: OBS_TRADING=off is the operator's brake on the house book,
+   * and until 2026-09-08 it also refused every follower exit and every /sell, so a person's money could not leave
+   * a token while the desk was paused. Entries by an agent wallet are still refused when trading is off.
+   */
+  runAs?: boolean;
 }
 
 /** PURE: the whole decision, in order, first failure wins. */
@@ -157,9 +164,18 @@ export function baseLeg(from: Asset, to: Asset, r: Rails): { to: Asset; note: st
   return { to, note: null };
 }
 
+/**
+ * PURE: whether a swap may go out with trading off: only an exit signed by a person's agent wallet. The desk's
+ * own exits stay refused, as they were, since the switch is the operator's hold on the house book; a follower's
+ * exit or a /sell is someone else's money leaving a token, which the desk's switch has no say over (2026-09-08).
+ */
+export function exitLeavesUnderTradingOff(i: Intent, c: RailContext): boolean {
+  return !!i.exit && c.runAs === true;
+}
+
 export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: false; reason: string } {
   const r = c.rails;
-  if (!r.tradingOn) return { ok: false, reason: "trading is off (OBS_TRADING)" };
+  if (!r.tradingOn && !exitLeavesUnderTradingOff(i, c)) return { ok: false, reason: "trading is off (OBS_TRADING)" };
   if (!(i.amount > 0)) return { ok: false, reason: "amount must be positive" };
   if (assetKey(i.from) === assetKey(i.to)) return { ok: false, reason: "from and to are the same asset" };
   // Neither leg, entry or exit: the desk's own token sits in its wallet and is never sold, bought, or approved.

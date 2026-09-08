@@ -324,7 +324,8 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   // The last check before anything is signed, independent of the rails object handed in: a never-trade contract on
   // either leg is refused here even if a caller built its own rails.
   for (const leg of [i.from, i.to]) if (leg.contract && NEVER_TRADE.has(leg.contract.toLowerCase())) return { ok: false, reason: `${leg.symbol} is on the never-trade list; not quoted, not approved, not sent` };
-  const gate = checkRails(i, c);
+  // The rails hear whose wallet signs: an agent wallet's exit passes the trading switch (rails.ts, 2026-09-08).
+  const gate = checkRails(i, runAs ? { ...c, runAs: true } : c);
   if (!gate.ok) return { ok: false, reason: gate.reason };
   const q = await quoteOnChain(i.from, i.to, i.amount);
   if (!q) return { ok: false, reason: `no pool route from ${assetKey(i.from)} to ${assetKey(i.to)}, or the pools did not answer` };

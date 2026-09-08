@@ -4,9 +4,15 @@
 // change stranded, or one the operator wants out of. Run inside the desk
 // (it needs the key) as the desk's own user.
 //   npx tsx scripts/closePosition.ts <SYMBOL> "<reason>" [--dry]
+//
+// The followers leave with the desk. Every agent that holds the token bought it because the desk did, and it sells
+// only when the desk sells: an operator close that skipped the mirror left every follower in the token after the
+// desk was out (audit, 2026-09-08). So after the desk's own sale this calls mirrorForFollowers the way cycle.ts
+// does after a desk trade, the same share for each agent, each failure that agent's note and the operator's alert.
 import { resolveAny, readFeed, isHolding } from "../src/desk/candidates.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 import { executeOnChain, rememberClose, quoteOnChain, latestEthUsd } from "../src/desk/onchain.ts";
+import { mirrorForFollowers } from "../src/desk/mirror.ts";
 import { ethUsdAt } from "../src/desk/trade-memory.ts";
 import { readPrices } from "../src/desk/analysis.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
@@ -39,11 +45,14 @@ if (!q) { console.error("no route to ETH, or the pools did not answer"); process
 console.log(`route ${q.route.hops.map((h) => h.key).join(" then ")}: expected ${q.amountOut} ETH, floor ${q.minOut}${q.costPct != null ? `, cost ${q.costPct.toFixed(2)}% against the mark` : ""}`);
 if (dry) { console.log("dry: nothing sent"); process.exit(0); }
 const ctx = { rails: railsFromEnv(), balances: chain.byKey, nativeOnFromChain: chain.byKey["ETH@robinhood"] ?? null, openOrders: 0 };
-const r = await executeOnChain({ from, to: eth, amount: held, usd, exit: true }, ctx, now);
+const intent = { from, to: eth, amount: held, usd, exit: true };
+const r = await executeOnChain(intent, ctx, now);
 if (!r.ok) { console.error(`refused: ${r.reason}`); process.exit(1); }
 const toUsd = r.trade.to.usd ?? (prices.ETH != null && r.trade.to.amount != null ? r.trade.to.amount * prices.ETH : null);
 const row = { ...r.trade, to: { ...r.trade.to, usd: toUsd }, note: `exit (operator), ${reasonArg}; ${r.trade.note ?? ""}` };
 recordTrade(row);
+// The agents holding the token sell the same share (all of it here) from their own wallets; see the header.
+await mirrorForFollowers(intent, row, held, now).catch((e) => console.error(`[follow] mirror: ${e instanceof Error ? e.message : String(e)}`));
 const firstBuy = book.trades.filter((t) => t.to.asset === symbol && t.status === "settled").map((t) => t.at).sort()[0] ?? now;
 const realized = (pos?.realizedUsd ?? 0) + (toUsd ?? 0) - (pos?.costUsd ?? 0);
 if (row.status === "settled") rememberClose(symbol, from.contract ?? "", [...book.trades, row], ethUsdAt(readPrices(), latestEthUsd(now)), pos?.unrealizedPct != null ? pos.unrealizedPct * 100 : null, "operator", false, now);

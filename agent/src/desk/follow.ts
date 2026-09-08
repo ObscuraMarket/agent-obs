@@ -7,7 +7,10 @@
 // Pure where it matters: the state is a replay of the wallet's rows, the mirrored book is a pure function of the
 // desk's trades, so both are tested offline. One ledger row per command, appended, never rewritten.
 import { appendLedger, readLedger } from "../ledger.ts";
-import { latestTrades, positions, type Trade, type Prices, type Positions } from "./book.ts";
+import { latestTrades, positions, intentTimedOut, INTENT_STALE_MIN, type Trade, type Prices, type Positions } from "./book.ts";
+import { readReceipt, type ReceiptRead } from "./signer.ts";
+import { ASSETS } from "./assets.ts";
+import { resolveAny, readFeed } from "./candidates.ts";
 
 const FILE = "obs-follow.jsonl";
 /** What a wallet's agent trades per entry when it says nothing else, in dollars. */
@@ -176,6 +179,105 @@ export function liveTrades(rows: FollowTradeRow[], address: string): Trade[] {
  */
 export function liveHoldings(rows: FollowTradeRow[], address: string): Record<string, number> {
   return mirrorHoldings(liveTrades(rows, address));
+}
+
+// ---- Settling the agents' rows: the receipt the mirror could not wait for, read on the next cycle. ----
+//
+// The lane writes an agent's row pending before it sends, again with the hash after, and settled when the receipt
+// lands within its two-minute wait. A receipt that took longer left the row pending with a hash for good, and a
+// process that died in the send left a row with no hash that read as a token on its way forever; both PORT entry
+// rows settled thirteen minutes late only because a later mirror leg happened to write them again (audit,
+// 2026-09-08). The desk has settleOnChain for its own rows; this is the same pass for every agent's ledger.
+
+const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+/**
+ * PURE: what a wallet received of a token in a transaction, from the receipt's ERC-20 Transfer logs to it: the sum
+ * in whole units, or null when no such log is there (a native ETH leg has no Transfer log, and the estimate stands).
+ */
+export function receivedFromLogs(logs: ReceiptRead["logs"], token: string, recipient: string, decimals: number): number | null {
+  const t = token.toLowerCase();
+  const r = recipient.toLowerCase();
+  let sum: bigint | null = null;
+  for (const l of logs) {
+    if (l.address.toLowerCase() !== t || l.topics.length < 3 || l.topics[0].toLowerCase() !== TRANSFER_TOPIC) continue;
+    if (`0x${l.topics[2].slice(-40)}`.toLowerCase() !== r) continue;
+    try { sum = (sum ?? 0n) + BigInt(l.data); } catch { /* a log this cannot read is not a transfer to count */ }
+  }
+  return sum == null ? null : Number(sum) / 10 ** decimals;
+}
+
+/**
+ * PURE: the row an agent's pending row becomes, or null to leave it. With a hash and a receipt: settled with what
+ * the logs say arrived (the estimate when they say nothing), or failed on a revert. With a hash and no receipt
+ * yet: left for the next pass. With no hash: failed once it is older than the lane's allowance, since the send
+ * never came back; younger, left alone, the send may still be in flight in another process.
+ */
+export function followerSettle(t: Trade, receipt: ReceiptRead | null, now: number, token: { contract: string; decimals: number } | null): Trade | null {
+  if (t.status !== "pending" || t.venue !== "pool") return null;
+  if (!t.settlementTx) {
+    if (!intentTimedOut(t, now)) return null;
+    return { ...t, status: "failed", updatedAt: now, note: `${t.note ?? ""}; no hash was recorded within ${INTENT_STALE_MIN} min of the send: failed on the book; the agent's wallet says whether ${t.to.asset} arrived` };
+  }
+  if (!receipt) return null;
+  if (receipt.status !== "success") return { ...t, status: "failed", updatedAt: now, note: `${t.note ?? ""}; reverted on chain` };
+  const got = token ? receivedFromLogs(receipt.logs, token.contract, receipt.from, token.decimals) : null;
+  if (got == null || !(got > 0)) return { ...t, status: "settled", updatedAt: now, note: `${t.note ?? ""}; landed (amount as estimated)` };
+  const px = t.to.usd != null && t.to.amount > 0 ? t.to.usd / t.to.amount : null;
+  return { ...t, status: "settled", updatedAt: now, to: { ...t.to, amount: got, usd: px != null ? got * px : t.to.usd }, note: `${t.note ?? ""}; landed, received ${got} ${t.to.asset}` };
+}
+
+/** What the settle pass reaches for, injectable so the pass is tested without a chain or a ledger. */
+export interface FollowerSettleDeps {
+  rows: () => FollowTradeRow[];
+  receipt: (hash: `0x${string}`) => Promise<ReceiptRead | null>;
+  /** The contract behind a to-leg symbol on Robinhood Chain, for its Transfer logs; null for ETH or an unknown token. */
+  tokenOf: (symbol: string) => { contract: string; decimals: number } | null;
+  write: (address: string, deskId: string, t: Trade) => boolean | void;
+  note: (address: string, deskId: string, note: string, now: number) => void;
+}
+
+const liveSettleDeps = (): FollowerSettleDeps => {
+  const eth = ASSETS["ETH@robinhood"];
+  const feed = readFeed();
+  return {
+    rows: readFollowTrades,
+    receipt: (hash) => readReceipt(eth, hash),
+    tokenOf: (symbol) => {
+      const key = `${symbol}@robinhood`;
+      const a = ASSETS[key] ?? resolveAny(key, feed);
+      return a && a.kind === "erc20" && a.contract ? { contract: a.contract, decimals: a.decimals } : null;
+    },
+    write: recordFollowTrade,
+    note: recordFollowNote,
+  };
+};
+
+/**
+ * Every agent's pending pool row, settled by its receipt or failed past the allowance, each written to the agent's
+ * own ledger; a row without a hash that is failed gets a note the person reads with /agent. Rows are judged per
+ * agent, since ids are unique per process and two agents in one cycle share the desk's clock. Never throws for one
+ * row's sake: a receipt that cannot be read leaves the row for the next pass.
+ */
+export async function settleFollowers(now = Date.now(), deps: FollowerSettleDeps = liveSettleDeps()): Promise<FollowTradeRow[]> {
+  const all = deps.rows();
+  const out: FollowTradeRow[] = [];
+  for (const address of [...new Set(all.map((r) => r.address))]) {
+    for (const t of latestTrades(all.filter((r) => r && r.address === address)).filter((x) => x.status === "pending" && x.venue === "pool")) {
+      const deskId = (t as FollowTradeRow).deskId;
+      try {
+        const receipt = t.settlementTx ? await deps.receipt(t.settlementTx as `0x${string}`) : null;
+        const row = followerSettle(t, receipt, now, deps.tokenOf(t.to.asset));
+        if (!row) continue;
+        deps.write(address, deskId, row);
+        if (row.status === "failed" && !row.settlementTx) deps.note(address, deskId, `${t.exit ? "exit" : "entry"} of ${t.exit ? t.from.asset : t.to.asset} never got its hash within ${INTENT_STALE_MIN} min and is failed on the book; /wallet shows what the wallet holds`, now);
+        out.push({ ...row, address, deskId });
+      } catch (e) {
+        console.error(`[follow] settle of ${t.id} for ${address.slice(0, 8)} failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+  return out;
 }
 
 /** PURE: the agent's live book at these prices: the desk's own accounting on the agent's real rows. */

@@ -150,3 +150,26 @@ export async function waitReceipt(asset: Asset, hash: `0x${string}`, timeoutMs =
   }
 }
 
+/** A mined transaction as a settle pass reads it: its outcome, who sent it, and its logs, for the amount that actually arrived. */
+export interface ReceiptRead {
+  status: "success" | "reverted";
+  /** The sender, which for a swap the lane encodes is also the recipient of the output. */
+  from: string;
+  logs: Array<{ address: string; topics: readonly string[]; data: string }>;
+}
+
+/**
+ * The receipt of a hash that may or may not be mined, read once with no wait: null when the chain has no receipt
+ * for it yet (or could not be asked). The follower settle pass (2026-09-08) reads rows that were sent minutes or
+ * hours ago, so it never blocks the cycle waiting; a row still without a receipt is judged on the next pass.
+ */
+export async function readReceipt(asset: Asset, hash: `0x${string}`): Promise<ReceiptRead | null> {
+  try {
+    const pub = createPublicClient({ chain: viemChain(asset), transport: transport(asset) });
+    const r = await pub.getTransactionReceipt({ hash });
+    return { status: r.status, from: r.from, logs: r.logs.map((l) => ({ address: l.address, topics: l.topics, data: l.data })) };
+  } catch {
+    return null;
+  }
+}
+
