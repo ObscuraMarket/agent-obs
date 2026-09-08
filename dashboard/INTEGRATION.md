@@ -505,7 +505,11 @@ available yet.
   (`OBS_CONSOLE_MIN_OBS`, `OBS_CONSOLE_MIN_AOBS`; `OBS_CONSOLE_GATE=off`
   opens it), and `my-agent/ensure` and `my-agent/stream` answer the same 403
   for a wallet that stopped holding. The bearer is good for a week and proves
-  control only; it authorizes no transaction.
+  control only; it authorizes no transaction. The page keeps it in
+  localStorage for that week and drops it on `/logout` (or `/disconnect`),
+  when the wallet disconnects or switches, and on any 401 from a signed
+  route, which it reports as an expired session with a `/connect` chip
+  (2026-09-08).
 - `POST /api/obs/console/cli` `{ line }` (bearer optional): the desk routes
   the line and answers `{ ok, lines[], effect, suggest[] }`. `effect` is
   `none`, `clear`, `desk` (lines from the same payloads the page reads),
@@ -543,9 +547,17 @@ available yet.
   prices per million tokens) and `/model <name>` (picks one for the wallet's
   agent); the `credits` effect answers `/credits` with `lines` and `balance`,
   and `/credits buy <amount> <token>` with a `pay` effect: `pay: { to, data,
-  value, chainId, note, token, amount, creditsUsd, bonusPct }`, the one
-  transaction the wallet signs (ETH, USDG, AOBS or a tokenized stock to the
-  treasury). The page then calls `POST /api/obs/credits/verify` `{ txHash }`
+  value, chainId, note, token, amount, creditsUsd, bonusPct, treasury }`, the
+  one transaction the wallet signs (ETH, USDG, AOBS or a tokenized stock to
+  the treasury; `treasury` is where it must land). The page signs nothing it
+  has not judged first (`send-guard.ts`, since 2026-09-08): the chain must be
+  Robinhood Chain and the destination the treasury the reply names (ETH
+  straight to it, or a token's transfer to it), the agent's own wallet for
+  `/fund` (learned from `ensure` or `/wallet`, never from the fund reply
+  alone), or, for a swap's steps, the Universal Router, Permit2 naming the
+  router as spender, or the token being approved for Permit2; where it goes
+  and what ETH rides along are printed before the wallet opens. The page then
+  calls `POST /api/obs/credits/verify` `{ txHash }`
   (bearer), which reads the payment off the chain, prices it at the pools
   (or the stock's print) and credits it once; when the treasury is the desk's
   own wallet, the same payment is written to the desk's capital ledger, so the
@@ -560,6 +572,8 @@ available yet.
 - `POST /api/obs/my-agent/ensure` (bearer): provisions the wallet's own agent
   on first sign-in (with a small credit on the house) and keeps it configured
   after (and attaches its apps when apps are on); there is no bar to clear.
+  The reply carries `name`, `settings` and `wallet` (the agent's own wallet,
+  null while agent wallets are off), which the page keeps for `/fund`.
   `GET /api/obs/my-agent/history` returns prior turns;
   `GET|POST /api/obs/my-agent/settings` reads and sets `name`, `style`,
   `voice`, `goal`; `POST /api/obs/my-agent/stream` `{ text }` streams the
