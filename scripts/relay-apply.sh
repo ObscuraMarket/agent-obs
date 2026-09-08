@@ -231,6 +231,43 @@ fi
 if [ -f "$HEADER_SPEC" ] && ! cmp -s "$ROOT/dashboard/relay/header.component.spec.ts" "$HEADER_SPEC"; then
   cp "$ROOT/dashboard/relay/header.component.spec.ts" "$HEADER_SPEC"
 fi
+# The wallet picker on a phone: a phone's browser has no wallet in it, and the site's Connect sent such a visitor to
+# the MetaMask download page and stopped, which is how a MetaMask user on a phone could not connect (2026-09-08).
+# The picker now opens on a phone with no wallet and offers the page inside the wallet app, the console's own two
+# links. Applied once, keyed on the method it adds.
+PICKER_TS="$APP/app.component.ts"
+PICKER_HTML="$APP/app.component.html"
+if [ -f "$PICKER_TS" ] && [ -f "$PICKER_HTML" ] && ! grep -q "openInMetaMask" "$PICKER_TS"; then
+  python3 - "$PICKER_TS" "$PICKER_HTML" <<'PY'
+import sys
+ts, html = sys.argv[1], sys.argv[2]
+s = open(ts).read()
+before = s
+s = s.replace("    if (!this.wallets.length) { window.open('https://metamask.io/download/', '_blank'); return; }",
+              "    if (!this.wallets.length && !this.phone) { window.open('https://metamask.io/download/', '_blank'); return; }", 1)
+s = s.replace("  closePicker(): void { this.pickerOpen = false; }",
+              "  closePicker(): void { this.pickerOpen = false; }\n"
+              "  /** On a phone the browser has no wallet in it: the page has to open inside the wallet app, so the picker offers that (2026-09-08). */\n"
+              "  get phone(): boolean { return typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent); }\n"
+              "  openInMetaMask(): string { return 'https://metamask.app.link/dapp/' + location.host + location.pathname + location.search; }\n"
+              "  openInPhantom(): string { return 'https://phantom.app/ul/browse/' + encodeURIComponent(location.href) + '?ref=' + encodeURIComponent(location.origin); }", 1)
+if s == before or "openInMetaMask" not in s or "!this.phone" not in s:
+    raise SystemExit(ts + ": an anchor for the phone wallet patch was not found; the site moved, update relay-apply.sh")
+open(ts, "w").write(s)
+h = open(html).read()
+anchor = """      <a class="cw-getone" href="https://metamask.io/download/" target="_blank" rel="noopener">Don't have a wallet? Get one →</a>"""
+if anchor not in h:
+    raise SystemExit(html + ": an anchor for the phone wallet patch was not found; the site moved, update relay-apply.sh")
+h = h.replace(anchor, anchor + """
+      <!-- A phone's browser has no wallet in it: the page opens inside the wallet app instead (2026-09-08). -->
+      <ng-container *ngIf="!wallets.length && phone">
+        <p class="cw-modal-sub">No wallet in this browser. Open this page inside your wallet app, then connect:</p>
+        <a class="cw-getone" [href]="openInMetaMask()" rel="noopener">Open in MetaMask →</a>
+        <a class="cw-getone" [href]="openInPhantom()" rel="noopener">Open in Phantom →</a>
+      </ng-container>""", 1)
+open(html, "w").write(h)
+PY
+fi
 cp "$ROOT/dashboard/angular/src/app/service/obs-desk.service.ts" "$APP/service/obs-desk.service.ts"
 # Every service file of ours the pages import, not one by name: send-guard.ts was imported by the console and not
 # copied, and the site's build broke on the missing module the moment the relay merged (2026-09-08).
