@@ -7,13 +7,14 @@
 // Pure where it matters: how much an agent puts in, what share it sells, and who acts on a trade are functions
 // tested offline; the sends themselves are the lane's, the same code that trades the desk's own money.
 import { ASSETS, assetKey } from "./assets.ts";
-import { railsFromEnv, type Intent, type RailContext } from "./rails.ts";
+import { railsFromEnv, dailyLossHalt, spacingHalt, lastEntryAt, type Intent, type RailContext, type Rails } from "./rails.ts";
 import { executeOnChain, latestEthUsd, quoteOnChain } from "./onchain.ts";
 import { readNativeBalance, readTokenBalance } from "./signer.ts";
-import { agentWallet, walletsOn, quoteUsd } from "./agentWallet.ts";
+import { agentWallet, walletsOn, quoteUsd, readAgentCapital } from "./agentWallet.ts";
 import { acquire } from "./walletLock.ts";
-import { readFollow, followState, readFollowTrades, recordFollowTrade, recordFollowNote, liveHoldings, liveTrades, type FollowRow, type FollowTradeRow } from "./follow.ts";
-import { readBook, holdingsFrom, isHolding, type Trade, type CapitalFlow } from "./book.ts";
+import { readFollow, followState, readFollowTrades, recordFollowTrade, recordFollowNote, liveHoldings, liveTrades, followerEquityUsd, followDayStart, capitalSinceUsd, latestPrices, type FollowRow, type FollowTradeRow } from "./follow.ts";
+import { readBook, holdingsFrom, isHolding, positions, type Trade, type CapitalFlow } from "./book.ts";
+import { readPrices } from "./analysis.ts";
 import { raiseAlert } from "./alerts.ts";
 import { doorNow } from "./gate.ts";
 import { resolveAny } from "./candidates.ts";
@@ -53,6 +54,66 @@ export function canStartLive(sizeUsd: number, ethUsd: number | null, balanceEth:
   if ("amount" in r) return { ok: true };
   const least = (sizeUsd / ethUsd) * 0.5 + gasReserveEth * 2;
   return { ok: false, reason: `Your agent's wallet holds ${balanceEth.toFixed(4)} ETH; $${sizeUsd} a trade needs at least ${least.toFixed(4)} ETH (half the size above ${(gasReserveEth * 2).toFixed(4)} ETH of gas reserve for the round trip). /fund it first, or /start paper.` };
+}
+
+// ---- A follower's own brake, spacing and size, on top of the desk's decision. Until 2026-09-08 the mirror handed
+// the rails no equity and no last entry, so every desk entry, a $5 probe included, bought a full follower size with
+// no ceiling on what a follower could lose in a day. The desk still decides; these decide how much, and whether now.
+
+/** The smallest entry worth its gas: an entry scaled under this is a note, not a swap. */
+export const MIN_ENTRY_USD = 1;
+
+/**
+ * PURE: the follower loss limits, the operator's variables: OBS_FOLLOW_DAILY_LOSS_PCT (15 unless set) and
+ * OBS_FOLLOW_DAILY_LOSS_USD (0, meaning off: the desk's dollar limit is the desk's, not a $50 wallet's). Zero,
+ * blank or unreadable means that limit is off.
+ */
+export function followLossLimits(env: NodeJS.ProcessEnv = process.env): { dailyLossPct: number; dailyLossUsd: number } {
+  const pick = (raw: string | undefined, dflt: number): number => {
+    const n = raw == null || raw.trim() === "" ? dflt : Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : Infinity;
+  };
+  return { dailyLossPct: pick(env.OBS_FOLLOW_DAILY_LOSS_PCT, 15), dailyLossUsd: pick(env.OBS_FOLLOW_DAILY_LOSS_USD, 0) };
+}
+
+/** PURE: the desk's rails with the follower's two brake numbers in place of the desk's; everything else is the desk's. */
+export function followerRails(rails: Rails, env: NodeJS.ProcessEnv = process.env): Rails {
+  return { ...rails, ...followLossLimits(env) };
+}
+
+/**
+ * PURE: the fraction of its full size the desk put into this entry: its dollars over its per-swap cap, so a $5
+ * probe against a $200 cap is 2.5% and a follower puts 2.5% of its size in, never more than the whole size.
+ * Unknown dollars or an unset cap mean the full size, as before.
+ */
+export function entryFraction(deskUsd: number | null | undefined, deskCapUsd: number): number {
+  if (deskUsd == null || !(deskUsd > 0) || !(deskCapUsd > 0)) return 1;
+  return Math.min(1, deskUsd / deskCapUsd);
+}
+
+/** PURE: the follower's entry in dollars: its size scaled by the desk's fraction, to the cent. */
+export function scaledEntryUsd(sizeUsd: number, deskUsd: number | null | undefined, deskCapUsd: number): number {
+  return Math.round(sizeUsd * entryFraction(deskUsd, deskCapUsd) * 100) / 100;
+}
+
+export interface FollowerEntryInputs {
+  rails: Rails;
+  /** The follower's first mark of the UTC day, moved by its fundings and withdrawals since; null when unknown. */
+  dayStartEquityUsd: number | null;
+  equityUsd: number | null;
+  /** When the follower's own last entry went out, from its own rows. */
+  lastEntryAt: number | null;
+  /** A continuation of a token the follower already holds: the desk's add-on, and the follower has the token. Not spaced. */
+  addOn: boolean;
+  now: number;
+}
+
+/** PURE: why the follower sits this entry out, or null: its own day's loss brake first, then its own spacing. */
+export function followerEntryHalt(x: FollowerEntryInputs): string | null {
+  const brake = dailyLossHalt(x.dayStartEquityUsd, x.equityUsd, x.rails);
+  if (brake) return `your agent's ${brake}`;
+  if (x.addOn) return null;
+  return spacingHalt(x.lastEntryAt, x.now, x.rails, "your agent's last entry");
 }
 
 /** PURE: the share of its own holding an agent sells when the desk sold `sold` of the `heldBefore` it had. */
@@ -115,10 +176,29 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
       const w = agentWallet(address);
       const ethBal = Number(await readNativeBalance(eth, w.address)) / 1e18;
       if (!isExit) {
-        const a = entryAmountEth(st.sizeUsd, ethUsd ?? 0, ethBal, rails.gasReserveEth);
+        // The follower's own brake and spacing, from its own rows and its own wallet. Its equity is its ETH in
+        // dollars plus its tokens at the desk's latest samples, the mark its book shows; unpriced, the brake stays
+        // off and no mark is written, rather than tripping on a guess. The day's first priced look writes the mark.
+        const mine = liveTrades(tradeRows, address);
+        const held = liveHoldings(tradeRows, address);
+        const equityNow = followerEquityUsd(ethBal, ethUsd, positions([], mine, held, latestPrices(readPrices(), now)));
+        let dayStart: number | null = null;
+        if (equityNow != null) {
+          const mark = followDayStart(address, equityNow, now);
+          dayStart = mark.equityUsd + capitalSinceUsd(readAgentCapital(), address, mark.at, now);
+        }
+        const fr = followerRails(rails);
+        const addOn = !!intent.addOn && (held[symbol] ?? 0) > 0;
+        const halt = followerEntryHalt({ rails: fr, dayStartEquityUsd: dayStart, equityUsd: equityNow, lastEntryAt: lastEntryAt(mine), addOn, now });
+        if (halt) { recordFollowNote(address, deskTrade.id, `entry of ${intent.to.symbol} skipped: ${halt}`, now); return; }
+        // A probe or an add-on the desk sized under its cap is the same fraction of the follower's size.
+        const deskUsd = intent.usd ?? deskTrade.from.usd;
+        const wantUsd = scaledEntryUsd(st.sizeUsd, deskUsd, rails.maxSwapUsd);
+        if (wantUsd < MIN_ENTRY_USD) { recordFollowNote(address, deskTrade.id, `entry of ${intent.to.symbol} skipped: the desk's $${(deskUsd ?? 0).toFixed(2)} entry is ${Math.round(entryFraction(deskUsd, rails.maxSwapUsd) * 100)}% of its size, $${wantUsd.toFixed(2)} at yours; under $${MIN_ENTRY_USD} is not worth the gas`, now); return; }
+        const a = entryAmountEth(wantUsd, ethUsd ?? 0, ethBal, rails.gasReserveEth);
         if ("reason" in a) { recordFollowNote(address, deskTrade.id, `entry of ${intent.to.symbol} skipped: ${a.reason}`, now); return; }
-        const i2: Intent = { from: eth, to: intent.to, amount: a.amount, usd: a.amount * (ethUsd as number), capUsd: st.sizeUsd };
-        const c2: RailContext = { rails, balances: { "ETH@robinhood": ethBal }, nativeOnFromChain: ethBal, openOrders: 0, lastEntryAt: null, now };
+        const i2: Intent = { from: eth, to: intent.to, amount: a.amount, usd: a.amount * (ethUsd as number), capUsd: st.sizeUsd, ...(addOn ? { addOn: true } : {}) };
+        const c2: RailContext = { rails: fr, balances: { "ETH@robinhood": ethBal }, nativeOnFromChain: ethBal, openOrders: 0, dayStartEquityUsd: dayStart, equityUsd: equityNow, lastEntryAt: lastEntryAt(mine), now };
         const r = await executeOnChain(i2, c2, now, { wallet: w, record: (t) => recordFollowTrade(address, deskTrade.id, t) });
         if (r.ok) console.log(`[follow] ${address.slice(0, 8)} entered ${intent.to.symbol} with ${a.amount} ETH: ${r.trade.status}`);
         else recordFollowNote(address, deskTrade.id, `entry of ${intent.to.symbol} refused: ${r.reason}`, now);

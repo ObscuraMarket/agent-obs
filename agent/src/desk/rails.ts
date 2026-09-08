@@ -186,7 +186,8 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
     const halt = dailyLossHalt(c.dayStartEquityUsd ?? null, c.equityUsd ?? null, r);
     if (halt) return { ok: false, reason: halt };
     const now = c.now ?? Date.now();
-    if (!i.addOn && c.lastEntryAt != null && now - c.lastEntryAt < r.minHoursBetweenEntries * 3600e3) return { ok: false, reason: `the last entry was ${((now - c.lastEntryAt) / 3600e3).toFixed(1)}h ago; entries are at least ${r.minHoursBetweenEntries}h apart` };
+    const soon = i.addOn ? null : spacingHalt(c.lastEntryAt ?? null, now, r);
+    if (soon) return { ok: false, reason: soon };
   }
   const allowed = (a: Asset) => r.allowedAssets.has(assetKey(a)) || (r.candidatesOn && !!a.candidate);
   if (!allowed(i.from)) return { ok: false, reason: `${assetKey(i.from)} is not on the trade allowlist` };
@@ -283,6 +284,18 @@ export function dailyLossHalt(dayStartEquityUsd: number | null, equityUsd: numbe
   if (down >= r.dailyLossUsd) return `daily loss brake: down $${down.toFixed(2)} since 00:00 UTC, the limit is $${r.dailyLossUsd}; no new entries until tomorrow`;
   if (pct >= r.dailyLossPct) return `daily loss brake: down ${pct.toFixed(1)}% since 00:00 UTC, the limit is ${r.dailyLossPct}%; no new entries until tomorrow`;
   return null;
+}
+
+/**
+ * PURE: the spacing rule, one place for the desk and for every follower: an entry closer to the last one than the
+ * minimum is refused, and the reason names whose entry it was. Add-ons are the caller's exemption, not this rule's.
+ * Split out of checkRails on 2026-09-08 so a follower's own rows space its own entries with the same words.
+ */
+export function spacingHalt(lastEntryAt: number | null, now: number, r: Rails, whose = "the last entry"): string | null {
+  if (lastEntryAt == null || !(r.minHoursBetweenEntries > 0)) return null;
+  const ago = now - lastEntryAt;
+  if (ago >= r.minHoursBetweenEntries * 3600e3) return null;
+  return `${whose} was ${(ago / 3600e3).toFixed(1)}h ago; entries are at least ${r.minHoursBetweenEntries}h apart`;
 }
 
 /** PURE: the book's first mark of the UTC day that `now` falls in, from stored snapshots; null when the day has no mark yet. */
