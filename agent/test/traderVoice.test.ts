@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { traderBlock, traderPrompt, TRADER_FORMS } from "../src/social/traderVoice.ts";
+import { traderBlock, traderPrompt, rulesLine, TRADER_FORMS } from "../src/social/traderVoice.ts";
+import { railsFromEnv } from "../src/desk/rails.ts";
 
 const T = Date.UTC(2026, 8, 7, 23, 40);
 
 test("the desk block carries only the desk's own numbers: equity, the record, the book, today's closes, the watch, the thoughts", () => {
   const block = traderBlock({
-    equityUsd: 1727.4, realizedUsd: 714.2,
+    equityUsd: 1727.4, rules: "enter with at most $200 a trade",
     positions: [{ asset: "LENNY", valueUsd: 182, unrealizedPct: -8.8, ageH: 0.6 }],
     closesToday: [
       { at: T - 3600e3, symbol: "PENGUIN", realizedUsd: 13.4, realizedPct: 6.7, exitKind: "trail", holdH: 0.03 },
@@ -17,7 +18,9 @@ test("the desk block carries only the desk's own numbers: equity, the record, th
     watching: [{ symbol: "LUDES", role: "watch", entryState: "waiting", trend: "holding", why: "ran +52% to a peak 162 min ago" }],
     now: T,
   });
-  assert.match(block, /^- equity \$1727; realized since the start \$714; the time is 23:40 UTC\n- the record: 22 wins and 7 losses/);
+  assert.match(block, /^- equity \$1727; the time is 23:40 UTC\n- the record: 22 wins and 7 losses/);
+  assert.match(block, /- my rules, as set right now: enter with at most \$200 a trade/);
+  assert.ok(!block.includes("realized since the start"));
   assert.match(block, /- holding LENNY: \$182 \(-8\.8%\), held 0\.6 h/);
   assert.match(block, /- closed today: 2 \(1 won\), net -\$24\.70/);
   assert.match(block, /22:40 UTC PENGUIN: \$13\.40 \(\+6\.7%\) after 0\.0 h, out on the trailing stop/);
@@ -28,7 +31,7 @@ test("the desk block carries only the desk's own numbers: equity, the record, th
 });
 
 test("an empty desk says so, and the prompt hands the model the block, the memory, the form and the hard rules", () => {
-  const block = traderBlock({ equityUsd: null, realizedUsd: 0, positions: [], closesToday: [], record: "no closes yet", thoughts: [], watching: [], now: T });
+  const block = traderBlock({ equityUsd: null, rules: "", positions: [], closesToday: [], record: "no closes yet", thoughts: [], watching: [], now: T });
   assert.match(block, /holding nothing but ETH right now/);
   assert.match(block, /closed today: nothing yet/);
   const p = traderPrompt({ handle: "AgentOBS", block, journal: "I said the trail was tight.", recent: ["one from before"], performance: "", form: TRADER_FORMS[0], maxChars: 280 });
@@ -40,6 +43,17 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   assert.match(p, /never tell anyone to buy or sell/);
   assert.match(p, /HARD LIMIT: 280 characters/);
   assert.match(p, /reply with PASS on the first line/);
+  assert.match(p, /ONE IDEA PER POST/);
+  assert.match(p, /operator's hand is the operator's move/);
+  assert.ok(!p.includes("Anchors for the register"));
+  const withAnchors = traderPrompt({ handle: "AgentOBS", block, journal: "", recent: [], performance: "", form: TRADER_FORMS[0], maxChars: 280, examples: "- i left LENNY at 12:52 UTC, the trail took it." });
+  assert.match(withAnchors, /Anchors for the register only: never repeat one[\s\S]*- i left LENNY at 12:52 UTC/);
   assert.equal(TRADER_FORMS.length, 7);
   assert.ok(!p.includes("—"));
+});
+
+test("the rules line quotes the rails as they are set, so a mechanic post carries real numbers", () => {
+  const line = rulesLine(railsFromEnv({ OBS_MAX_SWAP_USD: "200", OBS_MIN_HOURS_BETWEEN_ENTRIES: "0.5", OBS_DAILY_LOSS_USD: "250", OBS_DAILY_LOSS_PCT: "15", OBS_CANDIDATE_FLOOR_PCT: "30", OBS_CANDIDATE_TRAIL_ARM_PCT: "20", OBS_CANDIDATE_TRAIL_PCT: "15", OBS_CANDIDATE_TAKE_PROFIT_PCT: "30", OBS_CANDIDATE_TAKE_PROFIT_SHARE: "0.33", OBS_CANDIDATE_TAPE_EXIT_MIN_PCT: "10", OBS_CANDIDATE_TAPE_EXIT_PRESSURE_PCT: "45", OBS_CANDIDATE_TAPE_EXIT_SHARE: "0.6", OBS_CANDIDATE_REMAINDER_FLOOR_PCT: "5", OBS_CANDIDATE_MAX_HOLD_H: "8" } as NodeJS.ProcessEnv));
+  assert.equal(line, "enter with at most $200 a trade, 0.5 h apart, and not at all once the day is down $250 or 15%. Exits, whichever comes first: the floor at -30%; the trailing stop, armed at +20% and out when 15% of the peak is given back; the take-profit, 33% sold at +30%; the tape exit, 60% sold past +10% once buyers fall under 45% of the tape; a remainder floor at -5% after a partial sale; and the time stop at 8 h.");
+  assert.ok(!line.includes("—"));
 });

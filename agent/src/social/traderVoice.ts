@@ -8,10 +8,12 @@ import { readBook, snapshot, positions, holdingsFrom, type Prices } from "../des
 import { readCloses, launchRecord, launchRecordLine, type TradeClose } from "../desk/trade-memory.ts";
 import { readThoughts, type Thought } from "../desk/thoughts.ts";
 import { readPrices } from "../desk/analysis.ts";
+import { railsFromEnv, type Rails } from "../desk/rails.ts";
 
 export interface TraderInput {
   equityUsd: number | null;
-  realizedUsd: number;
+  /** The rails in one line (rulesLine), so a post about a mechanic carries the rule as it is set, never a guess. */
+  rules: string;
   positions: Array<{ asset: string; valueUsd: number | null; unrealizedPct: number | null; ageH: number | null }>;
   closesToday: Array<Pick<TradeClose, "symbol" | "realizedUsd" | "realizedPct" | "exitKind" | "holdH" | "at">>;
   record: string;
@@ -23,13 +25,29 @@ export interface TraderInput {
 const usd = (v: number | null | undefined) => (v == null ? "unpriced" : `${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(v >= 100 || v <= -100 ? 0 : 2)}`);
 const pct = (v: number | null | undefined) => (v == null ? "" : ` (${v >= 0 ? "+" : ""}${v.toFixed(1)}%)`);
 const clock = (ts: number) => new Date(ts).toISOString().slice(11, 16) + " UTC";
-const exitWord: Record<string, string> = { trail: "the trailing stop", floor: "the floor", "take-profit": "the take-profit", "tape-profit": "the tape exit, buyers thinning", tape: "the tape exit", volume: "the volume roll-over", "time-stop": "the time stop", model: "my own call", operator: "the operator" };
+const exitWord: Record<string, string> = { trail: "the trailing stop", floor: "the floor", "take-profit": "the take-profit", "tape-profit": "the tape exit, buyers thinning", tape: "the tape exit", volume: "the volume roll-over", "time-stop": "the time stop", model: "my own call", operator: "the operator's hand, not a rule of mine" };
+
+const n = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1).replace(/\.0$/, ""));
+/** PURE: the rails as they are set, in one line the model may quote. The numbers come from the same rails the desk trades under. */
+export function rulesLine(r: Rails): string {
+  const enter = `enter with at most $${n(r.maxSwapUsd)} a trade, ${n(r.minHoursBetweenEntries)} h apart, and not at all once the day is down $${n(r.dailyLossUsd)} or ${n(r.dailyLossPct)}%`;
+  const exit = [
+    `the floor at -${n(r.candidateFloorPct)}%`,
+    `the trailing stop, armed at +${n(r.candidateTrailArmPct)}% and out when ${n(r.candidateTrailPct)}% of the peak is given back`,
+    `the take-profit, ${Math.round(r.candidateTakeProfitShare * 100)}% sold at +${n(r.candidateTakeProfitPct)}%`,
+    `the tape exit, ${Math.round(r.candidateTapeExitShare * 100)}% sold past +${n(r.candidateTapeExitMinPct)}% once buyers fall under ${n(r.candidateTapeExitPressurePct)}% of the tape`,
+    `a remainder floor at -${n(r.candidateRemainderFloorPct)}% after a partial sale`,
+    `and the time stop at ${n(r.candidateMaxHoldH)} h`,
+  ].join("; ");
+  return `${enter}. Exits, whichever comes first: ${exit}.`;
+}
 
 /** PURE: the desk's own numbers this cycle, the only ones the post may carry. */
 export function traderBlock(i: TraderInput): string {
   const lines: string[] = [];
-  lines.push(`- equity ${usd(i.equityUsd)}; realized since the start ${usd(i.realizedUsd)}; the time is ${clock(i.now)}`);
+  lines.push(`- equity ${usd(i.equityUsd)}; the time is ${clock(i.now)}`);
   lines.push(`- the record: ${i.record}`);
+  lines.push(`- my rules, as set right now: ${i.rules}`);
   if (i.positions.length) for (const p of i.positions) lines.push(`- holding ${p.asset}: ${usd(p.valueUsd)}${pct(p.unrealizedPct)}${p.ageH != null ? `, held ${p.ageH.toFixed(1)} h` : ""}`);
   else lines.push("- holding nothing but ETH right now");
   if (i.closesToday.length) {
@@ -65,6 +83,8 @@ export interface TraderPromptInput {
   performance: string;
   form: string;
   maxChars: number;
+  /** Posts that sound right (personality/xtrader/examples.md), anchors for the register, never to be repeated. */
+  examples?: string;
 }
 
 /** PURE: the whole prompt for one cycle. */
@@ -74,7 +94,7 @@ export function traderPrompt(p: TraderPromptInput): string {
 Your desk THIS CYCLE, from your own ledgers. These are the only numbers you may cite, and the only trades you may describe:
 ${p.block}
 
-${p.journal ? `What you have been chewing on lately, in your own words. This is your memory, not a script: pick a thread back up, notice you were wrong, or let it go.\n${p.journal}\n\n` : ""}${p.recent.length ? `Your last posts, newest last. Do not repeat a thought or a number from them:\n${p.recent.map((t) => `- ${t}`).join("\n")}\n\n` : ""}${p.performance}If you post: reply with the tweet, then on a new line a private note to yourself:
+${p.examples ? `Posts of yours that sound right. Anchors for the register only: never repeat one, never reuse its numbers.\n${p.examples}\n\n` : ""}${p.journal ? `What you have been chewing on lately, in your own words. This is your memory, not a script: pick a thread back up, notice you were wrong, or let it go.\n${p.journal}\n\n` : ""}${p.recent.length ? `Your last posts, newest last. Do not repeat a thought or a number from them:\n${p.recent.map((t) => `- ${t}`).join("\n")}\n\n` : ""}${p.performance}If you post: reply with the tweet, then on a new line a private note to yourself:
 
 POST: <the tweet>
 NOTE: <one sentence, just for you, never published>
@@ -84,7 +104,7 @@ The NOTE is your memory. Write what you would actually want to remember: a call 
 THE FORM FOR THIS POST, chosen for you so your feed does not read like one long essay. Follow it even when another angle feels more natural, because the variety IS the personality:
 ${p.form}
 
-Hard rules: no advice, no prediction, never tell anyone to buy or sell, never call a token a pick; you report what your rules did. No number that is not in the block. No token addresses. HARD LIMIT: ${p.maxChars} characters, a wall, not a guideline; aim well under it. No em dashes, no hashtags, no quotation marks, no reciting your own values.
+Hard rules: no advice, no prediction, never tell anyone to buy or sell, never call a token a pick; you report what your rules did. No number that is not in the block. No token addresses. ONE IDEA PER POST: never append the equity, the record or any second number the form did not ask for. A close by the operator's hand is the operator's move, not a trade of yours: say the operator closed it, or leave it out; never present it as your decision. When you name a rule, use its numbers from the block as they are set. HARD LIMIT: ${p.maxChars} characters, a wall, not a guideline; aim well under it. No em dashes, no hashtags, no quotation marks, no reciting your own values.
 
 If nothing is genuinely worth saying right now: reply with PASS on the first line, then your NOTE.`;
 }
@@ -108,7 +128,7 @@ export function traderData(now = Date.now()): TraderInput {
   const entryAt = (asset: string) => book.trades.filter((t) => t.to.asset === asset && t.status === "settled").map((t) => t.at).sort().pop() ?? null;
   return {
     equityUsd: snap.equityUsd,
-    realizedUsd: pos.realizedUsd,
+    rules: rulesLine(railsFromEnv()),
     positions: pos.positions.filter((p) => p.asset !== "ETH").map((p) => ({ asset: p.asset, valueUsd: p.valueUsd, unrealizedPct: p.unrealizedPct != null ? p.unrealizedPct * 100 : null, ageH: entryAt(p.asset) != null ? (now - (entryAt(p.asset) as number)) / 3600e3 : null })),
     closesToday: closes.filter((c) => c.at >= dayStart).sort((a, b) => a.at - b.at).map((c) => ({ symbol: c.symbol, realizedUsd: c.realizedUsd, realizedPct: c.realizedPct, exitKind: c.exitKind, holdH: c.holdH, at: c.at })),
     record: launchRecordLine(launchRecord(closes)),

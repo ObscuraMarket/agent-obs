@@ -3,7 +3,7 @@
 // hands. DRY_RUN=1 previews without posting or journaling. Draft-first: with
 // X_LIVE unset the tweet lands in the ledger and nowhere else.
 import { GatewayClient } from "@openhermit/sdk";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DRY, MIN_POST_GAP_MIN, SIMILARITY_MAX, X_AGENT_ID, X_HANDLE, X_VOICE, MAX_TWEET_CHARS, ROOT_DIR } from "./config.ts";
 import { traderBlock, traderData, traderPrompt, TRADER_FORMS } from "./social/traderVoice.ts";
@@ -113,8 +113,10 @@ HARD LIMIT: ${MAX_TWEET_CHARS} characters, a wall, not a guideline. Aim well und
 If nothing is genuinely worth saying right now: reply with PASS on the first line, then your NOTE.`;
 
 // Agent OBS's own account: the desk speaks about its own trading from its own ledgers; the copywriter's prompt is Obscura's voice.
+const examplesPath = join(ROOT_DIR, "personality", "xtrader", "examples.md");
+const examples = existsSync(examplesPath) ? readFileSync(examplesPath, "utf8").replace(/^#\s+\w+\s*\n/, "").trim() : "";
 const prompt = X_VOICE === "trader"
-  ? traderPrompt({ handle: X_HANDLE, block: traderBlock(traderData()), journal, recent, performance, form, maxChars: MAX_TWEET_CHARS })
+  ? traderPrompt({ handle: X_HANDLE, block: traderBlock(traderData()), journal, recent, performance, form, maxChars: MAX_TWEET_CHARS, examples })
   : copywriterPrompt;
 
 const sessionId = "x-autopilot";
