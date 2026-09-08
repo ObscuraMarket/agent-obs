@@ -230,7 +230,8 @@ test("the cycle writes the signal rows once, at the top level after the decision
   const autoEntry = src.indexOf('(process.env.OBS_AUTO_ENTRY ?? "off") === "on"');
   assert.ok(lines.some((l) => l.startsWith("const heldSet = ")), "what the desk holds is known at the top level, for the pick and the rows alike");
   assert.ok(src.indexOf("const readsFor = ") > autoEntry, "the pick's own structure is built inside the auto-entry branch, the only place that reads it (review 2026-09-08)");
-  assert.ok(src.indexOf("autoEntryPick(readsFor)") > autoEntry);
+  // The pick takes the watch's trigger as its preference since 2026-09-08; the anchor is the call's opening.
+  assert.ok(src.indexOf("autoEntryPick(readsFor,") > autoEntry);
   assert.ok(src.includes("want.failed = r.reason"), "an executor failure is a failure on the want, not a refusal");
   const write = src.indexOf("writeSignals(");
   assert.ok(write > src.indexOf('if (decision.kind === "propose-swap" && decision.from'), "after the decision block");

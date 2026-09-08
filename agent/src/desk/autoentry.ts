@@ -55,9 +55,15 @@ export function entryVeto(i: VetoInput): string | null {
   return null;
 }
 
-/** PURE: the first graded, unheld candidate that passed every read, in board order; null when none did. A read that did not complete is not passed. */
-export function autoEntryPick(reads: AutoEntryReads[]): AutoEntryReads | null {
-  return reads.find((r) => r.grade && !r.held && r.entryOk && r.holdersRead && r.holdersOk && r.launchRead && r.launchOk !== false) ?? null;
+/**
+ * PURE: the first graded, unheld candidate that passed every read, in board order; null when none did. A read that
+ * did not complete is not passed. The preferred token (the watch's trigger) is picked ahead of the board when it
+ * passes: the pick took the first passing token in feed order, and 16 of 48 buys were of a token other than the
+ * one whose tape fired the cycle (2026-09-08).
+ */
+export function autoEntryPick(reads: AutoEntryReads[], prefer: string | null = null): AutoEntryReads | null {
+  const passed = (r: AutoEntryReads) => !!r.grade && !r.held && r.entryOk && r.holdersRead && r.holdersOk && r.launchRead && r.launchOk !== false;
+  return (prefer ? reads.find((r) => r.symbol === prefer && passed(r)) : undefined) ?? reads.find(passed) ?? null;
 }
 
 /** PURE: the entry at the rails' size, argued from the observation's own lines for that token. */

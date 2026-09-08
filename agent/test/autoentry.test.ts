@@ -14,6 +14,16 @@ test("the reads pick the entry: the first graded, unheld candidate that passed e
   assert.equal(autoEntryPick([r({ held: true })]), null, "a token already held is not bought again here");
 });
 
+test("the watch's trigger is picked ahead of the board when it passes, and the board's order stands when it does not (2026-09-08)", () => {
+  // 16 of 48 buys were of a token other than the one whose tape fired the cycle: the pick took the first passing token in feed order.
+  const reads = [r({ symbol: "MEME" }), r({ symbol: "ZZZ" })];
+  assert.equal(autoEntryPick(reads)?.symbol, "MEME", "no trigger: the board's order");
+  assert.equal(autoEntryPick(reads, "ZZZ")?.symbol, "ZZZ", "the trigger passes: it is the pick");
+  assert.equal(autoEntryPick([r({ symbol: "MEME" }), r({ symbol: "ZZZ", holdersOk: false })], "ZZZ")?.symbol, "MEME", "the trigger failed a read: the first passing token, as before");
+  assert.equal(autoEntryPick(reads, "GONE")?.symbol, "MEME", "a trigger that is not on the board changes nothing");
+  assert.equal(autoEntryPick([r({ symbol: "ZZZ", held: true })], "ZZZ"), null, "a held trigger is not bought again here");
+});
+
 test("a read the cycle does not have is not a pass: a missing holder read or launch read is refused (2026-09-08)", () => {
   assert.equal(autoEntryPick([r({ holdersRead: false, holdersOk: false })]), null, "the holder read threw, or its scan came back empty");
   assert.equal(autoEntryPick([r({ holdersRead: false, holdersOk: true })]), null, "a pass without a read behind it is no pass");

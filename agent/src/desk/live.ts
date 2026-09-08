@@ -184,9 +184,12 @@ function runCycle(t: Trigger, state: WatchState | undefined, now: number): void 
   // The terminal's line: an entry is "gave an entry"; a held token is what its tape is doing, on the cadence or at the break.
   if (t.kind === "entry") recordResearch({ kind: "trigger", symbol, ok: null, note: compactWhy(t.what) });
   else recordResearch({ kind: "holding", symbol, ok: t.kind === "exit" ? false : null, note: `${t.kind === "exit" ? t.what : "review"}|${state ? holdingNote(state) : t.what}` });
+  // The trigger's token and kind go with the reason: the cycle reads that token first, its auto entry prefers it, and
+  // its cadence floor is per symbol for an entry (trigger.ts). Until 2026-09-08 the cycle only had the sentence, built
+  // its board in feed order, and the token that fired was off the board in 42% of triggered thinks.
   const child = spawn(join(ROOT_DIR, "node_modules", ".bin", "tsx"), ["src/desk/cycle.ts"], {
     cwd: ROOT_DIR,
-    env: { ...process.env, OBS_TICK: "fast", OBS_MIN_THOUGHT_GAP_MIN: String(rules.cooldownMin), OBS_LIVE_TRIGGER: reason },
+    env: { ...process.env, OBS_TICK: "fast", OBS_MIN_THOUGHT_GAP_MIN: String(rules.cooldownMin), OBS_LIVE_TRIGGER: reason, OBS_LIVE_TRIGGER_SYMBOL: symbol, OBS_LIVE_TRIGGER_KIND: t.kind },
     stdio: ["ignore", "pipe", "pipe"],
   });
   running = child;
