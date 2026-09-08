@@ -348,7 +348,11 @@ export function resolveObsApiUrl(): string {
     // A saved override must be one of our own API hosts, or local. Before this check any link with ?api=<host>
     // pointed every later request, bearer included, at that host, and the setting survived reloads (2026-09-08).
     const ours = (v: string): boolean => {
-      try { const u = new URL(v); return u.protocol === 'https:' && /(^|\.)obscura\.markets?$/.test(u.hostname) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(v); } catch { return false; }
+      try {
+        const u = new URL(v);
+        const local = u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]');
+        return (u.protocol === 'https:' && /(^|\.)obscura\.markets?$/.test(u.hostname)) || local;
+      } catch { return false; }
     };
     const q = new URLSearchParams(window.location.search).get('api');
     if (q === 'reset' || (q !== null && !ours(q.trim()))) {

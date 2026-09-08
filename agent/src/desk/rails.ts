@@ -188,7 +188,9 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   const have = c.balances[assetKey(i.from)] ?? 0;
   if (have + 1e-12 < i.amount) return { ok: false, reason: `the wallet holds ${have} ${assetKey(i.from)}, less than ${i.amount}` };
   if (i.from.kind === "native") {
-    if (have - i.amount < r.gasReserveEth) return { ok: false, reason: `sending ${i.amount} ${i.from.symbol} would leave less than the ${r.gasReserveEth} gas reserve` };
+    // An entry keeps the reserve twice: its own gas and the exit's, since a wallet left under the reserve by the
+    // entry's gas is refused every token exit at the check below (2026-09-08).
+    if (have - i.amount < r.gasReserveEth * 2) return { ok: false, reason: `sending ${i.amount} ${i.from.symbol} would leave less than ${r.gasReserveEth * 2} ETH, the gas reserve for the round trip` };
   } else if (c.nativeOnFromChain == null || c.nativeOnFromChain < r.gasReserveEth) {
     return { ok: false, reason: `less than the ${r.gasReserveEth} ETH gas reserve on ${i.from.chain}` };
   }

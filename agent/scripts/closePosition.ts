@@ -6,7 +6,9 @@
 //   npx tsx scripts/closePosition.ts <SYMBOL> "<reason>" [--dry]
 import { resolveAny, readFeed, isHolding } from "../src/desk/candidates.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
-import { executeOnChain, rememberClose, quoteOnChain } from "../src/desk/onchain.ts";
+import { executeOnChain, rememberClose, quoteOnChain, latestEthUsd } from "../src/desk/onchain.ts";
+import { ethUsdAt } from "../src/desk/trade-memory.ts";
+import { readPrices } from "../src/desk/analysis.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 import { liveReads, walletBalances, assetPrices } from "../src/obscura/reads.ts";
 import { readBook, recordTrade, positions, boughtSymbols } from "../src/desk/book.ts";
@@ -44,5 +46,5 @@ const row = { ...r.trade, to: { ...r.trade.to, usd: toUsd }, note: `exit (operat
 recordTrade(row);
 const firstBuy = book.trades.filter((t) => t.to.asset === symbol && t.status === "settled").map((t) => t.at).sort()[0] ?? now;
 const realized = (pos?.realizedUsd ?? 0) + (toUsd ?? 0) - (pos?.costUsd ?? 0);
-rememberClose(symbol, from.contract ?? "", firstBuy, pos?.costUsd ?? null, realized, pos?.unrealizedPct != null ? pos.unrealizedPct * 100 : null, "operator", false, now);
+if (row.status === "settled") rememberClose(symbol, from.contract ?? "", [...book.trades, row], ethUsdAt(readPrices(), latestEthUsd(now)), pos?.unrealizedPct != null ? pos.unrealizedPct * 100 : null, "operator", false, now);
 console.log(`${row.status}: ${row.from.amount} ${symbol} -> ${row.to.amount} ETH${toUsd != null ? ` ($${toUsd.toFixed(2)})` : ""}, realized ${realized >= 0 ? "+" : ""}$${realized.toFixed(2)}${row.settlementTx ? `, tx ${row.settlementTx}` : ""}`);

@@ -47,6 +47,8 @@ test("the rails pass a small, funded, allowlisted swap and refuse everything els
   assert.match(no({}, { openOrders: 1 }), /already open/);
   assert.match(no({ amount: 0.1 }), /holds 0\.05/);
   assert.match(no({ amount: 0.049 }), /gas reserve/);
+  assert.match(no({ amount: 0.048 }), /gas reserve for the round trip/, "leaving exactly one reserve is refused: the entry's gas would put the wallet under it and every exit after it");
+  assert.deepEqual(checkRails(intent({ amount: 0.046 }), ctx()), { ok: true }, "leaving two reserves passes");
   assert.match(no({ from: USDG, to: ETH, amount: 10 }, { nativeOnFromChain: 0.0001 }), /gas reserve on robinhood/);
 });
 

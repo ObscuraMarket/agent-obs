@@ -26,9 +26,12 @@ if ! grep -q "ConsoleComponent" "$ROUTING"; then
   python3 - "$ROUTING" <<'PY'
 import sys, re
 p = sys.argv[1]; s = open(p).read()
+before = s
 s = s.replace("import { AgentComponent } from './pages/agent/agent.component';", "import { AgentComponent } from './pages/agent/agent.component';\nimport { ConsoleComponent } from './pages/console/console.component';", 1)
 s = s.replace("const agentMeta = {", "const consoleMeta = {\n  title: 'Obscura - OBS Console',\n  override: true,\n  description: 'The OBS console: read the desk, quote and swap from your own wallet, and unlock your own agent.'\n};\n\nconst agentMeta = {", 1)
 s = re.sub(r"(\{ path: 'agent', component: AgentComponent, data: \{ meta: agentMeta \} \})", r"\1,\n      // The OBS console, the same page's command line.\n      { path: 'console', component: ConsoleComponent, data: { meta: consoleMeta } }", s, count=1)
+if s == before:
+    raise SystemExit(p + ": an anchor for the routing patch was not found; the site moved, update relay-apply.sh")
 open(p, "w").write(s)
 PY
 fi
@@ -36,8 +39,11 @@ if ! grep -q "ConsoleComponent" "$MODULE"; then
   python3 - "$MODULE" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p).read()
+before = s
 s = s.replace("import { AgentComponent } from './pages/agent/agent.component';", "import { AgentComponent } from './pages/agent/agent.component';\nimport { ConsoleComponent } from './pages/console/console.component';", 1)
 s = s.replace("    AgentComponent,\n", "    AgentComponent,\n    ConsoleComponent,\n", 1)
+if s == before:
+    raise SystemExit(p + ": an anchor for the module declaration patch was not found; the site moved, update relay-apply.sh")
 open(p, "w").write(s)
 PY
 fi
@@ -47,8 +53,11 @@ if ! grep -q "CONSOLE_VIEWS" "$MODULE"; then
   python3 - "$MODULE" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p).read()
+before = s
 s = s.replace("import { ConsoleComponent } from './pages/console/console.component';", "import { ConsoleComponent } from './pages/console/console.component';\nimport { CONSOLE_VIEWS } from './service/obs-desk.service';", 1)
 s = s.replace("  providers: [", "  providers: [\n    // The pages the console opens beside itself, by command: /trade, /rewards, /cards, /yield.\n    { provide: CONSOLE_VIEWS, useValue: { trade: SwapComponent, rewards: RewardsComponent, cards: CardsComponent, yield: YieldComponent } },\n    ", 1)
+if s == before:
+    raise SystemExit(p + ": an anchor for the console views patch was not found; the site moved, update relay-apply.sh")
 open(p, "w").write(s)
 PY
 fi
@@ -58,10 +67,13 @@ if ! grep -q "CONSOLE_WALLET" "$MODULE"; then
   python3 - "$MODULE" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p).read()
+before = s
 s = s.replace("import { CONSOLE_VIEWS } from './service/obs-desk.service';", "import { CONSOLE_VIEWS, CONSOLE_WALLET } from './service/obs-desk.service';", 1)
 if "from './service/wallet.service'" not in s:
     s = s.replace("import { CONSOLE_VIEWS, CONSOLE_WALLET } from './service/obs-desk.service';", "import { CONSOLE_VIEWS, CONSOLE_WALLET } from './service/obs-desk.service';\nimport { WalletService } from './service/wallet.service';", 1)
 s = s.replace("    { provide: CONSOLE_VIEWS, useValue:", "    // The wallet the header connected is the wallet the console signs in with.\n    { provide: CONSOLE_WALLET, useExisting: WalletService },\n    { provide: CONSOLE_VIEWS, useValue:", 1)
+if s == before:
+    raise SystemExit(p + ": an anchor for the console wallet patch was not found; the site moved, update relay-apply.sh")
 open(p, "w").write(s)
 PY
 fi
@@ -116,6 +128,7 @@ if [ -f "$HEADER" ] && { grep -q 'routerLink="/rewards"' "$HEADER" || ! grep -q 
   python3 - "$HEADER" <<'PY'
 import sys, re
 p = sys.argv[1]; s = open(p).read()
+before = s
 # Rewards, Cards and Yield are console views and Referral is gone: their links leave the header (desktop and the
 # mobile menu); Trade, Agent, Docs and Roadmap stay. Each removal is one match, so a header already folded is left as it is.
 for path in ["rewards", "cards", "referral", "yield"]:
@@ -139,6 +152,8 @@ mobile = ('          <li *ngIf="consoleOpen; else mobileConsoleSoon"><a routerLi
           '            <span class="soon-tag-mobile">Soon</span>\n            Console\n          </a></li></ng-template>\n')
 s = s.replace('      <a routerLink="/app" class="nav-link"', desktop + '      <a routerLink="/app" class="nav-link"', 1)
 s = s.replace('          <li><a routerLink="/app" class="nav-menu-link"', mobile + '          <li><a routerLink="/app" class="nav-menu-link"', 1)
+if s == before:
+    raise SystemExit(p + ": an anchor for the header links patch was not found; the site moved, update relay-apply.sh")
 open(p, "w").write(s)
 PY
 fi
@@ -150,6 +165,7 @@ if [ -f "$WALLET_TS" ] && ! grep -q "isPhantom" "$WALLET_TS"; then
   python3 - "$WALLET_TS" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p).read()
+before = s
 old = """  list(): WalletOption[] {
     if (this.discovered.length) return [...this.discovered];
     const eth = (window as any).ethereum;
@@ -178,6 +194,8 @@ new = """  list(): WalletOption[] {
   }"""
 if old not in s: raise SystemExit("wallet.service.ts list() is not the shape this patch knows")
 s = s.replace(old, new, 1)
+if s == before:
+    raise SystemExit(p + ": an anchor for the wallet picker patch was not found; the site moved, update relay-apply.sh")
 open(p, "w").write(s)
 PY
 fi
@@ -186,12 +204,15 @@ if [ -f "$HEADER_TS" ] && ! grep -q "consoleOpen" "$HEADER_TS"; then
   python3 - "$HEADER_TS" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p).read()
+before = s
 s = s.replace("import { LanguageService } from 'src/app/service/language.service';", "import { LanguageService } from 'src/app/service/language.service';\nimport { WalletService } from 'src/app/service/wallet.service';\nimport { ObsDeskService } from 'src/app/service/obs-desk.service';\nimport { Subscription } from 'rxjs';", 1)
 s = s.replace("  activeLink = 'trade';", "  activeLink = 'trade';\n  /** The OBS console is for invited wallets: the link goes live when the connected wallet is one, greyed otherwise. */\n  consoleOpen = false;\n  private consoleSub?: Subscription;", 1)
 s = s.replace("    private router: Router\n  ) {", "    private router: Router,\n    private wallet: WalletService,\n    private obs: ObsDeskService\n  ) {", 1)
 s = s.replace("    this.syncActiveLink(this.router.url);\n", "    this.syncActiveLink(this.router.url);\n    // The console link follows the connected wallet: live when the desk's door lets it in, greyed otherwise.\n    this.consoleSub = this.wallet.address$.subscribe((address) => {\n      if (!address) { this.consoleOpen = false; this.cdRef.markForCheck(); return; }\n      this.obs.door(address).subscribe({ next: (d) => { this.consoleOpen = !!d?.open; this.cdRef.markForCheck(); }, error: () => { this.consoleOpen = false; this.cdRef.markForCheck(); } });\n    });\n", 1)
 s = s.replace("['trade', 'rewards', 'referral', 'cards', 'yield', 'agent', 'docs', 'roadmap']", "['trade', 'rewards', 'referral', 'cards', 'yield', 'agent', 'docs', 'roadmap', 'console']", 1)
 s = s.replace("  setActiveLink(link: string) {", "  ngOnDestroy(): void {\n    this.consoleSub?.unsubscribe();\n  }\n\n  setActiveLink(link: string) {", 1)
+if s == before:
+    raise SystemExit(p + ": an anchor for the header component patch was not found; the site moved, update relay-apply.sh")
 open(p, "w").write(s)
 PY
 fi
@@ -199,7 +220,10 @@ if [ -f "$HEADER_TS" ] && ! grep -q "'/console'" "$HEADER_TS"; then
   python3 - "$HEADER_TS" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p).read()
+before = s
 s = s.replace("    if (url.startsWith('/cards')) {\n      this.activeLink = 'cards';", "    if (url.startsWith('/console')) {\n      this.activeLink = 'console';\n    } else if (url.startsWith('/cards')) {\n      this.activeLink = 'cards';", 1)
+if s == before:
+    raise SystemExit(p + ": an anchor for the header active link patch was not found; the site moved, update relay-apply.sh")
 open(p, "w").write(s)
 PY
 fi

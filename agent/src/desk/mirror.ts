@@ -14,6 +14,7 @@ import { agentWallet, walletsOn } from "./agentWallet.ts";
 import { readFollow, followState, readFollowTrades, recordFollowTrade, recordFollowNote, liveHoldings, type FollowRow, type FollowTradeRow } from "./follow.ts";
 import type { Trade } from "./book.ts";
 import { raiseAlert } from "./alerts.ts";
+import { doorNow } from "./gate.ts";
 
 /** Live mirroring runs when agent wallets exist and the operator has not switched it off (OBS_FOLLOW_LIVE=off). */
 export const liveOn = (env: NodeJS.ProcessEnv = process.env): boolean => (env.OBS_FOLLOW_LIVE ?? "on").trim().toLowerCase() !== "off" && walletsOn(env);
@@ -59,7 +60,9 @@ export function exitShare(sold: number, heldBefore: number | null): number {
 /** PURE: who acts on a desk trade: an entry is for every agent that is on and live; an exit is for every agent holding the token, on or off. */
 export function followersFor(kind: "entry" | "exit", rows: FollowRow[], holdersOf: (address: string) => number): string[] {
   const addresses = [...new Set(rows.map((r) => r.address))];
-  if (kind === "entry") return addresses.filter((a) => { const s = followState(rows, a); return s.on && s.mode === "live"; });
+  // An entry is for an agent that is on, live, and whose wallet is still at the console's door: a wallet taken off
+  // the list stops opening positions at once (its exits still run, below, since what it holds must be sold with the desk).
+  if (kind === "entry") return addresses.filter((a) => { const s = followState(rows, a); return s.on && s.mode === "live" && doorNow(a)?.ok !== false; });
   return addresses.filter((a) => holdersOf(a) > 0);
 }
 

@@ -186,16 +186,16 @@ export async function withdrawEth(address: string, amount: number | "all", now =
   try { gasUnits = await pub.estimateGas({ account: account.address, to: address, value: 1n }); } catch { /* a plain transfer's gas stands */ }
   const gasCost = (gasUnits * maxFeePerGas * 5n) / 4n;
   let value: bigint;
+  // What the caller asks to keep back: the exit's gas while the agent still holds a token, so no withdrawal, whole
+  // or by amount, leaves a position the desk cannot sell (2026-09-08).
+  const keep = keepEth > 0 ? parseEther(keepEth.toFixed(8)) : 0n;
   if (amount === "all") {
-    // "All" keeps back what the caller asks: the exit's gas while the agent still holds a token, so a drained wallet
-    // never leaves a position it cannot sell (2026-09-08).
-    const keep = keepEth > 0 ? parseEther(keepEth.toFixed(8)) : 0n;
     value = balance - gasCost - keep;
     if (value <= 0n) return { ok: false, reason: keep > 0n ? `Your agent's wallet holds ${formatEther(balance)} ETH and still holds a token; ${keepEth} ETH stays for the sale's gas, which leaves nothing to send.` : `Your agent's wallet holds ${formatEther(balance)} ETH, not enough to cover the transfer's gas.` };
   } else {
     if (!(amount > 0)) return { ok: false, reason: "Say how much: /withdraw 0.02 or /withdraw all." };
     value = parseEther(amount.toFixed(8));
-    if (value + gasCost > balance) return { ok: false, reason: `Your agent's wallet holds ${Number(formatEther(balance)).toFixed(5)} ETH; ${amount} ETH plus gas is more than that. /withdraw all sends everything it can.` };
+    if (value + gasCost + keep > balance) return { ok: false, reason: keep > 0n ? `Your agent's wallet holds ${Number(formatEther(balance)).toFixed(5)} ETH and still holds a token; ${keepEth} ETH stays for the sale's gas, so ${amount} ETH plus gas is more than it can send. /withdraw all sends what it can.` : `Your agent's wallet holds ${Number(formatEther(balance)).toFixed(5)} ETH; ${amount} ETH plus gas is more than that. /withdraw all sends everything it can.` };
   }
   const wallet = createWalletClient({ account, chain, transport: transport(eth) });
   let hash: `0x${string}`;

@@ -98,7 +98,7 @@ if (!DRY) {
 // back to ETH here, and the reason is public. Only when armed.
 // What the rails sold at the top of this cycle: the wallet read below is cached and may still show it, and a token
 // sold seconds ago must not be described as held in the same breath.
-const soldThisCycle = new Map<string, number>();
+const soldThisCycle = new Map<string, { sold: number; before: number }>();
 /** The launch tokens held right now, from the chain read the exits used; a fast tick asks the rails with it before it thinks. */
 let heldNow: string[] = [];
 if (ARMED && readTokens().length) {
@@ -116,7 +116,10 @@ if (ARMED && readTokens().length) {
       for (const t of exits) console.log(`[desk] forced exit ${t.id} ${t.status}: ${t.note}`);
       // What was sold, by amount: a scale-out leaves the rest held, and the rest must still read as held for the
       // remainder of this cycle. Zeroing the token on any exit told the model it held nothing after a 60% scale-out (2026-09-08).
-      for (const t of exits) if (t.status === "settled" || t.status === "pending") soldThisCycle.set(t.from.asset, (soldThisCycle.get(t.from.asset) ?? 0) + t.from.amount);
+      for (const t of exits) if (t.status === "settled" || t.status === "pending") {
+        const prev = soldThisCycle.get(t.from.asset);
+        soldThisCycle.set(t.from.asset, { sold: (prev?.sold ?? 0) + t.from.amount, before: prev?.before ?? (chainForExit.bySymbol[t.from.asset] ?? 0) });
+      }
     }
   }
 }
@@ -218,8 +221,11 @@ const real = reads.wallet ? walletBalances(reads.wallet) : null;
 const paperTrades = PAPER ? readPaper() : [];
 // In a paper session the book he sees is the real wallet with the paper trades applied.
 const chain = real && PAPER ? { ...real, bySymbol: paperBalances(real.bySymbol, paperTrades), byKey: paperByKey(real.byKey, paperBalances(real.bySymbol, paperTrades)) } : real;
-if (chain) for (const [sym, sold] of soldThisCycle) {
-  const left = Math.max(0, (chain.bySymbol[sym] ?? 0) - sold);
+// The wallet read above is fresh from the chain, so after a settled sale it already shows the remainder; a pending
+// sale may still show the pre-sale balance. The remainder is the smaller of the fresh read and what was held before
+// the sale less what was sold, so neither a stale read nor a double subtraction can misstate it (2026-09-08).
+if (chain) for (const [sym, v] of soldThisCycle) {
+  const left = Math.min(chain.bySymbol[sym] ?? 0, Math.max(0, v.before - v.sold));
   const rest = isHolding(left) ? left : 0;
   chain.bySymbol[sym] = rest;
   chain.byKey[`${sym}@robinhood`] = rest;

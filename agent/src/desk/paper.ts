@@ -9,7 +9,7 @@
 import { appendLedger, readLedger } from "../ledger.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { latestTrades, positions, type Trade, type Prices, type CapitalFlow, type Position } from "./book.ts";
-import { quoteOnChain, encodeSwap, costFloorPct, legUsd, latestEthUsd } from "./onchain.ts";
+import { quoteOnChain, encodeSwap, costFloorPct, legUsd, latestEthUsd, nextTradeId } from "./onchain.ts";
 import { simulateFromWallet } from "./signer.ts";
 import { WALLET_ADDRESS } from "../config.ts";
 
@@ -63,7 +63,7 @@ export async function paperExecute(i: Intent, c: RailContext, realBalances: Reco
   }
   const trade: Trade = {
     at: now,
-    id: `paper-${now}`,
+    id: nextTradeId(now, "paper"),
     status: "settled",
     venue: "pool",
     ...(i.exit ? { exit: true } : {}),

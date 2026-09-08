@@ -61,7 +61,7 @@ import { liveOn, canStartLive } from "./desk/mirror.ts";
 import { latestEthUsd } from "./desk/onchain.ts";
 import { walletsOn, agentWalletAddress, rememberWallet, fundTx, withdrawEth, agentBalanceEth, verifyFunding, walletLines, walletBook, readAgentCapital } from "./desk/agentWallet.ts";
 import type { Prices } from "./desk/book.ts";
-import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL } from "./desk/models.ts";
+import { catalog, findModels, featured, modelInfo, modelLine, estimateTokens, turnCostUsd, DEFAULT_MODEL, DEFAULT_MODEL_INFO } from "./desk/models.ts";
 import { readCredits, balanceUsd, creditsSummary, grantFree, chargeTurn, creditsOn, freeUsd, marginPct, contextTokens, payTokens, resolvePayToken, paymentTx, verifyPayment, toCredits, fmtCredits, CREDITS_PER_USD } from "./desk/credits.ts";
 
 const PORT = Number(process.env.OBS_DASHBOARD_PORT ?? 4671);
@@ -1001,7 +1001,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     // A guest may read the desk, take the tour, open the app's pages and quote; shaping an agent and chat need the wallet.
     // A signed-in wallet is also asked at the door again: off the list, it is a guest here from that moment.
     const signed = verifySession(bearerOf(req.headers.authorization));
-    const address = signed && doorNow(signed)?.ok === false ? null : signed;
+    const door = signed ? doorNow(signed) : null;
+    const closed = !!(signed && door && !door.ok);
+    let address = closed ? null : signed;
     readBody(req, 4096).then(async (text) => {
       let b: Record<string, unknown> = {};
       try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
@@ -1013,8 +1015,13 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const base = { lines: routed.lines, suggest: routed.suggest };
       const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps" || routed.effect.kind === "credits" || routed.effect.kind === "follow" || routed.effect.kind === "agentWallet" || (routed.effect.kind === "model" && routed.effect.action === "set");
       if (needsWallet && !address) {
-        json(res, 200, { ok: false, effect: "none", lines: ["Connect your wallet first. It's your account here and the wallet that controls your agent: one signature, no transaction."], suggest: ["/connect"] });
-        return;
+        // A wallet whose door has closed keeps the two things that are its own money: its agent's wallet (/wallet,
+        // /withdraw) and turning its agent off (/stop, /agent). Everything else answers with the door's own words,
+        // not a prompt to connect a wallet that is already connected (2026-09-08).
+        const rescue = closed && signed && (routed.effect.kind === "agentWallet" || (routed.effect.kind === "follow" && (routed.effect.action === "stop" || routed.effect.action === "show")));
+        if (rescue) address = signed;
+        else if (closed) { json(res, 200, { ok: false, effect: "none", code: "not_holder", lines: [door?.reason ?? "This wallet is not at the console's door any more."], suggest: ["/trade", "/status"] }); return; }
+        else { json(res, 200, { ok: false, effect: "none", lines: ["Connect your wallet first. It's your account here and the wallet that controls your agent: one signature, no transaction."], suggest: ["/connect"] }); return; }
       }
       switch (routed.effect.kind) {
         case "none":
@@ -1143,7 +1150,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           if (act === "withdraw") {
             // While the agent holds a token live, "all" leaves the gas reserve behind so the desk can still sell it.
             const holdsLive = Object.values(liveHoldings(readFollowTrades(), a)).some((q) => q > 0);
-            const r = await withdrawEth(a, routed.effect.all ? "all" : (routed.effect.amount ?? 0), now, routed.effect.all && holdsLive ? railsFromEnv().gasReserveEth : 0);
+            const r = await withdrawEth(a, routed.effect.all ? "all" : (routed.effect.amount ?? 0), now, holdsLive ? railsFromEnv().gasReserveEth : 0);
             if (!r.ok) { json(res, 200, { ok: false, effect: "none", lines: [r.reason], suggest: ["/wallet", "/withdraw all"] }); return; }
             const left = await agentBalanceEth(a).catch(() => null);
             void refreshPersona(a);
@@ -1165,6 +1172,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           const act = routed.effect.action;
           const wasOn = state.on;
           let startedLive = false;
+          // Why a start that did not ask for paper landed on paper, in the same words the live check gave.
+          let paperWhy = "";
           if (act === "start" || act === "size") {
             const size = routed.effect.sizeUsd != null ? checkSize(routed.effect.sizeUsd, deskMax) : { sizeUsd: state.sizeUsd };
             if ("error" in size) { json(res, 200, { ok: false, lines: [size.error], effect: "follow", suggest: ["/agent"] }); return; }
@@ -1182,7 +1191,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
                 const can = canStartLive(size.sizeUsd, px ?? null, bal, railsFromEnv().gasReserveEth, holdsLive);
                 if (can.ok) mode = "live";
                 else if (forced === "live") { json(res, 200, { ok: false, effect: "follow", lines: [can.reason], suggest: ["/wallet", "/fund 0.05 ETH", "/start paper"] }); return; }
+                else paperWhy = can.reason;
               } else if (forced === "live") { json(res, 200, { ok: false, effect: "follow", lines: ["Live trading isn't switched on here yet; /start paper runs it on paper."], suggest: ["/start paper", "/wallet"] }); return; }
+              else if (forced !== "paper") paperWhy = "Live trading isn't switched on here yet.";
               startedLive = mode === "live";
             }
             state = recordFollow(a, act, size.sizeUsd, now, mode);
@@ -1196,7 +1207,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
             ? liveBook(a, state, readFollowTrades(), readFollowNotes(), prices, await agentBalanceEth(a).catch(() => null))
             : followBook(deskFromDisk().book.trades, state, prices);
           const lines = followLines(book, now);
-          if (act === "start") lines.unshift(startedLive ? `Your agent is on, LIVE. It trades real ETH from its own wallet at $${state.sizeUsd} a trade, following Agent OBS.` : wasOn && state.mode === "paper" ? `Your agent was already on; $${state.sizeUsd} a trade from here.` : "Your agent is on, on paper. Fund its wallet and /start again to trade live.");
+          if (act === "start") lines.unshift(startedLive ? `Your agent is on, LIVE. It trades real ETH from its own wallet at $${state.sizeUsd} a trade, following Agent OBS.` : wasOn && state.mode === "paper" ? `Your agent was already on; $${state.sizeUsd} a trade from here.` : (paperWhy ? `Your agent is on, on paper: ${paperWhy}` : "Your agent is on, on paper. Fund its wallet and /start again to trade live."));
           if (act === "size") lines.unshift(`$${state.sizeUsd} a trade from here.`);
           // The agent's own instruction carries its standing: refreshed now that it changed.
           if (act !== "show") void refreshPersona(a);
@@ -1355,15 +1366,24 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       if (guard) { json(res, guard.status, { ok: false, error: guard.error }); return; }
       // The turn's price: the wallet's model at OpenRouter's rates plus the margin. Out of credits is a refusal only
       // where credits can be bought; without a treasury the desk meters and lets the turn through.
-      const modelId = modelFor(address);
-      // A model the catalog cannot price (an id that slipped in, or the catalog down) is metered as the default
-      // model rather than as free: an unpriced turn was charged zero (2026-09-08).
-      const model = (await modelInfo(modelId)) ?? (await modelInfo(DEFAULT_MODEL));
-      const paid = model ? !model.free : true;
+      let modelId = modelFor(address);
+      // A model the catalog no longer lists (set before the catalog check, or dropped by OpenRouter since) is not
+      // handed to the gateway to fail on: the wallet goes back to the default and hears so. A turn the catalog
+      // cannot price at all is metered at the default model's known price, never at nothing (2026-09-08).
+      let dropped: string | null = null;
+      if (modelId !== DEFAULT_MODEL && !(await modelInfo(modelId))) {
+        dropped = modelId;
+        modelId = DEFAULT_MODEL;
+        updateSettings(address, { model: "" });
+        void refreshModel(address).catch((e) => console.error(`[my-agent] model for ${address}: ${e instanceof Error ? e.message : String(e)}`));
+      }
+      const model = (await modelInfo(modelId)) ?? DEFAULT_MODEL_INFO;
+      const paid = !model.free;
       if (paid && creditsOn() && balanceUsd(address, readCredits()) <= 0) { endTurn(address); json(res, 402, { ok: false, error: "You're out of credits. /credits shows how to add some (a thousand credits are $10 of USDG), and /models free lists models that cost nothing." }); return; }
       let replyText = "";
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
       const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      if (dropped) send({ type: "note", text: `${dropped} is no longer offered; your agent is back on ${DEFAULT_MODEL}. /models <search> finds another.` });
       const ac = new AbortController();
       res.on("close", () => ac.abort());
       let idle: ReturnType<typeof setTimeout> | undefined;

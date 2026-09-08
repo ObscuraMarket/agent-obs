@@ -33,7 +33,7 @@ const ACTIONS = "0x070b0e" as const; // SWAP_EXACT_IN, SETTLE, TAKE
 const V4_SWAP = "0x10" as const;
 /** Trade ids are unique within a process: a cycle that sold one token and bought another stamped both with its one `now`, and the later row erased the earlier in every ledger keyed by id (2026-09-08). */
 let tradeSeq = 0;
-export function nextTradeId(now: number): string { tradeSeq += 1; return tradeSeq === 1 ? `pool-${now}` : `pool-${now}-${tradeSeq}`; }
+export function nextTradeId(now: number, prefix = "pool"): string { tradeSeq += 1; return tradeSeq === 1 ? `${prefix}-${now}` : `${prefix}-${now}-${tradeSeq}`; }
 const ROUTER_ABI = parseAbi(["function execute(bytes commands, bytes[] inputs, uint256 deadline) payable"]);
 const SLIPPAGE_PCT = Number(process.env.OBS_SLIPPAGE_PCT ?? 1);
 
@@ -469,7 +469,7 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
       if (exec === executeOnChain && after) await after(exitIntent, row, held).catch((e) => console.error(`[follow] exit mirror of ${a.symbol}: ${e instanceof Error ? e.message : String(e)}`));
       out.push(row);
       // A close is remembered from a settled sell only: a receipt still pending has no ETH leg yet, and the close it
-      // produced read as a full loss in the desk's memory (2026-09-08). settleOnChain's reconcile writes it once it lands.
+      // produced read as a full loss in the desk's memory (2026-09-08). settleOnChain remembers it once it lands.
       if (v.share >= 1 && row.status === "settled") rememberClose(a.symbol, a.contract ?? "", [...allTrades, row], ethUsdAt(readPrices(), prices.ETH ?? null), peakPnlPct, v.kind, exec !== executeOnChain, now);
     } else if ("trade" in r && r.trade) out.push(r.trade);
     else {
@@ -495,6 +495,19 @@ export async function settleOnChain(now = Date.now()): Promise<Trade[]> {
     const row: Trade = { ...t, status: r.status === "success" ? "settled" : "failed", updatedAt: now, note: `${t.note ?? ""}; ${r.status === "success" ? "landed" : "reverted"} (amount as estimated)` };
     recordTrade(row);
     updated.push(row);
+    // A sell that landed late closes its position in the desk's memory here, since the exit pass only remembers a
+    // close from a sell that settled in its own window (2026-09-08). Closed means the wallet no longer holds the token.
+    if (row.exit && r.status === "success" && from.contract) {
+      try {
+        const left = Number(await readTokenBalance(from, from.contract as `0x${string}`, WALLET_ADDRESS as `0x${string}`)) / 10 ** from.decimals;
+        if (!isHolding(left)) {
+          const kind = /exit \(([a-z-]+)\)/.exec(row.note ?? "")?.[1] ?? "settled";
+          rememberClose(t.from.asset, from.contract, latestTrades(readBook().trades), ethUsdAt(readPrices(), latestEthUsd(now)), null, kind, false, now);
+        }
+      } catch (e) {
+        console.error(`[desk] the late close of ${t.from.asset} was not remembered: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
   return updated;
 }

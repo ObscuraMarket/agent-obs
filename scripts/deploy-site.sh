@@ -31,6 +31,12 @@ if [ "$BRANCH" = "main" ] && [ "$FORCE" = 0 ]; then
 fi
 git checkout -q -B "$BRANCH" "origin/$BRANCH" && git reset -q --hard "origin/$BRANCH"
 echo "=== deploying site $BRANCH ${HEAD:0:7} to obscura.markets, $(date) ==="
-if vercel --prod --yes 2>&1 | grep -E "Production:|Error" | head -3; then
+# Success is vercel's own exit code plus a Production line, never grep's: a piped grep advanced the stamp on every
+# outcome, so a failed site deploy read as "unchanged" until main moved again (2026-09-08).
+out="$(vercel --prod --yes 2>&1)"; rc=$?
+grep -E "Production:|Error" <<<"$out" | head -3
+if [ "$rc" = 0 ] && grep -q "Production:" <<<"$out"; then
   if [ "$BRANCH" = "main" ]; then echo "$HEAD" > "$STAMP"; else echo "staged: $BRANCH is on obscura.markets until main moves; merge its pull request to ship it to obscura.market"; fi
+else
+  echo "site deploy failed (vercel exited $rc); the stamp was not advanced"; tail -n 6 <<<"$out"; exit 1
 fi

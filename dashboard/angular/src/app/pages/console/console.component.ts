@@ -20,7 +20,7 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'cards', what: 'Open Cards' },
   { cmd: 'yield', what: 'Open Yield (coming soon)' },
   { cmd: 'connect', what: 'Connect your wallet and get your own agent' },
-  { cmd: 'start', what: 'Turn your trading agent on: it follows Agent OBS\'s trades at your size, paper for now', usage: '/start 100' },
+  { cmd: 'start', what: 'Turn your trading agent on: it follows Agent OBS\'s trades at your size, live from its own wallet once you fund it', usage: '/start 100' },
   { cmd: 'stop', what: 'Turn your trading agent off' },
   { cmd: 'size', what: 'What your agent puts into each entry', usage: '/size 150', args: true },
   { cmd: 'agent', what: 'Your trading agent\'s book: on or off, what it holds, what it made' },
@@ -365,7 +365,9 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
       const head = line.slice(1).split(/\s+/)[0].toLowerCase();
       if (head === 'connect') { await this.signIn(line.slice(1).split(/\s+/).slice(1).join(' ')); return; }
       if (head === 'clear' || head === 'cls') { this.lines = []; return; }
-      const data = await this.get<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (e?.error && typeof e.error === 'object' ? e.error : { ok: false, lines: ['Couldn\'t reach the desk. Try again in a moment.'] }) as ObsCliReply);
+      // Only the console's own reply shape is taken from an error body; a rate limit, a read-only refusal or a network
+      // failure carries an object too, and printing "Done." for one of those hid the real answer (2026-09-08).
+      const data = await this.get<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (e?.error && typeof e.error === 'object' && (typeof e.error.ok === 'boolean' || Array.isArray(e.error.lines)) ? e.error : { ok: false, lines: [e?.status === 429 ? 'The desk is busy; try again in a moment.' : (typeof e?.error?.error === 'string' ? e.error.error : 'Couldn\'t reach the desk. Try again in a moment.')] }) as ObsCliReply);
       if (data.effect === 'clear') { this.lines = []; return; }
       if (data.effect === 'chat' && typeof data.text === 'string') { await this.chat(data.text, true); return; }
       if (data.effect === 'wallet' && data.ok) { await this.walletEffect(data); return; }
@@ -664,7 +666,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
           ...prior.map((m) => ({ kind: (m.role === 'user' ? 'input' : 'agent') as LineKind, text: m.content })),
           prior.length
             ? { kind: 'system' as LineKind, text: this.agentName + ' is back, and remembers where you left off.', suggest: ['/help'] }
-            : { kind: 'system' as LineKind, text: 'Meet ' + this.agentName + ', your own agent, tied to wallet ' + this.short(this.wallet) + ': that wallet controls it. Talk to it about anything, and train it here with /name, /style, /voice and /goal. It doesn\'t trade for you.', suggest: ['What can you help me with?', '/name', '/explore'] },
+            : { kind: 'system' as LineKind, text: 'Meet ' + this.agentName + ', your own agent, tied to wallet ' + this.short(this.wallet) + ': that wallet controls it. Talk to it about anything, and train it here with /name, /style, /voice and /goal. Turn it on with /start and it trades too: every trade Agent OBS makes, at your size, from its own wallet once you fund it.', suggest: ['What can you help me with?', '/start', '/wallet', '/explore'] },
         ]);
       } else if (!quiet) {
         this.print([{ kind: 'system', text: this.agentName + ' is ready.', suggest: ['/help'] }]);
@@ -739,7 +741,8 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
       say(acc || this.reason(e)); if (me) { (me as CliLine).streaming = false; }
       this.agentError = null;
     } finally {
-      this.agentState = 'ready';
+      // A door that closed mid-session leaves the agent idle; every other outcome hands the prompt back.
+      if (this.agentState !== 'idle') { this.agentState = 'ready'; }
     }
   }
 

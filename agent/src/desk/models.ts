@@ -55,6 +55,12 @@ export async function modelInfo(id: string): Promise<ModelInfo | null> {
   return (await catalog()).find((m) => m.id === id) ?? null;
 }
 
+/**
+ * The default model's price as known, for a turn the catalog cannot price at all (the catalog cold at boot, or
+ * OpenRouter down): a turn is metered at this rather than at nothing (2026-09-08). Gemini 2.5 Flash's list price.
+ */
+export const DEFAULT_MODEL_INFO: ModelInfo = { id: DEFAULT_MODEL, name: DEFAULT_MODEL, promptPerM: 0.3, completionPerM: 2.5, context: 1_048_576, free: false };
+
 /** PURE: the models a search names, best first: an exact id, then ids and names containing every word. */
 export function findModels(models: ModelInfo[], query: string, limit = 8): ModelInfo[] {
   const q = query.trim().toLowerCase();
