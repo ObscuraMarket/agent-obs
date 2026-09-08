@@ -1,16 +1,18 @@
 // The wallet is the account. A person proves control of a wallet by signing a short challenge; the verified
 // address then carries a bearer for a week, so the console does not ask for a signature on every line. The
 // signature proves control only: it authorises no transaction and moves no funds. No email, no password, no
-// server-side session store: the bearer is an HMAC over `address:expiry`, and the challenge nonce is an HMAC over
-// `address:issuedAt`, so both verify on any instance and survive a restart when OBS_SESSION_SECRET is set (without
-// it a random per-boot secret is used and everyone signs in again after a redeploy). The one thing kept per wallet
-// is a revocation moment (obs-accounts.jsonl, below): a bearer issued before it is dead, so /logout ends a stolen
-// bearer's week at once.
+// server-side session store: the bearer is an HMAC over `address:issuedAt:expiry`, and the challenge nonce is an
+// HMAC over `address:issuedAt`, so both verify on any instance and survive a restart when OBS_SESSION_SECRET is
+// set (without it a random per-boot secret is used and everyone signs in again after a redeploy). The one thing
+// kept per wallet is a revocation moment (obs-accounts.jsonl, below): a bearer issued before it is dead, so
+// /logout ends a stolen bearer's week at once.
 import { randomBytes, createHmac, timingSafeEqual } from "node:crypto";
+import { statSync } from "node:fs";
 import { verifyMessage } from "viem";
 import { appendLedger, readLedger } from "../ledger.ts";
+import { dataPath } from "../config.ts";
 
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NONCE_TTL_MS = 10 * 60 * 1000;
 const SECRET = process.env.OBS_SESSION_SECRET || randomBytes(32).toString("hex");
 
@@ -29,16 +31,23 @@ export interface WalletSession {
   expiresAt: number;
 }
 
-/** A bearer that proves this already-verified wallet for a week. */
-export function mintSession(address: string, now = Date.now()): WalletSession {
+/**
+ * A bearer that proves this already-verified wallet, for a week unless the caller says otherwise. The payload
+ * carries when it was issued as well as when it expires: the revocation rule reads the issue moment, and derived
+ * from the expiry it was only right while every bearer lived exactly the week (a shorter TTL would have revived a
+ * revoked bearer, a longer one refused fresh ones; review, 2026-09-08).
+ */
+export function mintSession(address: string, now = Date.now(), ttlMs = SESSION_TTL_MS): WalletSession {
   const addr = address.toLowerCase();
-  const expiresAt = now + SESSION_TTL_MS;
-  const payload = Buffer.from(`${addr}:${expiresAt}`).toString("base64url");
+  const expiresAt = now + ttlMs;
+  const payload = Buffer.from(`${addr}:${now}:${expiresAt}`).toString("base64url");
   return { token: `${payload}.${hmac(payload)}`, address: addr, expiresAt };
 }
 
-/** The wallet a bearer proves, lower-cased, or null. */
-export function verifySession(token: string | null | undefined, now = Date.now()): string | null {
+export interface SessionRead { address: string; issuedAt: number; expiresAt: number }
+
+/** PURE apart from the secret: what a bearer says of itself, unexpired and unrevoked, or null. */
+export function sessionOf(token: string | null | undefined, now = Date.now()): SessionRead | null {
   if (!token) return null;
   const dot = token.indexOf(".");
   if (dot <= 0) return null;
@@ -50,15 +59,22 @@ export function verifySession(token: string | null | undefined, now = Date.now()
   } catch {
     return null;
   }
-  const idx = decoded.lastIndexOf(":");
-  if (idx < 0) return null;
-  const addr = decoded.slice(0, idx);
-  const exp = Number(decoded.slice(idx + 1));
+  const parts = decoded.split(":");
+  if (parts.length !== 2 && parts.length !== 3) return null;
+  const addr = parts[0];
+  const exp = Number(parts[parts.length - 1]);
   if (!isAddress(addr) || !Number.isFinite(exp) || now > exp) return null;
-  // The bearer carries its expiry only, so its issue moment is the expiry less the fixed week: that keeps every
-  // bearer minted before the revocation row existed valid across the deploy, where a new payload shape would have
-  // signed everyone out at once (2026-09-08).
-  return issuedBeforeRevocation(exp - SESSION_TTL_MS, revokedBefore(addr)) ? null : addr;
+  // The two-field shape is a bearer minted before 2026-09-08 carrying its expiry only, and its issue moment is
+  // the expiry less the week it was minted with, so nobody was signed out by the deploy. Every such bearer has
+  // aged out by 2026-09-15: delete this branch then, and refuse the two-field shape.
+  const issuedAt = parts.length === 3 ? Number(parts[1]) : exp - SESSION_TTL_MS;
+  if (!Number.isFinite(issuedAt) || issuedAt > exp) return null;
+  return issuedBeforeRevocation(issuedAt, revokedBefore(addr, now)) ? null : { address: addr, issuedAt, expiresAt: exp };
+}
+
+/** The wallet a bearer proves, lower-cased, or null. */
+export function verifySession(token: string | null | undefined, now = Date.now()): string | null {
+  return sessionOf(token, now)?.address ?? null;
 }
 
 // ---- per-wallet revocation: the one piece of session state the desk keeps ---------------------------------------
@@ -75,36 +91,86 @@ export function issuedBeforeRevocation(issuedAt: number, revokedBefore: number |
   return revokedBefore !== undefined && Number.isFinite(revokedBefore) && issuedAt < revokedBefore;
 }
 
+/**
+ * PURE: the moment a sign-out stamps: now, or one past the calling bearer's own issue moment when the clock has
+ * stepped back to or before it (NTP between sign-in and sign-out), so the bearer that asked to be revoked always
+ * dies. Without this the logout's own bearer kept its week after a clock step (review, 2026-09-08).
+ */
+export function revocationMoment(now: number, callerIssuedAt?: number): number {
+  return callerIssuedAt != null && Number.isFinite(callerIssuedAt) ? Math.max(now, callerIssuedAt + 1) : now;
+}
+
+/**
+ * PURE: a row's moment as the map keeps it: never past the clock at load. A row stamped ahead of the clock (a
+ * server clock that ran ahead and was stepped back, a hand edit of the ledger) would refuse every bearer the wallet
+ * mints until the clock passed it, and the wallet could not reach /stop or /withdraw (review, 2026-09-08); capped,
+ * it revokes what existed at load and nothing minted after.
+ */
+export function cappedMoment(revokedBefore: number, loadedAt: number): number {
+  return Math.min(revokedBefore, loadedAt);
+}
+
 interface RevocationRow {
   address?: unknown;
   revokedBefore?: unknown;
 }
 
-let revocations: Map<string, number> | null = null;
+const LEDGER = "obs-accounts.jsonl";
+/** How often the ledger's size and mtime are looked at, at most: a stat is cheap, and verifySession runs on every signed request. */
+const RELOAD_CHECK_MS = 3_000;
 
-/** The moments, read once from the ledger and then kept in memory: verifySession runs on every signed request. */
-function revocationMap(): Map<string, number> {
-  if (revocations) return revocations;
-  revocations = new Map();
-  for (const row of readLedger<RevocationRow>("obs-accounts.jsonl")) {
+let revocations: Map<string, number> | null = null;
+let loadedStamp = "";
+let checkedAt = 0;
+
+const ledgerStamp = (): string => {
+  try { const s = statSync(dataPath(LEDGER)); return `${s.size}:${s.mtimeMs}`; } catch { return "missing"; }
+};
+
+/**
+ * The moments, kept in memory and merged again from the ledger whenever its size or mtime has changed, checked at
+ * most every few seconds: a revocation written by another process (a second API process, a rolling deploy with
+ * two alive) reaches this one within that, where a once-per-process load honoured the dead bearer until a
+ * restart (review, 2026-09-08). The ledger is append-only and the merge takes the later moment, so it is safe to
+ * repeat; a moment set in memory by revokeSessions is never moved back by it.
+ */
+function revocationMap(now = Date.now()): Map<string, number> {
+  if (revocations && now - checkedAt < RELOAD_CHECK_MS) return revocations;
+  checkedAt = now;
+  const stamp = ledgerStamp();
+  if (revocations && stamp === loadedStamp) return revocations;
+  const map = revocations ?? new Map<string, number>();
+  for (const row of readLedger<RevocationRow>(LEDGER)) {
     if (!isAddress(row.address) || typeof row.revokedBefore !== "number" || !Number.isFinite(row.revokedBefore)) continue;
     const addr = row.address.toLowerCase();
-    revocations.set(addr, Math.max(revocations.get(addr) ?? 0, row.revokedBefore));
+    const capped = cappedMoment(row.revokedBefore, now);
+    if (capped !== row.revokedBefore) console.log(`[account] a revocation row for ${addr} is stamped ${new Date(row.revokedBefore).toISOString()}, ahead of the clock; read as now`);
+    map.set(addr, Math.max(map.get(addr) ?? 0, capped));
   }
-  return revocations;
+  revocations = map;
+  loadedStamp = stamp;
+  return map;
 }
 
-/** The wallet's revocation moment, or undefined when it never signed out. */
-export function revokedBefore(address: string): number | undefined {
-  return revocationMap().get(address.toLowerCase());
+/** The wallet's revocation moment, or undefined when it never signed out; `now` is the clock the reload check and the cap read. */
+export function revokedBefore(address: string, now = Date.now()): number | undefined {
+  return revocationMap(now).get(address.toLowerCase());
 }
 
-/** Sign the wallet out everywhere: every bearer issued before now is dead from here. Says whether the row landed. */
-export function revokeSessions(address: string, now = Date.now()): boolean {
+/**
+ * Sign the wallet out everywhere: every bearer issued before the moment (revocationMoment) is dead from here.
+ * Says whether the row landed. A stolen bearer that is still valid can call this too and sign the owner out
+ * everywhere, once: it dies in the same call, and the owner signs in again with a signature it cannot produce.
+ */
+export function revokeSessions(address: string, now = Date.now(), callerIssuedAt?: number): boolean {
   const addr = address.toLowerCase();
-  const map = revocationMap();
-  map.set(addr, Math.max(map.get(addr) ?? 0, now));
-  return appendLedger("obs-accounts.jsonl", { address: addr, revokedBefore: now, at: now });
+  const moment = revocationMoment(now, callerIssuedAt);
+  const map = revocationMap(now);
+  map.set(addr, Math.max(map.get(addr) ?? 0, moment));
+  const landed = appendLedger(LEDGER, { address: addr, revokedBefore: moment, at: now });
+  // The row this process wrote is already in its map: the next stat must not read the file as someone else's change.
+  loadedStamp = ledgerStamp();
+  return landed;
 }
 
 /** The bearer out of an Authorization header, or null. */

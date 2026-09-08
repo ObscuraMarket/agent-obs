@@ -1,10 +1,13 @@
 // The data dir first: linkAccount and revokeSessions write obs-accounts.jsonl, and a test row must never land in
 // the real ledger (2026-09-08).
 import "./tmpdata.ts";
+import { TEST_SESSION_SECRET } from "./sessionSecret.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
-import { mintSession, verifySession, issueChallenge, linkAccount, bearerOf, signInMessage, issuedBeforeRevocation, revokeSessions, revokedBefore } from "../src/desk/accounts.ts";
+import { mintSession, verifySession, sessionOf, issueChallenge, linkAccount, bearerOf, signInMessage, issuedBeforeRevocation, revocationMoment, cappedMoment, revokeSessions, revokedBefore, SESSION_TTL_MS } from "../src/desk/accounts.ts";
+import { appendLedger } from "../src/ledger.ts";
 
 test("a session bearer proves the wallet for a week and nothing else", () => {
   const s = mintSession("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", 1_000_000);
@@ -69,4 +72,58 @@ test("signing out revokes the wallet's earlier bearers like expired ones; a bear
   // A second sign-out stamped earlier moves nothing back: the moment only goes forward.
   assert.equal(revokeSessions(address, t0 + 30_000), true);
   assert.equal(revokedBefore(address), t0 + 60_000, "an earlier moment recorded later revives nothing");
+});
+
+test("the issue moment is the bearer's own, whatever its lifetime, so a shorter or longer TTL never revives or refuses one (review 2026-09-08)", () => {
+  const address = "0x6666666666666666666666666666666666666666";
+  const t0 = Date.UTC(2026, 8, 7, 9, 0, 0);
+  const hour = mintSession(address, t0, 3600e3);
+  assert.deepEqual(sessionOf(hour.token, t0 + 1), { address, issuedAt: t0, expiresAt: t0 + 3600e3 }, "an hour's bearer says when it was issued");
+  assert.equal(verifySession(hour.token, t0 + 3600e3 + 1), null, "and expires after its hour");
+  const month = mintSession(address, t0 - 1000, 30 * 24 * 3600e3);
+  assert.equal(revokeSessions(address, t0 + 1000), true);
+  assert.equal(verifySession(hour.token, t0 + 2000), null, "issued before the sign-out: dead, though its expiry less a week would read as issued in the future");
+  assert.equal(verifySession(month.token, t0 + 2000), null, "issued before the sign-out: dead, though its expiry less a week would read as issued long after");
+  assert.equal(verifySession(mintSession(address, t0 + 1000, 3600e3).token, t0 + 2000), address, "issued at the moment, an hour's life: passes");
+  // The two-field shape from before 2026-09-08 (address:expiry) still verifies, read as issued a week before its
+  // expiry, so nobody was signed out by the deploy; delete with the fallback after 2026-09-15.
+  const legacy = (addr: string, exp: number): string => {
+    const payload = Buffer.from(`${addr}:${exp}`).toString("base64url");
+    return `${payload}.${createHmac("sha256", TEST_SESSION_SECRET).update(payload).digest("base64url")}`;
+  };
+  const other = "0x7777777777777777777777777777777777777777";
+  assert.deepEqual(sessionOf(legacy(other, t0 + SESSION_TTL_MS), t0 + 1), { address: other, issuedAt: t0, expiresAt: t0 + SESSION_TTL_MS }, "the old shape, read as issued a week before its expiry");
+  assert.equal(verifySession(legacy(other, t0 + SESSION_TTL_MS), t0 + 1), other);
+  assert.equal(verifySession(legacy(other, t0 - 1), t0), null, "expired");
+  assert.equal(verifySession(legacy(other, t0 + SESSION_TTL_MS).slice(0, -2) + "zz", t0 + 1), null, "tampered");
+  assert.equal(sessionOf(`${Buffer.from(`${other}:1:2:3`).toString("base64url")}.x`, 1), null, "four fields is no bearer");
+});
+
+test("the sign-out's own bearer always dies, a clock step backwards included; a bearer minted after lives (review 2026-09-08)", () => {
+  assert.equal(revocationMoment(1000), 1000);
+  assert.equal(revocationMoment(1000, 500), 1000, "the caller was issued before now: now");
+  assert.equal(revocationMoment(1000, 1000), 1001, "issued at now (the clock stepped back to it): one past");
+  assert.equal(revocationMoment(1000, 1500), 1501, "issued after now (the clock stepped back past it): one past its issue");
+  assert.equal(revocationMoment(1000, Number.NaN), 1000);
+  const address = "0x8888888888888888888888888888888888888888";
+  const t = Date.UTC(2026, 8, 7, 10, 0, 0);
+  const s = mintSession(address, t);
+  assert.equal(verifySession(s.token, t), address);
+  assert.equal(revokeSessions(address, t, sessionOf(s.token, t)!.issuedAt), true, "signed out at the very moment it was minted (the clock stepped back)");
+  assert.equal(verifySession(s.token, t + 1), null, "the bearer that asked to be revoked is dead");
+  assert.equal(verifySession(mintSession(address, t + 1).token, t + 2), address, "the next millisecond's sign-in lives");
+});
+
+test("a revocation row stamped ahead of the clock revokes what existed at load, not the future, and a row another process wrote is read within the reload window", () => {
+  assert.equal(cappedMoment(5000, 4000), 4000);
+  assert.equal(cappedMoment(3000, 4000), 3000);
+  const address = "0x9999999999999999999999999999999999999999";
+  // Written straight to the ledger, as another process (or a hand edit) would: a day ahead of the clock.
+  const clock = Date.now() + 10_000;
+  const ahead = clock + 24 * 3600e3;
+  assert.equal(appendLedger("obs-accounts.jsonl", { address, revokedBefore: ahead, at: ahead }), true);
+  assert.equal(revokedBefore(address, clock), clock, "read on the next check, capped at the clock");
+  assert.equal(verifySession(mintSession(address, clock - 1).token, clock), null, "what existed before the load is revoked");
+  assert.equal(verifySession(mintSession(address, clock).token, clock + 1), address, "a bearer minted now passes: the wallet is not locked out until tomorrow");
+  assert.equal(verifySession(mintSession(address, clock + 60_000).token, clock + 61_000), address);
 });

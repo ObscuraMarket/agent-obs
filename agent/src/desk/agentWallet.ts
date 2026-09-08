@@ -157,6 +157,12 @@ export interface AgentCapitalRow {
   amount: number;
   usd: number | null;
   txHash: string;
+  /**
+   * When the transfer's block was mined, so the follower's day mark places the row by when the ETH moved and not
+   * by when the desk verified or sent it: a funding verified after the day's mark was added to the mark twice
+   * (review, 2026-09-08). Absent on rows from before then, which are placed by `at`.
+   */
+  landedAt?: number;
 }
 
 /** The wallet as recorded the first time it was shown, so the operator can list every agent wallet that exists. */
@@ -222,6 +228,10 @@ const ethUsd = async (amount: number): Promise<number | null> => {
 const pubClient = (a: Asset) => createPublicClient({ chain: viemChain(a), transport: transport(a) });
 type Pub = ReturnType<typeof pubClient>;
 const shortReason = (e: unknown): string => ((e as { shortMessage?: string; message?: string })?.shortMessage ?? (e instanceof Error ? e.message : String(e))).split("\n")[0].slice(0, 160);
+/** When a mined block was sealed, in ms, for a capital row's landedAt; the clock now when the chain does not say, since a withdrawal that landed must still be recorded. */
+async function blockTime(pub: Pub, blockNumber: bigint): Promise<number> {
+  try { return Number((await pub.getBlock({ blockNumber })).timestamp) * 1000; } catch { return Date.now(); }
+}
 
 /** The fee cap the chain quotes for the next block, with the tip when it quotes one; the plain gas price when it quotes neither. */
 async function feesNow(pub: Pub): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas?: bigint }> {
@@ -262,7 +272,7 @@ export async function verifyFunding(hash: string, address: string, now = Date.no
   const [head, block] = await Promise.all([pub.getBlockNumber(), pub.getBlock({ blockNumber: receipt.blockNumber })]);
   const depth = judgeBlock({ blockNumber: receipt.blockNumber, head, blockAt: Number(block.timestamp) * 1000 }, now, { confirmations: fundConfirmations(), maxAgeH: null });
   if ("reason" in depth) return { ok: false, reason: depth.reason };
-  const row: AgentCapitalRow = { address: address.toLowerCase(), at: now, kind: "deposit", asset: "ETH", amount: j.amount, usd: await ethUsd(j.amount), txHash: hash.toLowerCase() };
+  const row: AgentCapitalRow = { address: address.toLowerCase(), at: now, kind: "deposit", asset: "ETH", amount: j.amount, usd: await ethUsd(j.amount), txHash: hash.toLowerCase(), landedAt: Number(block.timestamp) * 1000 };
   appendLedger(CAPITAL_LEDGER, row as unknown as Record<string, unknown>);
   return { ok: true, row, already: false };
 }
@@ -332,7 +342,7 @@ async function sendWithdrawal(address: `0x${string}`, amount: number | "all", no
   const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 180_000 });
   if (receipt.status !== "success") return { ok: false, reason: `the transfer ${hash} reverted` };
   const sent = Number(value) / 1e18;
-  const row: AgentCapitalRow = { address: address.toLowerCase(), at: now, kind: "withdraw", asset: "ETH", amount: sent, usd: await ethUsd(sent), txHash: hash.toLowerCase() };
+  const row: AgentCapitalRow = { address: address.toLowerCase(), at: now, kind: "withdraw", asset: "ETH", amount: sent, usd: await ethUsd(sent), txHash: hash.toLowerCase(), landedAt: await blockTime(pub, receipt.blockNumber) };
   appendLedger(CAPITAL_LEDGER, row as unknown as Record<string, unknown>);
   return { ok: true, hash, amount: sent, explorerUrl: `${EXPLORER_URL}/tx/${hash}` };
 }
@@ -416,7 +426,7 @@ async function sendTokenWithdrawal(address: `0x${string}`, symbol: string, now: 
   }
   const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 180_000 });
   if (receipt.status !== "success") return { ok: false, reason: `the transfer ${hash} reverted` };
-  const row: AgentCapitalRow = { address: address.toLowerCase(), at: now, kind: "withdraw-token", asset: token.symbol, contract: (token.contract as string).toLowerCase(), amount, usd: await tokenUsd(token, amount, now), txHash: hash.toLowerCase() };
+  const row: AgentCapitalRow = { address: address.toLowerCase(), at: now, kind: "withdraw-token", asset: token.symbol, contract: (token.contract as string).toLowerCase(), amount, usd: await tokenUsd(token, amount, now), txHash: hash.toLowerCase(), landedAt: await blockTime(pub, receipt.blockNumber) };
   appendLedger(CAPITAL_LEDGER, row as unknown as Record<string, unknown>);
   return { ok: true, hash, amount, symbol: token.symbol, explorerUrl: `${EXPLORER_URL}/tx/${hash}` };
 }

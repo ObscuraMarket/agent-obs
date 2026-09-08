@@ -469,7 +469,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
       const head = line.slice(1).split(/\s+/)[0].toLowerCase();
       if (head === 'connect') { await this.signIn(line.slice(1).split(/\s+/).slice(1).join(' ')); return; }
       if (head === 'clear' || head === 'cls') { this.clearScreen(); return; }
-      if (head === 'logout' || head === 'disconnect') { this.logout(); return; }
+      if (head === 'logout' || head === 'disconnect') { void this.logout(); return; }
       // Only the console's own reply shape is taken from an error body; a rate limit, a read-only refusal or a network
       // failure carries an object too, and printing "Done." for one of those hid the real answer (2026-09-08).
       const data = await this.signed<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (this.isExpired(e) ? null : e?.error && typeof e.error === 'object' && (typeof e.error.ok === 'boolean' || Array.isArray(e.error.lines)) ? e.error : { ok: false, lines: [e?.status === 429 ? 'The desk is busy; try again in a moment.' : (typeof e?.error?.error === 'string' ? e.error.error : 'Couldn\'t reach the desk. Try again in a moment.')] }) as ObsCliReply | null);
@@ -642,8 +642,13 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     }));
   }
 
-  /** The wallet is gone (disconnected, or another took its place): its session goes with it, from storage too. */
+  /**
+   * The wallet is gone (disconnected, or another took its place): its session goes with it, from storage and, when
+   * the desk can be reached, from the desk too, so a bearer left behind by a wallet switch does not stay live there
+   * for its week (review, 2026-09-08). Not waited on: the local drop happens either way.
+   */
   private forgetWallet(): void {
+    if (this.token) { this.obs.accountLogout(this.token).subscribe({ next: () => {}, error: () => {} }); }
     this.wallet = null;
     this.dropSession();
   }
@@ -662,15 +667,29 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
 
   /**
    * /logout, /disconnect: sign out of the console here and, through the desk, everywhere: the bearer is revoked on
-   * the desk before it leaves this device, so a copy of it elsewhere dies too (audit 2026-09-08). The call is not
-   * waited on and a failure of it is ignored: the local drop happens either way, and the bearer ages out on its own.
-   * The wallet stays connected in its own app; a page cannot disconnect it.
+   * the desk before it leaves this device, so a copy of it elsewhere dies too (audit 2026-09-08). The desk's answer
+   * is waited for, briefly, and the line says what happened: until 2026-09-08 (review) the page printed a sign-out
+   * whatever the call did, and a failed call (offline, the desk down) left the bearer live for its week with the
+   * person none the wiser. The local drop happens either way. The wallet stays connected in its own app; a page
+   * cannot disconnect it.
    */
-  private logout(): void {
-    const had = !!this.token;
-    if (this.token) { this.obs.accountLogout(this.token).subscribe({ next: () => {}, error: () => {} }); }
+  private async logout(): Promise<void> {
+    const token = this.token;
+    if (!token) { this.print([{ kind: 'system', text: 'You weren\'t signed in. /connect signs in.', suggest: ['/connect', '/status'] }]); return; }
     this.dropSession();
-    this.print([{ kind: 'system', text: had ? 'Signed out on this device. Your wallet stays connected in its own app; /connect signs in again.' : 'You weren\'t signed in. /connect signs in.', suggest: ['/connect', '/status'] }]);
+    const confirmed = await this.revokeOnDesk(token, 4000);
+    this.print([{ kind: 'system', text: confirmed ? 'Signed out everywhere. Your wallet stays connected in its own app; /connect signs in again.' : 'Signed out on this device; the desk did not confirm, so the session ends there on its own within a week. Your wallet stays connected in its own app; /connect signs in again.', suggest: ['/connect', '/status'] }]);
+  }
+
+  /** The desk's revocation of a bearer, true only on its ok; false on any error or after `ms` without an answer. */
+  private revokeOnDesk(token: string, ms: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), ms);
+      this.obs.accountLogout(token).subscribe({
+        next: (r) => { clearTimeout(timer); resolve(!!r?.ok); },
+        error: () => { clearTimeout(timer); resolve(false); },
+      });
+    });
   }
 
   private async readChain(p: any): Promise<void> {

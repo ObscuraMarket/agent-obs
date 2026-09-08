@@ -48,7 +48,7 @@ import { walletBalances } from "./obscura/reads.ts";
 import { X_HANDLE, X_AGENT_ID, AGENT_ID, MAX_TWEET_CHARS, OBS_CONTRACT, SITE_URL, ROOT_DIR, WALLET_ADDRESS, EXPLORER_URL, dataPath } from "./config.ts";
 import { xLive, xConfigured } from "./social/xClient.ts";
 import { consoleQuote, verifySwap, consoleStanding, isAddress } from "./desk/console.ts";
-import { issueChallenge, linkAccount, verifySession, bearerOf, revokeSessions } from "./desk/accounts.ts";
+import { issueChallenge, linkAccount, verifySession, sessionOf, bearerOf, revokeSessions } from "./desk/accounts.ts";
 import { getSettings, updateSettings, sanitizeSettings, describeSettings } from "./desk/userSettings.ts";
 import { refreshModel, modelFor, personaFor, approveTool, ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
 import { shouldEndTurn, meteredReply, type TurnState } from "./desk/chatTurn.ts";
@@ -1361,13 +1361,17 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   }
   // Sign out everywhere: every bearer this wallet was issued before now is refused from here, a fresh sign-in
   // mints one that passes. The bearer alone is asked for, not the door: a wallet taken off the list still ends
-  // its own sessions (audit 2026-09-08, a stolen bearer kept its week with no way to cut it short).
+  // its own sessions (audit 2026-09-08, a stolen bearer kept its week with no way to cut it short). The trade-off
+  // is deliberate: an unrevoked stolen bearer can force one sign-out everywhere, and dies doing it, which is the
+  // rule that lets an older laptop end a stolen newer device's session; the next step is a fresh wallet signature
+  // on /sell, /withdraw and /start live, so no bearer alone moves money. The calling bearer's own issue moment
+  // goes with the request so it dies even when the clock has stepped back since it was minted.
   if (path === "/api/obs/account/logout") {
     res.setHeader("Cache-Control", "no-store");
-    const address = verifySession(bearerOf(req.headers.authorization), now);
-    if (!address) { json(res, 401, { ok: false, error: "sign in with your wallet first" }); return; }
-    const landed = revokeSessions(address, now);
-    console.log(`[account] signed out ${address}${landed ? "" : " (the revocation row did not land; the bearer dies with this process)"}`);
+    const session = sessionOf(bearerOf(req.headers.authorization), now);
+    if (!session) { json(res, 401, { ok: false, error: "sign in with your wallet first" }); return; }
+    const landed = revokeSessions(session.address, now, session.issuedAt);
+    console.log(`[account] signed out ${session.address}${landed ? "" : " (the revocation row did not land; the bearer dies with this process)"}`);
     json(res, 200, { ok: true });
     return;
   }
