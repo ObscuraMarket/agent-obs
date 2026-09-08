@@ -159,19 +159,6 @@
   <!-- Tokens in, PnL out: the stepped marquee before the terminal. -->
   <div class="marquee">
     <div class="marquee-box">
-    <div class="m-info">
-      <button type="button" class="m-info-btn" aria-label="About this strip" aria-describedby="m-info-tip">
-        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M12 16v-4m0-4h.01"/>
-          </g>
-        </svg>
-      </button>
-      <div class="m-info-tip" id="m-info-tip" role="tooltip">
-        Visual reference only. This strip does not show the agent's real trades. Live activity is in Live Trades, Positions and the Terminal below.
-      </div>
-    </div>
     <div class="marquee-viewport" aria-hidden="true">
       <div class="marquee-track" [class.stepping]="marqueeStepping">
         <div class="m-slot" *ngFor="let it of marqueeItems">
@@ -327,23 +314,6 @@
     </div>
   </ng-template>
 
-  <!-- Your agent: the wallet that signed in on the console, its own book from its own signed read; never anyone else's -->
-  <div class="card block mine">
-    <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Your agent</h2><span class="num">{{ mySummary }}</span></div>
-    <p class="none" *ngIf="myState === 'no-wallet'">Connect your wallet and sign in on the console to watch your own agent here.</p>
-    <p class="none" *ngIf="myState === 'no-session'"><a href="/console">Sign in on the console</a> to see your agent here.</p>
-    <p class="none" *ngIf="myState === 'loading'">{{ myBookErr ? 'Your agent\'s book did not answer; the next read tries again.' : 'Reading your agent\'s book.' }}</p>
-    <p class="none" *ngIf="myState === 'not-started'">Your agent has not started yet. <a href="/console">/start in the console</a> turns it on.</p>
-    <ng-container *ngIf="myState === 'book' && myBook as b">
-      <ng-container *ngTemplateOutlet="bookView; context: { book: b, trades: myTrades, mine: true, spark: null }"></ng-container>
-      <div class="mine-foot">
-        <span class="mutedtx" *ngIf="b.wallet">Its wallet: <a class="num" [href]="b.walletUrl" target="_blank" rel="noopener noreferrer">{{ b.wallet }}</a></span>
-        <span class="mutedtx" *ngIf="!b.wallet">Its wallet is not set up yet. /wallet in the console sets one up.</span>
-        <a class="cta mine-cta" href="/console">Open the console</a>
-      </div>
-    </ng-container>
-  </div>
-
   <!-- Positions table -->
   <div class="card block">
     <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Positions</h2><span>{{ posSummary | titlecase }}</span></div>
@@ -462,6 +432,23 @@
       </ng-container>
     </div>
     <p class="mutedtx">Every agent follows Agent OBS trade for trade at its own size, from a wallet of its own. Tap a name to see its book.</p>
+  </div>
+
+  <!-- Your agent: the wallet that signed in on the console, its own book from its own signed read; never anyone else's -->
+  <div class="card block mine">
+    <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Your agent</h2><span class="num">{{ mySummary }}</span></div>
+    <p class="none" *ngIf="myState === 'no-wallet'">Connect your wallet and sign in on the console to watch your own agent here.</p>
+    <p class="none" *ngIf="myState === 'no-session'"><a href="/console">Sign in on the console</a> to see your agent here.</p>
+    <p class="none" *ngIf="myState === 'loading'">{{ myBookErr ? 'Your agent\'s book did not answer; the next read tries again.' : 'Reading your agent\'s book.' }}</p>
+    <p class="none" *ngIf="myState === 'not-started'">Your agent has not started yet. <a href="/console">/start in the console</a> turns it on.</p>
+    <ng-container *ngIf="myState === 'book' && myBook as b">
+      <ng-container *ngTemplateOutlet="bookView; context: { book: b, trades: myTrades, mine: true, spark: null }"></ng-container>
+      <div class="mine-foot">
+        <span class="mutedtx" *ngIf="b.wallet">Its wallet: <a class="num" [href]="b.walletUrl" target="_blank" rel="noopener noreferrer">{{ b.wallet }}</a></span>
+        <span class="mutedtx" *ngIf="!b.wallet">Its wallet is not set up yet. /wallet in the console sets one up.</span>
+        <a class="cta mine-cta" href="/console">Open the console</a>
+      </div>
+    </ng-container>
   </div>
 
   <div class="foot" *ngIf="err">

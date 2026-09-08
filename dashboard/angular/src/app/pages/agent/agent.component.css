@@ -1206,68 +1206,6 @@ table.tbl {
   max-width: 100%;
 }
 
-.m-info {
-  position: absolute;
-  top: -10px;
-  right: -12px;
-  z-index: 3;
-}
-
-.m-info-btn {
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 1.5px solid rgba(184, 255, 61, 0.45);
-  border-radius: 50%;
-  background: #161816;
-  color: var(--lime);
-  box-shadow: 0 0 14px rgba(184, 255, 61, 0.2);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: default;
-  transition: color 0.15s ease, border-color 0.15s ease;
-}
-
-.m-info-btn svg {
-  width: 24px;
-  height: 24px;
-  display: block;
-}
-
-.m-info:hover .m-info-btn,
-.m-info-btn:focus-visible {
-  border-color: var(--lime);
-  box-shadow: 0 0 20px rgba(184, 255, 61, 0.4);
-  outline: none;
-}
-
-.m-info-tip {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: 300px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: #161816;
-  color: var(--white);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.5;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  opacity: 0;
-  transform: translateY(-4px);
-  pointer-events: none;
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.m-info:hover .m-info-tip,
-.m-info-btn:focus-visible + .m-info-tip {
-  opacity: 1;
-  transform: translateY(0);
-}
-
 .marquee-viewport {
   position: relative;
   margin: 0 auto;
