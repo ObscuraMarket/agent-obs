@@ -15,6 +15,8 @@ const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHT
 const SWAP_ABI = parseAbi(["event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)"]);
 const CHUNK = 20_000n;
 const BLOCKS_PER_SEC = 10;
+/** Milliseconds between the chunks of a history read (updateTapeRead with a fromBlock); the live reads are one chunk and take none. */
+const HISTORY_PACE_MS = 250;
 
 export interface SwapRow {
   at: number;
@@ -87,20 +89,34 @@ export function tapeWindowMin(env: NodeJS.ProcessEnv = process.env): number {
 
 /** Pull new swaps for a pool since the last stored block (or the last `sinceMin` minutes) and append them. Returns the whole tape for the window. */
 export async function updateTape(spec: PoolSpec, tokenSymbol: string, now = Date.now(), sinceMin = tapeWindowMin()): Promise<SwapRow[]> {
-  if (spec.venue !== "uniswap-v4" || !spec.id) return [];
+  return (await updateTapeRead(spec, tokenSymbol, now, sinceMin)).rows;
+}
+
+/**
+ * The same read, saying whether the chain answered and which head block it reached. With `fromBlock` the read
+ * starts there whatever the file holds (a first-sight history read by the feed builder): rows the file already
+ * had fold on every read (dedupeRows). The feed builder needs the verdict: this read swallowed failures, and a
+ * swallowed failure on a first-sight backfill would have read as a pool with no swaps and been written as an
+ * hour of zeros (2026-09-08).
+ */
+export async function updateTapeRead(spec: PoolSpec, tokenSymbol: string, now = Date.now(), sinceMin = tapeWindowMin(), fromBlock: bigint | null = null): Promise<{ rows: SwapRow[]; ok: boolean; headBlock: number | null }> {
+  if (spec.venue !== "uniswap-v4" || !spec.id) return { rows: [], ok: true, headBlock: null };
   const tokenIs0 = spec.token0 === tokenSymbol;
   const existing = readTape(spec.id);
+  const inWindow = (rows: SwapRow[]) => rows.filter((r) => r.at >= now - sinceMin * 60e3);
   const pub = createPublicClient({ transport: http(RPC_URL, { fetchOptions: { headers: { "User-Agent": UA } } }) });
   try {
     const head = await pub.getBlock({ blockTag: "latest" });
     const headBlock = head.number;
     const headAt = Number(head.timestamp) * 1000;
     const lastStored = existing.length ? BigInt(existing[existing.length - 1].block) : null;
-    const fromBlock = lastStored != null ? lastStored + 1n : headBlock - BigInt(sinceMin * 60 * BLOCKS_PER_SEC);
-    if (fromBlock > headBlock) return existing.filter((r) => r.at >= now - sinceMin * 60e3);
+    const from = fromBlock ?? (lastStored != null ? lastStored + 1n : headBlock - BigInt(sinceMin * 60 * BLOCKS_PER_SEC));
+    if (from > headBlock) return { rows: inWindow(existing), ok: true, headBlock: Number(headBlock) };
     const rows: SwapRow[] = [];
-    for (let start = fromBlock > 0n ? fromBlock : 0n; start <= headBlock; start += CHUNK) {
+    for (let start = from > 0n ? from : 0n; start <= headBlock; start += CHUNK) {
       const end = start + CHUNK - 1n > headBlock ? headBlock : start + CHUNK - 1n;
+      // A history read (a caller's fromBlock) takes a breath between its chunks: the public RPC throttled a burst on 2026-09-08.
+      if (fromBlock != null && start > from) await new Promise((r) => setTimeout(r, HISTORY_PACE_MS));
       const logs = await pub.getLogs({ address: chainMemory().contracts.uniswapV4.poolManager as `0x${string}`, event: SWAP_ABI[0], args: { id: spec.id as `0x${string}` }, fromBlock: start, toBlock: end });
       for (const l of logs) {
         const d = decodeEventLog({ abi: SWAP_ABI, data: l.data, topics: l.topics }).args as { amount0: bigint; amount1: bigint; sqrtPriceX96: bigint };
@@ -114,9 +130,9 @@ export async function updateTape(spec: PoolSpec, tokenSymbol: string, now = Date
       mkdirSync(tapeDir(), { recursive: true });
       appendFileSync(tapePath(spec.id), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
     }
-    return [...existing, ...rows].filter((r) => r.at >= now - sinceMin * 60e3);
+    return { rows: inWindow(dedupeRows([...existing, ...rows])), ok: true, headBlock: Number(headBlock) };
   } catch {
-    return existing.filter((r) => r.at >= now - sinceMin * 60e3);
+    return { rows: inWindow(existing), ok: false, headBlock: null };
   }
 }
 
@@ -125,35 +141,47 @@ export async function updateTape(spec: PoolSpec, tokenSymbol: string, now = Date
  * and one Swap query across every pool id for the blocks since the last
  * look. A pool with no stored tape is backfilled on its own first (once).
  * `cache` keeps each pool's window in memory between looks so the files are
- * not re-read every few seconds. Returns each pool's rows inside the window
- * and the head block, or what it had when the chain did not answer.
+ * not re-read every few seconds. `scannedTo` names, per pool id, the block a
+ * caller already read that pool to: the read then starts after it rather than
+ * after the pool's last row, since a pool quiet for hours has an old last row
+ * and reading from it would drag the whole batch that far back (the feed
+ * builder's hundred-odd pools, 2026-09-08); a pool with no rows but a scanned
+ * block joins the batch instead of being backfilled again. Returns each pool's
+ * rows inside the window, the head block, and whether every read answered (a
+ * refused chunk keeps what was read and says so), or what it had when the
+ * chain did not answer.
  */
-export async function updateTapes(items: Array<{ spec: PoolSpec; symbol: string }>, now = Date.now(), sinceMin = tapeWindowMin(), cache?: Map<string, SwapRow[]>): Promise<{ tapes: Map<string, SwapRow[]>; headBlock: number | null }> {
+export async function updateTapes(items: Array<{ spec: PoolSpec; symbol: string }>, now = Date.now(), sinceMin = tapeWindowMin(), cache?: Map<string, SwapRow[]>, scannedTo?: Map<string, number>): Promise<{ tapes: Map<string, SwapRow[]>; headBlock: number | null; ok: boolean }> {
   const tapes = new Map<string, SwapRow[]>();
   const live = items.filter((i) => i.spec.venue === "uniswap-v4" && i.spec.id);
   const inWindow = (rows: SwapRow[]) => rows.filter((r) => r.at >= now - sinceMin * 60e3);
-  if (!live.length) return { tapes, headBlock: null };
+  if (!live.length) return { tapes, headBlock: null, ok: true };
   const pub = createPublicClient({ transport: http(RPC_URL, { fetchOptions: { headers: { "User-Agent": UA } } }) });
   let head: { number: bigint; timestamp: bigint };
   try {
     head = await pub.getBlock({ blockTag: "latest" });
   } catch {
     for (const i of live) tapes.set(i.spec.id as string, inWindow(cache?.get(i.spec.id as string) ?? readTape(i.spec.id as string)));
-    return { tapes, headBlock: null };
+    return { tapes, headBlock: null, ok: false };
   }
   const headBlock = head.number;
   const headAt = Number(head.timestamp) * 1000;
+  let ok = true;
   const batch: Array<{ item: { spec: PoolSpec; symbol: string }; existing: SwapRow[]; from: bigint }> = [];
   for (const item of live) {
     const id = item.spec.id as string;
     const existing = cache?.get(id) ?? readTape(id);
-    if (!existing.length) {
-      const rows = await updateTape(item.spec, item.symbol, now, sinceMin);
-      cache?.set(id, rows);
-      tapes.set(id, rows);
+    const scanned = scannedTo?.get(id.toLowerCase()) ?? scannedTo?.get(id) ?? null;
+    if (!existing.length && scanned == null) {
+      const r = await updateTapeRead(item.spec, item.symbol, now, sinceMin);
+      if (!r.ok) ok = false;
+      cache?.set(id, r.rows);
+      tapes.set(id, r.rows);
       continue;
     }
-    batch.push({ item, existing, from: BigInt(existing[existing.length - 1].block) + 1n });
+    const afterRow = existing.length ? BigInt(existing[existing.length - 1].block) + 1n : 0n;
+    const afterScan = scanned != null ? BigInt(scanned) + 1n : 0n;
+    batch.push({ item, existing, from: afterRow > afterScan ? afterRow : afterScan });
   }
   if (batch.length) {
     const fromBlock = batch.reduce((m, b) => (b.from < m ? b.from : m), headBlock + 1n);
@@ -176,7 +204,8 @@ export async function updateTapes(items: Array<{ spec: PoolSpec; symbol: string 
         }
       }
     } catch {
-      /* keep what we have; the next look tries again */
+      /* keep what we have and say so; the next look tries again */
+      ok = false;
     }
     for (const b of batch) {
       const id = b.item.spec.id as string;
@@ -190,7 +219,7 @@ export async function updateTapes(items: Array<{ spec: PoolSpec; symbol: string 
       tapes.set(id, all);
     }
   }
-  return { tapes, headBlock: Number(headBlock) };
+  return { tapes, headBlock: Number(headBlock), ok };
 }
 
 export interface TapeStats {

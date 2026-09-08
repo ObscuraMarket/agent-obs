@@ -43,7 +43,7 @@ if [ -n "${OBS_WALLET_JSON:-}" ] && [ ! -f "${OBS_WALLET_DIR:-/wallet}/obs-walle
   mkdir -p "${OBS_WALLET_DIR:-/wallet}" && umask 077 && printf '%s' "$OBS_WALLET_JSON" > "${OBS_WALLET_DIR:-/wallet}/obs-wallet.json" && log "wallet file written from OBS_WALLET_JSON"
 fi
 
-# 3. The read-only API, the live watch and the feed puller, in the background. First, a cycle lock left on the
+# 3. The read-only API, the live watch and the feed builder, in the background. First, a cycle lock left on the
 #    volume by the previous container is nobody's: its pid can name a live process in this one, and a fresh watch
 #    then waited on it and kept its first entry trigger for minutes (2026-09-08).
 if [ -f "$DATA/obs-cycle.lock" ]; then rm -f "$DATA/obs-cycle.lock" && log "cleared a cycle lock from before this boot"; fi
@@ -51,15 +51,15 @@ tsx src/server.ts &
 API=$!
 tsx src/desk/live.ts &
 LIVE=$!
-tsx src/desk/feedpull.ts &
-FEED=$!
+tsx src/desk/feedbuild.ts &
+FEEDBUILD=$!
 tsx src/desk/screenerpull.ts &
 SCREENER=$!
 tsx src/desk/launchpull.ts &
 LAUNCH=$!
 tsx src/desk/scoutpull.ts &
 SCOUT=$!
-trap 'log "stopping"; kill $API $LIVE $FEED $SCREENER $LAUNCH $SCOUT 2>/dev/null; exit 0' TERM INT
+trap 'log "stopping"; kill $API $LIVE $FEEDBUILD $SCREENER $LAUNCH $SCOUT 2>/dev/null; exit 0' TERM INT
 
 # 4. The loops, on a one-minute tick so each cadence keeps its own clock. The live watch runs the desk's cycles
 #    on its triggers; this runner's own interval cycle only runs when the watch is switched off (OBS_LIVE=off),
@@ -80,7 +80,7 @@ while true; do
   fi
   if ! kill -0 $API 2>/dev/null; then log "API exited; restarting it"; tsx src/server.ts & API=$!; fi
   if ! kill -0 $LIVE 2>/dev/null; then log "live watch exited; restarting it"; tsx src/desk/live.ts & LIVE=$!; fi
-  if ! kill -0 $FEED 2>/dev/null; then log "feed puller exited; restarting it"; tsx src/desk/feedpull.ts & FEED=$!; fi
+  if ! kill -0 $FEEDBUILD 2>/dev/null; then log "feed builder exited; restarting it"; tsx src/desk/feedbuild.ts & FEEDBUILD=$!; fi
   if ! kill -0 $SCREENER 2>/dev/null; then log "screener poller exited; restarting it"; tsx src/desk/screenerpull.ts & SCREENER=$!; fi
   if ! kill -0 $LAUNCH 2>/dev/null; then log "launch poller exited; restarting it"; tsx src/desk/launchpull.ts & LAUNCH=$!; fi
   if ! kill -0 $SCOUT 2>/dev/null; then log "scout exited; restarting it"; tsx src/desk/scoutpull.ts & SCOUT=$!; fi
