@@ -26,6 +26,16 @@ import { readFileSync, writeFileSync } from "node:fs";
 export const liveOn = (env: NodeJS.ProcessEnv = process.env): boolean => (env.OBS_FOLLOW_LIVE ?? "on").trim().toLowerCase() !== "off" && walletsOn(env);
 
 /**
+ * PURE: whether a mirrored leg runs. An entry needs the live switch on. An exit and the sweep run whenever the
+ * agent wallets exist at all: until 2026-09-08 OBS_FOLLOW_LIVE=off gated them too, so the switch stopped follower
+ * exits and the sweep while the desk kept selling, and left users' money in a token the desk had dumped. Off means
+ * no new money in, never money left in.
+ */
+export function mirrorLegOn(kind: "entry" | "exit" | "sweep", env: NodeJS.ProcessEnv = process.env): boolean {
+  return kind === "entry" ? liveOn(env) : walletsOn(env);
+}
+
+/**
  * PURE: the ETH an agent puts into an entry: its size at the desk's ETH price, within what its wallet holds above
  * the gas reserve. Less than half the size is not an entry worth making; it is a note instead.
  */
@@ -171,9 +181,9 @@ export function ethUsdOf(intent: Intent, fallback: number | null): number | null
  * failure is that agent's note and never another agent's problem, and never the desk's.
  */
 export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskHeldBefore: number | null, now = Date.now()): Promise<void> {
-  if (!liveOn()) return;
-  if (deskTrade.status !== "settled" && deskTrade.status !== "pending") return;
   const isExit = !!intent.exit;
+  if (!mirrorLegOn(isExit ? "exit" : "entry")) return;
+  if (deskTrade.status !== "settled" && deskTrade.status !== "pending") return;
   // An entry the desk itself has no receipt for is not mirrored: a pending buy that later reverts would have put
   // every follower into a token the desk never held and never sells (audit, 2026-09-08). Exits still run on a
   // pending desk sell, since what a follower holds must leave whatever the desk's own receipt says.
@@ -493,7 +503,7 @@ export function sweepLine(s: SweepSummary): string {
 export async function sweepFollowers(now = Date.now(), opts: { force?: boolean; chain?: DeskChain | null } = {}): Promise<SweepSummary> {
   const summary: SweepSummary = { skipped: null, followers: 0, targets: 0, sold: 0, corrected: 0, waited: 0, failed: 0 };
   const done = (): SweepSummary => { console.log(sweepLine(summary)); return summary; };
-  if (!liveOn()) { summary.skipped = "off"; return done(); }
+  if (!mirrorLegOn("sweep")) { summary.skipped = "off"; return done(); }
   if (!opts.force && !sweepDue(readSweepStamp(), now, sweepMinutes())) { summary.skipped = "throttled"; return done(); }
   const rows = readFollow();
   if (!rows.length) { summary.skipped = "no followers"; return done(); }

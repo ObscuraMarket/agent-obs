@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { entryAmountEth, exitShare, followersFor, liveOn, canStartLive, mirrorWidth } from "../src/desk/mirror.ts";
+import { entryAmountEth, exitShare, followersFor, liveOn, mirrorLegOn, canStartLive, mirrorWidth } from "../src/desk/mirror.ts";
 import { followState, liveHoldings, liveTrades, liveBook, followLines, followEvents, deskReason, type FollowRow, type FollowTradeRow } from "../src/desk/follow.ts";
 
 test("the agent tells the console what it did, in the first person, with the desk's reason beside it", () => {
@@ -101,4 +101,19 @@ test("a start in the other mode is a fresh start, and the live book is the agent
   assert.ok(lines.some((l) => /its wallet holds 0\.05000 ETH/.test(l)), lines.join("\n"));
   assert.ok(lines.some((l) => /note: entry of DOHJ refused/.test(l)), lines.join("\n"));
   for (const l of lines) assert.ok(!l.includes("—"));
+});
+
+test("the live switch gates entries only: an exit and the sweep run whenever the agent wallets exist", () => {
+  // OBS_FOLLOW_LIVE=off stopped follower exits and the sweep while the desk kept selling (audit, 2026-09-08): off
+  // means no new money in, never money left in a token the desk dumped. The wallets' seed is the only thing an
+  // exit needs, since nothing can sign without it.
+  const off = { OBS_FOLLOW_LIVE: "off", OBS_AGENT_WALLET_SEED: "x".repeat(40) } as NodeJS.ProcessEnv;
+  assert.equal(mirrorLegOn("entry", off), false, "no new money in");
+  assert.equal(mirrorLegOn("exit", off), true, "the desk's exit still reaches every follower");
+  assert.equal(mirrorLegOn("sweep", off), true, "and the sweep still runs");
+  const on = { OBS_AGENT_WALLET_SEED: "x".repeat(40) } as NodeJS.ProcessEnv;
+  for (const k of ["entry", "exit", "sweep"] as const) assert.equal(mirrorLegOn(k, on), true, `${k} with the switch on`);
+  const noSeed = { OBS_FOLLOW_LIVE: "on" } as NodeJS.ProcessEnv;
+  for (const k of ["entry", "exit", "sweep"] as const) assert.equal(mirrorLegOn(k, noSeed), false, `${k} with no wallets to sign from`);
+  assert.equal(liveOn(off), false, "the switch itself still reads off");
 });

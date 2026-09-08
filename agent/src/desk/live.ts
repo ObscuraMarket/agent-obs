@@ -19,7 +19,7 @@ import { liveReads, walletBalances } from "../obscura/reads.ts";
 import { readPaper, paperBalances } from "./paper.ts";
 import { readBook, boughtSymbols, type Trade } from "./book.ts";
 import { readScout } from "./scout.ts";
-import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, lockHeld, type WatchState, type Role, type Trigger } from "./watch.ts";
+import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, lockHeld, displaces, swapLanded, type WatchState, type Role, type Trigger } from "./watch.ts";
 import { exitVerdict, type HourlyStat } from "./candidates.ts";
 import { railsFromEnv } from "./rails.ts";
 import { readPrices } from "./analysis.ts";
@@ -191,10 +191,12 @@ function runCycle(t: Trigger, state: WatchState | undefined, now: number): void 
   });
   running = child;
   lastCycleError = null;
+  let landed = false;
   const relay = (chunk: Buffer) => {
     for (const line of chunk.toString("utf8").split("\n")) {
       if (/^\[desk\]|^Holding|paper trade|refused|Error/.test(line)) console.log(`  ${line.slice(0, 400)}`);
       if (/could not think|Error|failed|another cycle is running/.test(line)) lastCycleError = line.trim();
+      if (swapLanded(line)) landed = true;
     }
   };
   child.stdout?.on("data", relay);
@@ -207,6 +209,9 @@ function runCycle(t: Trigger, state: WatchState | undefined, now: number): void 
     if (failed) void raiseAlert("cycle", failed, lastCycleAt);
     running = null;
     tapeCache.clear();
+    // A swap landed: the wallet and the rail book are re-read on the next look rather than on their own minute, so
+    // a fresh buy has its rails at once and a token just sold trips nothing (2026-09-08).
+    if (landed) { balancesAt = 0; railBookAt = 0; }
     // A cycle that only read another's lock and left did nothing: its trigger is kept and runs when the lock clears.
     if (lastCycleError && /another cycle is running/.test(lastCycleError) && !pendingExit) { pendingExit = t; console.log(`[live] the cycle left (the lock was held); its trigger is kept: ${t.reason}`); return; }
     if (pendingExit && !lockBusy(Date.now())) {
@@ -322,9 +327,10 @@ async function step(now: number): Promise<void> {
   const busy = !!running || lockBusy(now);
   if (triggers.length && !busy) runCycle(triggers[0], states.find((s) => s.symbol === triggers[0].symbol), now);
   else if (triggers.length && busy) {
-    // Kept for the moment the desk is free: an exit over anything, else the first trigger unless one is already kept.
+    // Kept for the moment the desk is free: the first trigger unless one is already kept, and a higher rank takes
+    // the kept one's place (an exit over an entry over a review).
     const t = triggers[0];
-    if (!pendingExit || (t.kind === "exit" && pendingExit.kind !== "exit")) {
+    if (displaces(t, pendingExit)) {
       pendingExit = t;
       console.log(`[live] ${t.kind} trigger held for the next cycle (${running ? "a cycle is running" : "another process holds the cycle's lock"}): ${t.reason}`);
     }

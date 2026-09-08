@@ -9,15 +9,15 @@
 // only when the desk sells: an operator close that skipped the mirror left every follower in the token after the
 // desk was out (audit, 2026-09-08). So after the desk's own sale this calls mirrorForFollowers the way cycle.ts
 // does after a desk trade, the same share for each agent, each failure that agent's note and the operator's alert.
-// The mirror runs only where the agent wallet seed is (OBS_AGENT_WALLET_SEED, and OBS_FOLLOW_LIVE not off): from a
-// shell without it the desk would sell and every follower would stay in the token with no line printed (review,
-// 2026-09-08), so a follower held by the ledger and no mirror here stops the script before anything is sent, unless
-// --no-followers says the operator will sweep them another way.
+// The mirror runs only where the agent wallet seed is (OBS_AGENT_WALLET_SEED; OBS_FOLLOW_LIVE gates entries alone
+// since 2026-09-08, never an exit): from a shell without it the desk would sell and every follower would stay in
+// the token with no line printed (review, 2026-09-08), so a follower held by the ledger and no mirror here stops
+// the script before anything is sent, unless --no-followers says the operator will sweep them another way.
 //   npx tsx scripts/closePosition.ts <SYMBOL> "<reason>" [--dry] [--no-followers]
 import { resolveAny, readFeed, isHolding } from "../src/desk/candidates.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 import { executeOnChain, rememberClose, quoteOnChain, latestEthUsd } from "../src/desk/onchain.ts";
-import { mirrorForFollowers, liveOn } from "../src/desk/mirror.ts";
+import { mirrorForFollowers, mirrorLegOn } from "../src/desk/mirror.ts";
 import { readFollow, readFollowTrades, liveHoldings } from "../src/desk/follow.ts";
 import { ethUsdAt } from "../src/desk/trade-memory.ts";
 import { readPrices } from "../src/desk/analysis.ts";
@@ -35,8 +35,8 @@ const now = Date.now();
 // with the desk, and only a shell with the seed can make that happen (see the header).
 const followRows = readFollowTrades();
 const holders = [...new Set(readFollow().map((r) => r.address))].filter((a) => (liveHoldings(followRows, a)[symbol] ?? 0) > 0);
-if (holders.length && !liveOn()) {
-  console.error(`[follow] mirror off here (no agent wallet seed, or OBS_FOLLOW_LIVE=off): ${holders.length} follower${holders.length === 1 ? "" : "s"} hold${holders.length === 1 ? "s" : ""} ${symbol} by the ledger and will not be sold`);
+if (holders.length && !mirrorLegOn("exit")) {
+  console.error(`[follow] mirror off here (no agent wallet seed): ${holders.length} follower${holders.length === 1 ? "" : "s"} hold${holders.length === 1 ? "s" : ""} ${symbol} by the ledger and will not be sold`);
   if (!noFollowers) { console.error("nothing sent; run this inside the desk, or pass --no-followers to close the desk's own position alone and sweep the followers another way"); process.exit(1); }
   console.error("--no-followers: closing the desk's own position alone");
 } else if (holders.length) {

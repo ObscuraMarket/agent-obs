@@ -72,6 +72,26 @@ export interface Trigger {
 const PRIORITY: Record<Trigger["kind"], number> = { exit: 0, entry: 1, held: 2 };
 
 /**
+ * PURE: whether a trigger that fired while the desk was busy takes the place of the one kept for it: only a higher
+ * rank does, an exit over an entry over a held review. Until 2026-09-08 only an exit could displace, so an entry
+ * that flipped behind a queued review waited the fifteen minutes for its refire; the review it displaces comes
+ * back on its own cadence.
+ */
+export function displaces(next: Trigger, kept: Trigger | null): boolean {
+  return !kept || PRIORITY[next.kind] < PRIORITY[kept.kind];
+}
+
+/**
+ * PURE: whether a line of the cycle's output says a swap changed what the wallet holds: the settle pass writing a
+ * row settled, a forced exit that settled, the recorded line's swap settled, or a paper trade or paper exit (the
+ * paper watch holds through the paper book). The watch re-read its held list on its own minute until 2026-09-08,
+ * so a fresh buy had no rails for up to a minute and a token just sold could still trip a trigger.
+ */
+export function swapLanded(line: string): boolean {
+  return /^\[desk\] (?:\S+ -> settled\b|forced exit \S+ settled\b|paper exit \S+:|recorded\b.*\b(?:swap \S+ settled\b|paper trade \S+))/.test(line.trim());
+}
+
+/**
  * PURE: whether the cycle's lock is held by a live cycle: its pid alive and the lock under fifteen minutes old, the
  * cycle's own rule. The watch does not spawn into a held lock; the cycle it spawned would only read the lock and
  * leave, and the trigger would be lost. Right after a redeploy the runner's own boot cycle held the lock and the

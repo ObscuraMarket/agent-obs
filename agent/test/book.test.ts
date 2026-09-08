@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, snapshotFromChain, series, type BookSnapshot, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince, closedTrades, capitalEth } from "../src/desk/book.ts";
+import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, snapshotFromChain, series, type BookSnapshot, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince, closedTrades, capitalEth, costBasis } from "../src/desk/book.ts";
 
 test("a mark a thousand times the capital is a price read gone wrong, never the book: not shown, not recorded", () => {
   // SHARD dust after the full sell, priced off the drained pool: equity 1.08e41 on $948.82 of capital.
@@ -197,4 +197,28 @@ test("closed round trips pair each realized sell with the buy that opened it, na
   assert.equal(c[0].tx, "0xs3");
   assert.equal(closedTrades(trades, events, 5 * 60e3, now).length, 1, "the window is honoured: only the close a minute ago");
   assert.equal(capitalEth([{ at: 1, kind: "deposit", asset: "ETH", amount: 0.4, usd: 948.82 }, { at: 2, kind: "deposit", asset: "ETH", amount: 0.01, usd: 23.72 }, { at: 3, kind: "deposit", asset: "AOBS", amount: 9_900_000, usd: 9663 }]), 0.41);
+});
+
+test("a whole-balance sell a few ulps over its lot is the whole lot, an emptied lot's basis is known again, and a real oversell still flags", () => {
+  // 2026-09-08: the exit sized 900245.8452585366 from the wallet's float against a lot of 900245.8452585362 on the
+  // book, four ulps over; the lot was flagged unknown for good and the floor, the trail and the take-profit on the
+  // token died with it.
+  const flows: CapitalFlow[] = [{ at: 1, kind: "deposit", asset: "ETH", amount: 1, usd: 2500 }];
+  const buy: Trade = { at: 2, id: "b", status: "settled", from: { asset: "ETH", amount: 0.08, usd: 200 }, to: { asset: "DOHJ", amount: 900245.8452585362, usd: 200 }, partner: "pool" };
+  const sellAll: Trade = { at: 3, id: "s", status: "settled", exit: true, from: { asset: "DOHJ", amount: 900245.8452585366, usd: 210 }, to: { asset: "ETH", amount: 0.084, usd: 210 }, partner: "pool" };
+  const after = costBasis(flows, [buy, sellAll]);
+  assert.deepEqual(after.lots.DOHJ, { qty: 0, usd: 0, known: true }, "the whole lot left, and nothing unknown is left in it");
+  assert.ok(Math.abs(after.realized.DOHJ - 10) < 1e-6, "sold at its cost: $210 back on $200");
+  // Bought again: the new lot has a basis, so every price rail reads.
+  const rebuy: Trade = { at: 4, id: "b2", status: "settled", from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "DOHJ", amount: 500000, usd: 100 }, partner: "pool" };
+  assert.deepEqual(costBasis(flows, [buy, sellAll, rebuy]).lots.DOHJ, { qty: 500000, usd: 100, known: true });
+  // A tenth over what the book held is a real oversell: units the ledger never saw just left, and the flag stays.
+  const over = costBasis(flows, [buy, { ...sellAll, from: { ...sellAll.from, amount: 990270.4297843898 } }]);
+  assert.equal(over.lots.DOHJ.known, false);
+  assert.equal(over.lots.DOHJ.qty, 0, "the lot is empty all the same");
+  // A partial sell is untouched by the clamp: 900245.84 against the lot leaves the rest at its cost.
+  const part = costBasis(flows, [buy, { ...sellAll, from: { ...sellAll.from, amount: 450122.9226292681 } }]);
+  assert.ok(Math.abs(part.lots.DOHJ.qty - 450122.9226292681) < 1e-6);
+  assert.ok(Math.abs(part.lots.DOHJ.usd - 100) < 1e-6);
+  assert.equal(part.lots.DOHJ.known, true);
 });
