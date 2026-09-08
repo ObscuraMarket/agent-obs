@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { holdingsFrom, latestTrades, netCapitalUsd, snapshot, snapshotFromChain, series, type BookSnapshot, type Trade, type CapitalFlow, positions, isFailedReadMark, markIsTrustworthy, boughtSymbols, saneMark, latestSaneMark, isHolding, bookMovedSince, closedTrades, capitalEth, costBasis } from "../src/desk/book.ts";
+import { erasedWindows, isErased } from "../src/desk/book.ts";
 
 test("a mark a thousand times the capital is a price read gone wrong, never the book: not shown, not recorded", () => {
   // SHARD dust after the full sell, priced off the drained pool: equity 1.08e41 on $948.82 of capital.
@@ -221,4 +222,13 @@ test("a whole-balance sell a few ulps over its lot is the whole lot, an emptied 
   assert.ok(Math.abs(part.lots.DOHJ.qty - 450122.9226292681) < 1e-6);
   assert.ok(Math.abs(part.lots.DOHJ.usd - 100) < 1e-6);
   assert.equal(part.lots.DOHJ.known, true);
+});
+
+test("the operator's erased windows leave a book's snapshots out by time, and a bad window is ignored", () => {
+  const w = erasedWindows({ OBS_BOOK_ERASE: "1788891500000-1788893100000, nonsense, 5-4" } as NodeJS.ProcessEnv);
+  assert.deepEqual(w, [{ from: 1788891500000, to: 1788893100000 }]);
+  assert.equal(isErased(1788891590000, w), true, "inside the window");
+  assert.equal(isErased(1788893700000, w), false, "after it");
+  assert.equal(isErased(1788891500000, w), true, "the edges belong to the window");
+  assert.deepEqual(erasedWindows({} as NodeJS.ProcessEnv), []);
 });

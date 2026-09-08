@@ -411,11 +411,28 @@ export function positions(flows: CapitalFlow[], trades: Trade[], holdings: Recor
   return { positions: rows, realizedUsd: Object.values(realized).reduce((s, v) => s + v, 0), inFlight, events };
 }
 
+/**
+ * PURE: the windows the operator has erased from the book's snapshots (OBS_BOOK_ERASE, "fromMs-toMs" pairs, comma
+ * separated). The desk's wallet was used by hand by accident for half an hour on 2026-09-08 and the equity curve
+ * doubled on money that was never the desk's; the snapshots of that window are left out of every read (the chart,
+ * the marks, the highs and lows), the ledger file itself untouched.
+ */
+export function erasedWindows(env: NodeJS.ProcessEnv = process.env): Array<{ from: number; to: number }> {
+  return (env.OBS_BOOK_ERASE ?? "").split(/[\s,;]+/).map((w) => w.trim()).filter(Boolean).map((w) => {
+    const [a, b] = w.split("-").map((x) => Number(x));
+    return Number.isFinite(a) && Number.isFinite(b) && b > a ? { from: a, to: b } : null;
+  }).filter((w): w is { from: number; to: number } => w != null);
+}
+export function isErased(at: number, windows: Array<{ from: number; to: number }>): boolean {
+  return windows.some((w) => at >= w.from && at <= w.to);
+}
+
 export function readBook(): { flows: CapitalFlow[]; trades: Trade[]; snapshots: BookSnapshot[] } {
+  const erased = erasedWindows();
   return {
     flows: readLedger<CapitalFlow>("obs-capital.jsonl").filter((f) => f && f.asset && Number.isFinite(Number(f.amount))),
     trades: readLedger<Trade>("obs-trades.jsonl").filter((t) => t && t.id && t.from && t.to),
-    snapshots: readLedger<BookSnapshot>("obs-book.jsonl").filter((s) => s && Number.isFinite(Number(s.at))),
+    snapshots: readLedger<BookSnapshot>("obs-book.jsonl").filter((s) => s && Number.isFinite(Number(s.at)) && !isErased(Number(s.at), erased)),
   };
 }
 
