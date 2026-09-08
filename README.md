@@ -16,7 +16,8 @@ agent of their own in the console that follows every trade it makes.
 
 1. **Watches** every pool in play, every swap, every three seconds.
 2. **Reads** a token three ways before a trade: its tape, who holds it, how it
-   was launched. A read that could not be made is a refusal, never a pass.
+   was launched. A count the read could not make is never handed to the
+   model as one.
 3. **Argues.** The model writes a case: thesis, evidence quoting the numbers
    it read, invalidation, conviction.
 4. **Rails decide:** size, spacing, a gas reserve for the round trip, a cap
