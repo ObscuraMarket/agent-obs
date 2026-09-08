@@ -117,6 +117,8 @@ async function walk(): Promise<void> {
     const r = await post("/api/obs/console/cli", { line });
     check(`${line} asks for a wallet first`, r.j.ok === false && has(r, /^Connect your wallet first/), first(r));
   }
+  const signals0 = await post("/api/obs/console/cli", { line: "/signals" });
+  check("/signals is behind the bearer", signals0.status === 401 && signals0.j.ok === false, String(signals0.status));
 
   if (mode !== "off") {
     console.log("stranger");
@@ -144,6 +146,9 @@ async function walk(): Promise<void> {
   noDash(helpAll, "/help all");
   const whoami = await cli("/whoami");
   check("/whoami shows the setup", whoami.j.ok === true && has(whoami, /^name\s/), first(whoami));
+  const signals = await cli("/signals");
+  check("/signals is the owner's read of the board", signals.j.ok === true && signals.j.effect === "signals" && /^(No signals yet|Board at \d\d:\d\dZ:)/.test(first(signals)), first(signals));
+  noDash(signals, "/signals");
   const status = await cli("/status");
   check("/status is the person's own agent once signed in", status.j.ok === true && status.j.effect === "follow" && /^Your agent is (on|off)/.test(first(status)), first(status));
   check("/status ends with the desk it follows", has(status, /Agent OBS, the desk it follows|\/desk shows the desk/), status.lines.join(" | ").slice(0, 200));

@@ -32,6 +32,7 @@ import { readLaunch, launchLine, launchRulesFromEnv, launchRulesForRecord, type 
 import { autoEntryPick, autoEntryFor, entryVeto } from "./autoentry.ts";
 import { readsGate, holderReadComplete, launchReadComplete } from "./readgate.ts";
 import { recordResearch } from "./research.ts";
+import { writeSignals, convoyRulesFromEnv, type SignalWant } from "./signalLedger.ts";
 import { digestThought, shortWhy } from "./digest.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry, readEntries, recordClose, reconcileCloses, ethUsdAt } from "./trade-memory.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
@@ -328,7 +329,8 @@ for (const a of heldDyn) inPlay.set(a.symbol, a);
 for (const e of early.filter((x) => x.tradable).slice(0, 3)) if (!inPlay.has(e.symbol)) inPlay.set(e.symbol, resolveAny(`${e.symbol}@robinhood`, feed));
 for (const cnd of candidates.filter((x) => x.grade).slice(0, Number(process.env.OBS_CYCLE_READ_CANDIDATES ?? 2))) if (!inPlay.has(cnd.symbol)) inPlay.set(cnd.symbol, resolveAny(`${cnd.symbol}@robinhood`, feed));
 const tapes: string[] = [];
-const tapeTrend = new Map<string, string>();
+// The tape reduced, per token, for the signal rows: buyers, trend, and the last print in dollars as the mark of a token the book does not price.
+const tapeReads = new Map<string, { buyPressurePct: number | null; trend: string; lastUsd: number | null }>();
 // The entry read per token: volume puts it on watch, the price action gives the entry.
 const entryReads = new Map<string, EntryRead>();
 // Who holds each token in play: concentration, the first buyers, fresh wallets. A failed read is a public refusal.
@@ -357,7 +359,7 @@ for (const [sym, a] of inPlay) {
   const quote = spec.quote ?? "USDG";
   const quoteUsd = quote === "USDG" ? 1 : prices[quote] ?? null;
   tapes.push(tapeLine(st, quoteUsd, quote));
-  tapeTrend.set(sym, st.trend);
+  tapeReads.set(sym, { buyPressurePct: st.buyPressurePct, trend: st.trend, lastUsd: st.last != null && quoteUsd != null ? st.last * quoteUsd : null });
   const g = graded.get(sym)?.grade;
   const er = entryRead(rows, sym, now, entryRules, g === "A" || g === "B" || heldDyn.some((h) => h.symbol === sym));
   entryReads.set(sym, er);
@@ -513,18 +515,24 @@ if (!thoughts.length) {
 let decision = parsed.decision;
 let proposal: Trade | null = null;
 let executed: Trade | null = null;
+/** What the decision block learned about the token it named, for the signal rows: a refused want, an add-on, a sale. */
+let want: SignalWant | null = null;
+/** The desk's trade mirrored for the agents, run after the signal rows are written (the rows come first, 2026-09-08). */
+let mirror: (() => Promise<void>) | null = null;
+// The board's reads, one entry per token, for the auto entry's pick and the signal rows alike: every thinking cycle
+// has them, not only the auto-entry branch that once built them (2026-09-08). A read the cycle does not have is not
+// a pass: each entry says whether the read completed (readgate.ts, 2026-09-08).
+const heldSet = new Set(heldDyn.map((a) => a.symbol));
+const boardSymbols = [...new Set(candidates.filter((c) => c.grade).map((c) => c.symbol).concat(early.filter((e) => e.tradable).map((e) => e.symbol)))];
+const readsFor = boardSymbols.map((sym) => {
+  const er = entryReads.get(sym);
+  const hr = holderReads.get(sym);
+  const lr = launchReads.get(sym);
+  return { symbol: sym, grade: graded.get(sym)?.grade ?? null, entryOk: !!er?.ok, entryWhy: er?.why ?? "", holdersRead: holderReadComplete(hr), holdersOk: !!hr?.ok, launchRead: launchReadComplete(lr), launchOk: lr && lr.exists ? lr.verdict.ok : null, held: heldSet.has(sym) };
+});
 // The reads decide the entry (OBS_AUTO_ENTRY=on): a candidate that passed the entry read, the holder read and the
 // launch read in this same cycle is bought at the rails' size when the model held anyway; its writing stays public.
-// A read the cycle does not have is not a pass: the pick asks whether each read completed (readgate.ts, 2026-09-08).
 if ((process.env.OBS_AUTO_ENTRY ?? "off") === "on" && decision.kind === "hold") {
-  const heldSet = new Set(heldDyn.map((a) => a.symbol));
-  const board = candidates.filter((c) => c.grade).map((c) => c.symbol).concat(early.filter((e) => e.tradable).map((e) => e.symbol));
-  const readsFor = [...new Set(board)].map((sym) => {
-    const er = entryReads.get(sym);
-    const hr = holderReads.get(sym);
-    const lr = launchReads.get(sym);
-    return { symbol: sym, grade: graded.get(sym)?.grade ?? null, entryOk: !!er?.ok, entryWhy: er?.why ?? "", holdersRead: holderReadComplete(hr), holdersOk: !!hr?.ok, launchRead: launchReadComplete(lr), launchOk: lr && lr.exists ? lr.verdict.ok : null, held: heldSet.has(sym) };
-  });
   const pick = autoEntryPick(readsFor);
   const ethUsd = prices.ETH ?? reads.prices.ethUsd ?? null;
   if (pick && ethUsd != null && ethUsd > 0) {
@@ -567,6 +575,7 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
     const heldPos = to.candidate ? pos.find((x) => x.asset === to.symbol) : undefined;
     // The lane: a token still inside its launch window gets the launch ticket; one with a record gets the full size.
     const lane: "launch" | "record" = early.some((e) => e.symbol === to.symbol) ? "launch" : "record";
+    want = { symbol: from.candidate ? from.symbol : to.symbol, exit: !!from.candidate };
     const railGate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails, to.candidate ? (graded.get(to.symbol) ?? null) : null, heldPos?.valueUsd ?? 0, lane);
     // The reads: a launch-token buy also needs the tape's entry read, the holder read and the launch read, each made
     // this cycle and each passed (readgate.ts). Volume puts a token on watch; the tape gives the entry; a bundled or
@@ -577,10 +586,12 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
     let capUsd: number | undefined;
     let addOn = false;
     if (!gate.ok) {
+      want.refused = gate.reason;
       decision = { kind: "hold", reason: `wanted ${decision.amount} ${assetKey(from)} to ${assetKey(to)}, refused: ${gate.reason}` };
     } else if ("maxUsd" in gate && gate.maxUsd != null) {
       capUsd = gate.maxUsd;
       addOn = !!gate.addOn;
+      want.addOn = addOn;
       if (usd != null && usd > gate.maxUsd) {
         const clamped = Number(((decision.amount * gate.maxUsd) / usd).toPrecision(6));
         const known = to.contract ? tokenInfo(to.contract) : null;
@@ -599,7 +610,7 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
       if (r.ok) {
         executed = r.trade;
         // The desk's real trade is every live agent's trade: the same entry at their size, the same exit by share.
-        if (!PAPER && r.trade.venue === "pool") await mirrorForFollowers(intent, r.trade, isExit ? haveNow : null, now).catch((e) => console.error(`[follow] mirror: ${e instanceof Error ? e.message : String(e)}`));
+        if (!PAPER && r.trade.venue === "pool") mirror = () => mirrorForFollowers(intent, r.trade, isExit ? haveNow : null, now).catch((e) => console.error(`[follow] mirror: ${e instanceof Error ? e.message : String(e)}`));
         if (to.candidate && (r.trade.status === "settled" || r.trade.status === "pending")) {
           const e = early.find((x) => x.symbol === to.symbol);
           recordEntry({ at: now, symbol: to.symbol, token: to.contract ?? "", source: e?.source ?? feed.candidates.find((x) => x.symbol === to.symbol)?.source ?? "unknown", grade: graded.get(to.symbol)?.grade ?? null, tierPct: to.candidate.tierPct, ignitedAfterMin: e?.ignitedAfterMin ?? null, via: to.candidate.curve ? "curve" : "side pool", usd: intentUsd ?? 0, reason: parsed.analysis?.thesis || decision.reason || "", paper: PAPER });
@@ -609,6 +620,7 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
         }
         decision = { ...decision, from: assetKey(from), to: assetKey(to), reason: `${decision.reason || "executing"}; ${PAPER ? `paper: swapped ${amt} ${from.symbol} for ${r.trade.to.amount} ${to.symbol} at full size, nothing sent` : r.trade.venue === "pool" ? `swapped ${amt} ${from.symbol} on chain, ${r.trade.status}` : `sent ${amt} ${from.symbol} via ${r.trade.partner}`}` };
       } else {
+        want.refused = r.reason;
         decision = { kind: "hold", reason: `wanted ${amt} ${assetKey(from)} to ${assetKey(to)}, refused: ${r.reason}` };
       }
     } else if (decision.kind === "propose-swap") {
@@ -641,6 +653,22 @@ if (DRY) {
   console.log("DRY RUN, nothing recorded.");
   process.exit(0);
 }
+// The signal ledger: the board as the agents will read it, one row per token in play with the desk's own stance,
+// written once per thinking cycle and before the mirror, so the desk's buy is one agent acting on the same rows
+// (the operator's architecture, 2026-09-08). A fast tick that did not think left above and writes nothing.
+const launchLane = new Set(early.map((e) => e.symbol));
+writeSignals({
+  at: now,
+  cycleId: now,
+  board: [...inPlay].filter((x): x is [string, NonNullable<ReturnType<typeof resolveAny>>] => !!x[1]?.candidate).map(([sym, a]) => ({ symbol: sym, token: a.contract ?? null, poolId: a.candidate?.poolId ?? null, lane: launchLane.has(sym) ? "launch" : "record", held: heldSet.has(sym), grade: graded.get(sym) ?? null, priceUsd: prices[sym] ?? tapeReads.get(sym)?.lastUsd ?? null, entry: entryReads.get(sym) ?? null, holders: holderReads.get(sym) ?? null, launch: launchReads.get(sym) ?? null, failed: readFailed.get(sym), tape: tapeReads.get(sym) ?? null, known: a.contract ? tokenInfo(a.contract) : null })),
+  decision,
+  want,
+  executed: !!executed,
+  proposed: !!proposal,
+  conviction: parsed.analysis?.conviction ?? null,
+  rules: convoyRulesFromEnv(),
+});
+if (mirror) await mirror();
 recordThought(entry);
 {
   const g = digestThought(entry);

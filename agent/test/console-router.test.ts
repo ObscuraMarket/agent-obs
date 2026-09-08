@@ -13,6 +13,17 @@ test("a person's agent is denied the gateway's shell, files, web, self-editing a
 
 const ctx = { settings: {}, signedIn: false, swaps: 1 };
 
+test("/signals is the owner's read of the signal ledger: its own effect with an optional count, in the vocabulary and the help, no lines of its own", () => {
+  assert.deepEqual(routeConsole("/signals", ctx), { lines: [], effect: { kind: "signals" } });
+  assert.deepEqual(routeConsole("/signals 5", ctx).effect, { kind: "signals", n: 5 });
+  assert.deepEqual(routeConsole("/signal", ctx).effect, { kind: "signals" });
+  assert.deepEqual(routeConsole("/signals abc", ctx).effect, { kind: "signals" }, "a count that is not a number is ignored");
+  assert.ok(VOCAB.includes("signals"));
+  assert.deepEqual(suggest("signls"), ["/signals"]);
+  assert.ok(HELP_ALL.some((l) => /^ {4}\/signals \[n\] {2,}/.test(l)), "in the desk section of the full help");
+  for (const l of HELP_ALL) assert.ok(!l.includes("—"));
+});
+
 test("a line without a slash is a message to the agent; a slash is a command; a typo is one tap from fixed", () => {
   assert.deepEqual(routeConsole("what are you holding", ctx), { lines: [], effect: { kind: "chat", text: "what are you holding" } });
   assert.deepEqual(routeConsole("/status", ctx).effect, { kind: "desk", command: "status" });
