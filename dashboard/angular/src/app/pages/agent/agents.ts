@@ -11,13 +11,20 @@ export interface AgentRow {
   mode: 'paper' | 'live';
   trades: number;
   positions: Array<unknown>;
+  walletAddress?: string | null;
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** The page's month names, shared with the component's clocks so the two never drift apart (one copy since 2026-09-08). */
+export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** PURE: an agent earns a row while it runs, or once it has traded or holds something; a switched-off blank does not. */
-export function visibleAgents<T extends AgentRow>(agents: T[]): T[] {
-  return agents.filter((a) => a.on || a.trades > 0 || a.positions.length > 0);
+/**
+ * PURE: an agent earns a row while it runs, or once it has traded or holds something; a switched-off blank does not.
+ * `keep` is the wallet a deep link (?agent=0x...) opened: its row stays so the open panel has a row pointing at it,
+ * else the panel sat under the table with no row marked open (review, 2026-09-08).
+ */
+export function visibleAgents<T extends AgentRow>(agents: T[], keep: string | null = null): T[] {
+  const k = keep ? keep.toLowerCase() : null;
+  return agents.filter((a) => a.on || a.trades > 0 || a.positions.length > 0 || (!!k && (a.walletAddress || '').toLowerCase() === k));
 }
 
 /**
@@ -33,15 +40,17 @@ export function agentsSummary(visible: AgentRow[]): string {
 }
 
 /**
- * PURE: how long ago an agent started, short: "just now", "35 min ago", "2 h ago", then the day ("Sep 7", with
- * the year once it is not this year). `now` is a parameter so a spec can hold the clock.
+ * PURE: how long ago an agent started, short: "just now", "35m ago", "2h ago", then the day ("Sep 7", with the
+ * year once it is not this year). The units read like the page's other clocks ("Read 2m ago", "Last Cycle 5m Ago").
+ * The day branch keys on the elapsed minutes, not the rounded hours: 23h 31m rounds to 24 and once read as the
+ * start date, which on the same day looked like a start with no time (review, 2026-09-08). `now` is a parameter
+ * so a spec can hold the clock.
  */
 export function sinceText(ts: number, now: number = Date.now()): string {
   const m = Math.max(0, Math.round((now - ts) / 60_000));
   if (m < 1) { return 'just now'; }
-  if (m < 60) { return `${m} min ago`; }
-  const h = Math.round(m / 60);
-  if (h < 24) { return `${h} h ago`; }
+  if (m < 60) { return `${m}m ago`; }
+  if (m < 24 * 60) { return `${Math.max(1, Math.round(m / 60))}h ago`; }
   const d = new Date(ts), n = new Date(now);
   const day = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
   return d.getUTCFullYear() === n.getUTCFullYear() ? day : `${day}, ${d.getUTCFullYear()}`;
@@ -54,13 +63,24 @@ export function sinceTitle(ts: number): string {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
 }
 
-/** PURE: whole dollars for a holding's value: 94.44 reads "$94", 1234.5 reads "$1,235". */
-export function wholeUsd(v: number): string {
-  const sign = v < 0 ? '-' : '';
-  return sign + '$' + Math.round(Math.abs(v)).toLocaleString('en-US');
+/**
+ * PURE: whole dollars for a holding's value: 94.44 reads "$94", 1234.5 reads "$1,235". A bad number reads "n/a"
+ * like the component's usd(), and a value that rounds to nothing drops its sign (-0.4 once read "-$0"; 2026-09-08).
+ */
+export function wholeUsd(v: number | null | undefined): string {
+  if (v == null || isNaN(v)) { return 'n/a'; }
+  const n = Math.round(Math.abs(v));
+  const sign = v < 0 && n ? '-' : '';
+  return sign + '$' + n.toLocaleString('en-US');
 }
 
-/** PURE: a signed percent with one decimal from a fraction: -0.0556 reads "-5.6%", 0.12 reads "+12.0%". */
-export function shortPct(v: number): string {
-  return (v > 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+/**
+ * PURE: a signed percent with one decimal from a fraction: -0.0556 reads "-5.6%", 0.12 reads "+12.0%". A bad
+ * number reads as nothing, like the component's pct(), and a hair under zero reads "0.0%" rather than "-0.0%".
+ */
+export function shortPct(v: number | null | undefined): string {
+  if (v == null || isNaN(v)) { return ''; }
+  const s = (Math.abs(v) * 100).toFixed(1);
+  const zero = Number(s) === 0;
+  return (zero ? '' : v > 0 ? '+' : '-') + s + '%';
 }

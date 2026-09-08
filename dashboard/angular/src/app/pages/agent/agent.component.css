@@ -1965,7 +1965,7 @@ table.tbl.agents-tbl {
   border-radius: 4px;
 }
 
-/* The chevron closes the cell and turns with the row's panel, lime whenever the name is. */
+/* The chevron closes the cell and turns with the row's panel, lime whenever the name is: hover, open, or the keyboard on the name (it sits beside the button, not in it, so it takes no currentColor; 2026-09-08). */
 .agent-cell .chev {
   width: 14px;
   height: 14px;
@@ -1976,7 +1976,8 @@ table.tbl.agents-tbl {
 }
 
 .tbl tr.pick:hover .agent-cell .chev,
-.tbl tr.open .agent-cell .chev {
+.tbl tr.open .agent-cell .chev,
+.agent-cell .agent-open:focus-visible ~ .chev {
   color: var(--lime);
   opacity: 1;
 }

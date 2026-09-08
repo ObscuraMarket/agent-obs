@@ -459,9 +459,10 @@
               </span>
             </td>
             <td class="r num">{{ wholeUsd(a.sizeUsd) }}</td>
+            <!-- One holding is "PORT $94 · -5.6%"; a comma between holdings, so the dot only ever joins a value to its percent (2026-09-08) -->
             <td class="num">
               <span class="mutedtx" *ngIf="!a.positions.length">nothing</span>
-              <span *ngFor="let x of a.positions; let last = last">{{ x.asset }} {{ x.valueUsd == null ? 'unpriced' : wholeUsd(x.valueUsd) }}<ng-container *ngIf="x.unrealizedPct != null"> · <span [ngClass]="dir(x.unrealizedPct)">{{ shortPct(x.unrealizedPct) }}</span></ng-container><span class="mutedtx" *ngIf="!last"> · </span></span>
+              <span *ngFor="let x of a.positions; let last = last">{{ x.asset }} {{ x.valueUsd == null ? 'unpriced' : wholeUsd(x.valueUsd) }}<ng-container *ngIf="x.unrealizedPct != null"> · <span [ngClass]="dir(x.unrealizedPct)">{{ shortPct(x.unrealizedPct) }}</span></ng-container><span class="mutedtx" *ngIf="!last">, </span></span>
             </td>
             <td class="r num"><span [ngClass]="a.realizedUsd ? dir(a.realizedUsd) : 'mutedtx'">{{ a.realizedUsd ? usd(a.realizedUsd, true) : '$0' }}</span></td>
             <td class="r num"><span [class.mutedtx]="!a.trades">{{ a.trades }}</span></td>
