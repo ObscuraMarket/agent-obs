@@ -8,14 +8,17 @@
 // tested offline; the sends themselves are the lane's, the same code that trades the desk's own money.
 import { ASSETS, assetKey } from "./assets.ts";
 import { railsFromEnv, type Intent, type RailContext } from "./rails.ts";
-import { executeOnChain, latestEthUsd } from "./onchain.ts";
+import { executeOnChain, latestEthUsd, quoteOnChain } from "./onchain.ts";
 import { readNativeBalance, readTokenBalance } from "./signer.ts";
-import { agentWallet, walletsOn } from "./agentWallet.ts";
+import { agentWallet, walletsOn, quoteUsd } from "./agentWallet.ts";
 import { acquire } from "./walletLock.ts";
-import { readFollow, followState, readFollowTrades, recordFollowTrade, recordFollowNote, liveHoldings, type FollowRow, type FollowTradeRow } from "./follow.ts";
-import type { Trade } from "./book.ts";
+import { readFollow, followState, readFollowTrades, recordFollowTrade, recordFollowNote, liveHoldings, liveTrades, type FollowRow, type FollowTradeRow } from "./follow.ts";
+import { readBook, holdingsFrom, isHolding, type Trade, type CapitalFlow } from "./book.ts";
 import { raiseAlert } from "./alerts.ts";
 import { doorNow } from "./gate.ts";
+import { resolveAny } from "./candidates.ts";
+import { dataPath } from "../config.ts";
+import { readFileSync, writeFileSync } from "node:fs";
 
 /** Live mirroring runs when agent wallets exist and the operator has not switched it off (OBS_FOLLOW_LIVE=off). */
 export const liveOn = (env: NodeJS.ProcessEnv = process.env): boolean => (env.OBS_FOLLOW_LIVE ?? "on").trim().toLowerCase() !== "off" && walletsOn(env);
@@ -157,4 +160,197 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
 export function mirrorWidth(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.OBS_FOLLOW_PARALLEL);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 4;
+}
+
+// ---- The sweep: a follower left holding what the desk already sold. ----
+//
+// A mirrored exit that was skipped (the wallet's lock was held), refused by the rails, thrown, or killed with the
+// process in a redeploy was never tried again, so a follower could sit in a token the desk had sold for good
+// (audit, 2026-09-08). Once a cycle, after the desk's own settle, every follower's ledger is held up against the
+// desk's book: a token the ledger says the follower holds and the desk does not is sold whole, through the same
+// lane the mirror's exit runs, under the wallet's lock, in the follower's own ledger. A token the desk still holds
+// is left alone: its exit is coming, and the mirror will carry it. A token the ledger holds but the wallet does
+// not (sold by hand with /sell before the row landed, or sent out with /withdraw SYMBOL, which writes no trade row)
+// is written off with a settled row that brings nothing back, so the ledger stops saying it is held. Only
+// ledger-known tokens: a balance the ledger never saw is an airdrop, never sold. Throttled to one sweep per
+// OBS_FOLLOW_SWEEP_MIN minutes so a busy desk is not slowed by wallet reads every tick.
+
+/** How often the sweep runs at most, in minutes, unless OBS_FOLLOW_SWEEP_MIN says otherwise. */
+export const DEFAULT_SWEEP_MIN = 5;
+/** Where the last sweep's time is kept between cycles: each cycle is its own process. */
+export const SWEEP_STAMP_FILE = "obs-follow-sweep.json";
+
+/** PURE: minutes between sweeps (OBS_FOLLOW_SWEEP_MIN): five unless set to a non-negative number; zero means every cycle. */
+export function sweepMinutes(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.OBS_FOLLOW_SWEEP_MIN);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SWEEP_MIN;
+}
+
+/** PURE: whether a sweep is due now: none yet, or the last one is at least the throttle ago. A stamp from the future (a clock set back) does not block. */
+export function sweepDue(lastAt: number | null, now: number, minMin: number): boolean {
+  if (lastAt == null || !Number.isFinite(lastAt)) return true;
+  if (lastAt > now) return true;
+  return now - lastAt >= minMin * 60e3;
+}
+
+const SWEEP_BASE = new Set(["ETH", "USDG", "USDC", "USDT", "DAI"]);
+
+/**
+ * PURE: the tokens the desk itself holds, from its own book: what its ledgers leave in the wallet above dust, the
+ * base assets aside. The book and not the chain, so a follower is judged against what the desk means to hold; a
+ * pending desk sell already counts as gone, the way the mirror's exit already ran on it.
+ */
+export function deskHeldSymbols(flows: CapitalFlow[], trades: Trade[], env: NodeJS.ProcessEnv = process.env): Set<string> {
+  const out = new Set<string>();
+  for (const [sym, qty] of Object.entries(holdingsFrom(flows, trades))) if (!SWEEP_BASE.has(sym) && isHolding(qty, env)) out.add(sym);
+  return out;
+}
+
+/** PURE: the tokens a follower's ledger holds that the desk does not: what the sweep looks at, alphabetical. */
+export function sweepTargets(followerHeld: Record<string, number>, deskHeld: Iterable<string>): string[] {
+  const desk = new Set([...deskHeld].map((s) => s.toUpperCase()));
+  return Object.entries(followerHeld).filter(([sym, qty]) => qty > 0 && !desk.has(sym.toUpperCase())).map(([sym]) => sym.toUpperCase()).sort();
+}
+
+export type SweepLeg = "sell" | "correct" | "wait";
+
+/**
+ * PURE: what one target gets. The wallet holds it: sell all of it. The wallet holds none (or dust): the ledger is
+ * corrected, unless a buy of it is still in flight (a pending entry row), in which case the token may be on its way
+ * and the sweep waits for the next pass.
+ */
+export function sweepLeg(chainQty: number, pendingInto: boolean, env: NodeJS.ProcessEnv = process.env): SweepLeg {
+  if (isHolding(chainQty, env)) return "sell";
+  return pendingInto ? "wait" : "correct";
+}
+
+/**
+ * PURE: the row that writes a token off a follower's ledger: a settled exit of the whole ledger amount that brings
+ * nothing back and prices nothing, so liveHoldings (a sum of to legs less from legs) drops it and the cost basis
+ * records no realized figure for a sale the desk never made. A zero-amount row would not do: liveHoldings subtracts
+ * the from leg, so the from leg must carry what the ledger still says.
+ */
+export function correctionRow(symbol: string, ledgerQty: number, id: string, why: string, now: number): Trade {
+  return { at: now, id, status: "settled", venue: "pool", exit: true, from: { asset: symbol, network: "robinhood", amount: ledgerQty, usd: null }, to: { asset: "ETH", network: "robinhood", amount: 0, usd: null }, partner: "pool", note: why, updatedAt: now };
+}
+
+/** PURE: the ledger id a sweep's rows and notes carry, so /agent and the events feed can tell them from mirrored exits. */
+export const sweepId = (symbol: string, now: number): string => `sweep-${symbol.toUpperCase()}-${now}`;
+
+export interface SweepSummary {
+  /** Why nothing ran, or null when the sweep ran. */
+  skipped: "off" | "throttled" | "no followers" | null;
+  followers: number;
+  targets: number;
+  sold: number;
+  corrected: number;
+  waited: number;
+  failed: number;
+}
+
+export function readSweepStamp(): number | null {
+  try { const v = JSON.parse(readFileSync(dataPath(SWEEP_STAMP_FILE), "utf8")) as { at?: unknown }; return typeof v.at === "number" && Number.isFinite(v.at) ? v.at : null; } catch { return null; }
+}
+
+function writeSweepStamp(now: number): void {
+  try { writeFileSync(dataPath(SWEEP_STAMP_FILE), JSON.stringify({ at: now })); } catch (e) { console.error(`[follow] the sweep stamp could not be written: ${e instanceof Error ? e.message : String(e)}`); }
+}
+
+/** PURE: the sweep's one log line. */
+export function sweepLine(s: SweepSummary): string {
+  if (s.skipped) return `[follow] sweep skipped: ${s.skipped}`;
+  return `[follow] sweep: ${s.followers} follower${s.followers === 1 ? "" : "s"} checked, ${s.targets} target${s.targets === 1 ? "" : "s"}, ${s.sold} sold, ${s.corrected} corrected, ${s.waited} waiting, ${s.failed} failed`;
+}
+
+/**
+ * The sweep, once per throttle window: every follower's ledger against the desk's book, and each token the desk no
+ * longer holds sold whole from the follower's wallet or written off, a few followers at a time, each inside its
+ * own try. A failed sell is a note and an exit alert keyed by wallet and token, the same as a refused mirrored exit.
+ */
+export async function sweepFollowers(now = Date.now(), opts: { force?: boolean } = {}): Promise<SweepSummary> {
+  const summary: SweepSummary = { skipped: null, followers: 0, targets: 0, sold: 0, corrected: 0, waited: 0, failed: 0 };
+  const done = (): SweepSummary => { console.log(sweepLine(summary)); return summary; };
+  if (!liveOn()) { summary.skipped = "off"; return done(); }
+  if (!opts.force && !sweepDue(readSweepStamp(), now, sweepMinutes())) { summary.skipped = "throttled"; return done(); }
+  const rows = readFollow();
+  if (!rows.length) { summary.skipped = "no followers"; return done(); }
+  // Stamped before the work, so a sweep that dies mid-way does not run again every tick until it is looked at.
+  writeSweepStamp(now);
+  const tradeRows: FollowTradeRow[] = readFollowTrades();
+  const book = readBook();
+  const deskHeld = deskHeldSymbols(book.flows, book.trades);
+  const eth = ASSETS["ETH@robinhood"];
+  const rails = railsFromEnv();
+  const addresses = [...new Set(rows.map((r) => r.address))];
+  summary.followers = addresses.length;
+  const plan = addresses.map((address) => { const held = liveHoldings(tradeRows, address); return { address, held, targets: sweepTargets(held, deskHeld) }; }).filter((p) => p.targets.length);
+  summary.targets = plan.reduce((n, p) => n + p.targets.length, 0);
+  if (!plan.length) return done();
+  const pendingInto = (address: string, symbol: string): boolean => liveTrades(tradeRows, address).some((t) => t.status === "pending" && !t.exit && t.to.asset.toUpperCase() === symbol);
+  const one = async (p: { address: string; held: Record<string, number>; targets: string[] }): Promise<void> => {
+    for (const symbol of p.targets) {
+      const id = sweepId(symbol, now);
+      const key = `${p.address.toLowerCase()} ${symbol}`;
+      let release: (() => void) | null = null;
+      try {
+        const token = resolveAny(`${symbol}@robinhood`);
+        if (!token || token.kind !== "erc20" || !token.contract) {
+          summary.failed++;
+          recordFollowNote(p.address, id, `${symbol} is on the ledger but the desk no longer knows the token, so it cannot be sold; /withdraw ${symbol} sends it to your wallet`, now);
+          await raiseAlert("exit", `a follower still holds ${symbol} by its ledger (wallet ${p.address.slice(0, 8)}) and the desk cannot resolve the token to sweep it`, now, undefined, undefined, key);
+          continue;
+        }
+        const w = agentWallet(p.address);
+        const raw = await readTokenBalance(token, token.contract as `0x${string}`, w.address);
+        const chainQty = Number(raw) / 10 ** token.decimals;
+        const leg = sweepLeg(chainQty, pendingInto(p.address, symbol));
+        if (leg === "wait") { summary.waited++; continue; }
+        if (leg === "correct") {
+          const why = `the ledger said ${p.held[symbol]} ${symbol} was held but the wallet holds none; written off (sold by hand or withdrawn as a token)`;
+          if (recordFollowTrade(p.address, id, correctionRow(symbol, p.held[symbol], id, why, now)) === false) throw new Error(`the ledger did not take the correction row for ${symbol}`);
+          recordFollowNote(p.address, id, `${symbol}: ${why}`, now);
+          summary.corrected++;
+          console.log(`[follow] ${p.address.slice(0, 8)} ${symbol}: ledger corrected, the wallet holds none`);
+          continue;
+        }
+        // The wallet's lock for the whole leg, as the mirror's exit takes it: a held lock is a skip, and the next sweep tries again.
+        release = acquire(p.address, `sweep ${symbol}`);
+        if (!release) {
+          summary.failed++;
+          const busy = "the agent's wallet is busy with a withdrawal or another trade";
+          recordFollowNote(p.address, id, `sweep of ${symbol} skipped: ${busy}`, now);
+          await raiseAlert("exit", `a follower's sweep of ${symbol} was skipped (wallet ${p.address.slice(0, 8)}): ${busy}`, now, undefined, undefined, key);
+          continue;
+        }
+        const ethBal = Number(await readNativeBalance(eth, w.address)) / 1e18;
+        // The rails refuse an unpriced leg, and there is no desk fill to price this by: the pools price it now, as /sell does.
+        const q = await quoteOnChain(token, eth, chainQty);
+        const intent: Intent = { from: token, to: eth, amount: chainQty, usd: quoteUsd(q, chainQty, latestEthUsd(now)), exit: true };
+        const ctx: RailContext = { rails, balances: { [assetKey(token)]: chainQty, "ETH@robinhood": ethBal }, nativeOnFromChain: ethBal, openOrders: 0, now };
+        const r = await executeOnChain(intent, ctx, now, { wallet: w, record: (t) => recordFollowTrade(p.address, id, t) });
+        if (r.ok) {
+          summary.sold++;
+          recordFollowNote(p.address, id, `sold all ${chainQty} ${symbol} for ETH: the desk had already sold its own and this wallet's exit never landed`, now);
+          console.log(`[follow] ${p.address.slice(0, 8)} swept ${chainQty} ${symbol}: ${r.trade.status}`);
+        } else {
+          summary.failed++;
+          recordFollowNote(p.address, id, `sweep of ${symbol} refused: ${r.reason}`, now);
+          await raiseAlert("exit", `a follower's sweep of ${symbol} was refused (wallet ${p.address.slice(0, 8)}, its whole holding): ${r.reason}`, now, undefined, undefined, key);
+        }
+      } catch (e) {
+        summary.failed++;
+        const why = e instanceof Error ? e.message : String(e);
+        recordFollowNote(p.address, id, `sweep of ${symbol} failed: ${why.slice(0, 160)}`, now);
+        console.error(`[follow] sweep of ${symbol} for ${p.address.slice(0, 8)} failed: ${why}`);
+        await raiseAlert("exit", `a follower's sweep of ${symbol} failed (wallet ${p.address.slice(0, 8)}): ${why.slice(0, 200)}`, now, undefined, undefined, key).catch(() => undefined);
+      } finally {
+        release?.();
+        release = null;
+      }
+    }
+  };
+  // Followers in the mirror's batches, each from its own wallet; one follower's tokens go one after another under its lock.
+  const width = mirrorWidth();
+  for (let i = 0; i < plan.length; i += width) await Promise.all(plan.slice(i, i + width).map(one));
+  return done();
 }

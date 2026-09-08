@@ -17,7 +17,7 @@ import { railsFromEnv, tradingArmed, resolveAsset, dayStartEquity, lastEntryAt, 
 import { assetKey, type Asset } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates, rememberClose } from "./onchain.ts";
-import { mirrorForFollowers } from "./mirror.ts";
+import { mirrorForFollowers, sweepFollowers } from "./mirror.ts";
 import { settleFollowers } from "./follow.ts";
 import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate, curveKey, isHolding } from "./candidates.ts";
 import { checkCandidate, clampToBalance } from "./rails.ts";
@@ -96,6 +96,9 @@ if (!DRY) {
   // The agents' rows too: a follower row the mirror could not wait for was pending forever until 2026-09-08.
   for (const t of await settleFollowers(now).catch((e) => { console.error(`[follow] settle: ${e instanceof Error ? e.message : String(e)}`); return []; })) console.log(`[follow] ${t.address.slice(0, 8)} ${t.id} -> ${t.status}${t.settlementTx ? ` (${t.settlementTx})` : ""}`);
 }
+// A follower left holding what the desk already sold (a skipped, refused, thrown or redeploy-killed mirrored exit,
+// audit 2026-09-08) is swept out here, before anything else trades; at most once per OBS_FOLLOW_SWEEP_MIN minutes.
+if (ARMED && !PAPER) await sweepFollowers(now).catch((e) => console.error(`[follow] sweep: ${e instanceof Error ? e.message : String(e)}`));
 
 // The rails' own exits, before the model thinks: a held launch token past
 // its time stop, through its floor, or with volume rolling over is sold
