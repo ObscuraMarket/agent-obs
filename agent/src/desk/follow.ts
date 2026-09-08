@@ -253,6 +253,13 @@ export function followEvents(state: FollowState, trades: Trade[], notes: FollowN
     if (at <= since) continue;
     const deskId = (t as Partial<FollowTradeRow>).deskId ?? t.id.replace(/^f-/, "");
     const why = deskReason(deskById(deskId), entries);
+    // A sweep's row (mirror.ts, 2026-09-08): the desk had sold and this wallet's exit never landed, so the token was
+    // sold on its own later; or a write-off, when the wallet held none of what the ledger said.
+    if (t.exit && deskId.startsWith("sweep-")) {
+      const wroteOff = !(t.to.amount > 0);
+      out.push({ at, kind: "exit", text: wroteOff ? `My book said I still held ${t.from.asset} but my wallet holds none (sold by hand or withdrawn); marked it gone.` : `Sold all my ${t.from.asset} after the desk had sold its own: ${eth(t.to.amount)} ETH${dollars(t.to.usd)} back to my wallet, ${t.status === "settled" ? "landed" : "sent"}. My exit with the desk never landed, so the desk swept it.` });
+      continue;
+    }
     if (!t.exit) {
       const how = live ? `${eth(t.from.amount)} ETH${dollars(t.from.usd)} from my wallet, ${t.status === "settled" ? "landed" : "sent, waiting for the chain"}` : `$${(t.from.usd ?? 0).toFixed(0)} on paper at the desk's price`;
       out.push({ at, kind: "entry", text: `Followed Agent OBS into ${t.to.asset}: ${how}.${why ? ` The desk's reason: ${why}` : ""}` });
@@ -263,6 +270,8 @@ export function followEvents(state: FollowState, trades: Trade[], notes: FollowN
   }
   for (const n of notes) {
     if (n.at <= since) continue;
+    // A sweep's note (mirror.ts, 2026-09-08) is the desk catching this wallet up, not a trade it failed to follow.
+    if (n.deskId?.startsWith("sweep-")) { out.push({ at: n.at, kind: "note", text: `The desk's sweep of my wallet: ${n.note}` }); continue; }
     const skipped = /skipped/.test(n.note);
     out.push({ at: n.at, kind: "note", text: skipped ? `Sat this one out. ${n.note.replace(/^entry of (\S+) skipped: /, (_, s) => `The desk entered ${s}; `)}` : `Couldn't follow the desk: ${n.note}` });
   }

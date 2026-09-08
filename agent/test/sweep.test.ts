@@ -1,0 +1,89 @@
+// The follower sweep's pure parts: who needs sweeping, what each leg gets, the correction row, and the throttle.
+// A skipped, refused, thrown or redeploy-killed mirrored exit was never retried until 2026-09-08, so a follower
+// could be left holding a token the desk had already sold; these are the rules the sweep runs on.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { sweepTargets, sweepLeg, sweepDue, sweepMinutes, deskHeldSymbols, correctionRow, sweepId, sweepLine, DEFAULT_SWEEP_MIN } from "../src/desk/mirror.ts";
+import { liveHoldings, type FollowTradeRow } from "../src/desk/follow.ts";
+import type { Trade, CapitalFlow } from "../src/desk/book.ts";
+
+const A = "0x1111111111111111111111111111111111111111";
+const T = 1_788_800_000_000;
+const env = {} as NodeJS.ProcessEnv;
+
+test("a token the follower holds and the desk does not is a sweep target; one the desk still holds is not", () => {
+  const held = { PENGUIN: 50, DOHJ: 12 };
+  // The desk sold PENGUIN and still holds DOHJ: its DOHJ exit is coming, and the mirror will carry it.
+  assert.deepEqual(sweepTargets(held, new Set(["DOHJ"])), ["PENGUIN"]);
+  assert.deepEqual(sweepTargets(held, ["dohj", "penguin"]), []);
+  assert.deepEqual(sweepTargets(held, []), ["DOHJ", "PENGUIN"]);
+  // A ledger that holds nothing, or a zero, is nobody's target.
+  assert.deepEqual(sweepTargets({}, []), []);
+  assert.deepEqual(sweepTargets({ PENGUIN: 0 }, []), []);
+});
+
+test("the desk's held tokens come from its own book, above dust, base assets aside", () => {
+  const flows: CapitalFlow[] = [{ at: T, kind: "deposit", asset: "ETH", amount: 1, usd: 2500 }];
+  const trades: Trade[] = [
+    { at: T + 1, id: "d1", status: "settled", from: { asset: "ETH", amount: 0.1, usd: 250 }, to: { asset: "PENGUIN", amount: 1000, usd: 250 }, partner: "pool" },
+    { at: T + 2, id: "d2", status: "settled", from: { asset: "ETH", amount: 0.1, usd: 250 }, to: { asset: "DOHJ", amount: 500, usd: 250 }, partner: "pool" },
+    // A pending sell of the whole DOHJ counts as gone: the mirror's exit already ran on it.
+    { at: T + 3, id: "d3", status: "pending", exit: true, from: { asset: "DOHJ", amount: 500, usd: 240 }, to: { asset: "ETH", amount: 0.096, usd: 240 }, partner: "pool" },
+    // A full sell of PENGUIN that left a billionth behind is a full sell.
+    { at: T + 4, id: "d4", status: "settled", exit: true, from: { asset: "PENGUIN", amount: 999.9999999, usd: 200 }, to: { asset: "ETH", amount: 0.08, usd: 200 }, partner: "pool" },
+    { at: T + 5, id: "d5", status: "settled", from: { asset: "ETH", amount: 0.1, usd: 250 }, to: { asset: "LENNY", amount: 300, usd: 250 }, partner: "pool" },
+  ];
+  assert.deepEqual([...deskHeldSymbols(flows, trades, env)], ["LENNY"]);
+});
+
+test("a follower's ledger that says held, against the chain: a balance sells, none corrects, none with a buy in flight waits", () => {
+  assert.equal(sweepLeg(50, false, env), "sell");
+  assert.equal(sweepLeg(50, true, env), "sell");
+  // The wallet holds nothing, or dust: /sell by hand or /withdraw SYMBOL emptied it, and the ledger is corrected.
+  assert.equal(sweepLeg(0, false, env), "correct");
+  assert.equal(sweepLeg(1e-9, false, env), "correct");
+  // A pending entry row: the token may still be on its way, so nothing is written off yet.
+  assert.equal(sweepLeg(0, true, env), "wait");
+});
+
+test("the correction row makes liveHoldings stop reporting the token, and prices nothing", () => {
+  const rows: FollowTradeRow[] = [
+    { address: A, deskId: "d1", at: T, id: "pool-1", status: "settled", from: { asset: "ETH", amount: 0.004, usd: 10 }, to: { asset: "PENGUIN", amount: 50, usd: 10 }, partner: "pool", venue: "pool" },
+    { address: A, deskId: "d2", at: T + 1, id: "pool-2", status: "settled", from: { asset: "ETH", amount: 0.004, usd: 10 }, to: { asset: "DOHJ", amount: 20, usd: 10 }, partner: "pool", venue: "pool" },
+  ];
+  const before = liveHoldings(rows, A);
+  assert.deepEqual(before, { PENGUIN: 50, DOHJ: 20 });
+  const id = sweepId("penguin", T + 100);
+  assert.equal(id, `sweep-PENGUIN-${T + 100}`);
+  const row = correctionRow("PENGUIN", before.PENGUIN, id, "the wallet holds none", T + 100);
+  assert.equal(row.status, "settled");
+  assert.equal(row.exit, true);
+  assert.equal(row.from.amount, 50);
+  assert.equal(row.to.amount, 0);
+  assert.equal(row.from.usd, null);
+  assert.equal(row.to.usd, null);
+  const after = liveHoldings([...rows, { ...row, address: A, deskId: id }], A);
+  assert.deepEqual(after, { DOHJ: 20 });
+  // And with the token gone from the ledger, it is no longer a target, whatever the desk holds.
+  assert.deepEqual(sweepTargets(after, []), ["DOHJ"]);
+});
+
+test("the throttle: due with no stamp, not within the window, due again after it; zero means every cycle", () => {
+  assert.equal(sweepDue(null, T, 5), true);
+  assert.equal(sweepDue(T - 60e3, T, 5), false);
+  assert.equal(sweepDue(T - 5 * 60e3, T, 5), true);
+  assert.equal(sweepDue(T - 60e3, T, 0), true);
+  // A stamp from the future (a clock set back) never blocks a sweep.
+  assert.equal(sweepDue(T + 3600e3, T, 5), true);
+  assert.equal(sweepDue(Number.NaN, T, 5), true);
+  assert.equal(sweepMinutes({} as NodeJS.ProcessEnv), DEFAULT_SWEEP_MIN);
+  assert.equal(sweepMinutes({ OBS_FOLLOW_SWEEP_MIN: "15" } as NodeJS.ProcessEnv), 15);
+  assert.equal(sweepMinutes({ OBS_FOLLOW_SWEEP_MIN: "0" } as NodeJS.ProcessEnv), 0);
+  assert.equal(sweepMinutes({ OBS_FOLLOW_SWEEP_MIN: "-3" } as NodeJS.ProcessEnv), DEFAULT_SWEEP_MIN);
+  assert.equal(sweepMinutes({ OBS_FOLLOW_SWEEP_MIN: "soon" } as NodeJS.ProcessEnv), DEFAULT_SWEEP_MIN);
+});
+
+test("the sweep's log line carries the counts, or why it did not run", () => {
+  assert.equal(sweepLine({ skipped: "throttled", followers: 0, targets: 0, sold: 0, corrected: 0, waited: 0, failed: 0 }), "[follow] sweep skipped: throttled");
+  assert.equal(sweepLine({ skipped: null, followers: 3, targets: 1, sold: 1, corrected: 0, waited: 0, failed: 0 }), "[follow] sweep: 3 followers checked, 1 target, 1 sold, 0 corrected, 0 waiting, 0 failed");
+});
