@@ -9,6 +9,10 @@ import { join } from "node:path";
 
 process.env.OBS_DATA_DIR = mkdtempSync(join(tmpdir(), "obs-test-"));
 process.env.OBS_AGENT_WALLET_SEED = "";
+// A test that turns the seed on for one route (the public agent by its wallet, 2026-09-08) has that wallet's ETH
+// read on the request path. The chain here is a closed port: the read fails at once and the book answers with
+// the balance null, exactly as it does behind a stalled RPC, and no made-up wallet is ever looked up on the chain.
+process.env.ROBINHOOD_RPC_URL = "http://127.0.0.1:9";
 process.env.OBS_CONSOLE_GATE = "off";
 process.env.OBS_CONSOLE_ALLOWLIST = "";
 process.env.OBS_TRADING = "off";

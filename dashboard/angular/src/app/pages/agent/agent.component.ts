@@ -4,10 +4,11 @@ import { Meta, Title } from '@angular/platform-browser';
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import { timeout } from 'rxjs';
 import { REFRESH_MS, nextRefreshMs, tickStatus } from './refresh';
+import { SPARK_H, SPARK_W, Spark, sparkline } from './sparkline';
 import {
   CgMarket, ObsDashboard, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
   ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent,
-  ObsMyAgentBook, ObsMyAgentBookTrade, ObsSession, CONSOLE_WALLET, ConsoleWallet, readConsoleSession, dropConsoleSession
+  ObsMyAgentBook, ObsMyAgentBookTrade, ObsAgentDetail, ObsSession, CONSOLE_WALLET, ConsoleWallet, readConsoleSession, dropConsoleSession
 } from '../../service/obs-desk.service';
 
 type MarketAssetId = 'agent' | 'obs' | 'eth' | 'usdg' | 'btc' | 'bnb' | 'sol';
@@ -43,7 +44,7 @@ const TERM_LINE_CAP = 700;
 const EVENT_REFRESH_MS = 6_000;
 /** CoinGecko's free API refreshes about once a minute; asking it more often only spends the viewer's budget. */
 const CG_EVERY_MS = 60_000;
-/** How long the book read waits for an answer before the next tick may try again. */
+/** How long a book read (the owner's, or the open agent's) waits for an answer before the next tick may try again. */
 const MY_BOOK_TIMEOUT_MS = 20_000;
 
 /**
@@ -96,6 +97,21 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.myState !== 'book' || !b) { return this.myWallet ? this.short(this.myWallet) : ''; }
     return `${b.on ? 'on' : 'off'}, ${b.mode}, $${b.sizeUsd} a trade`;
   }
+  // ---- The Agents table's open row: one agent's book, for anyone, by the agent's own wallet ----
+  /** The agent whose book the panel under the table shows, by its own wallet; null while the panel is closed. */
+  pickedWallet: string | null = null;
+  picked: ObsAgentDetail | null = null;
+  /** Its last trades, newest first, for the panel's table. */
+  pickedTrades: ObsMyAgentBookTrade[] = [];
+  /** Its realized series drawn: the sparkline's path, baseline and colour. */
+  pickedSpark: Spark | null = null;
+  /** What the panel says while there is no book to show: reading, gone (a 404), or a read that failed and will try again. */
+  pickedState: 'reading' | 'book' | 'gone' | 'failed' = 'reading';
+  readonly sparkW = SPARK_W;
+  readonly sparkH = SPARK_H;
+  private pickedBusy = false;
+  /** The detail read met a 429 and has not answered since: carried into the tick's clock with the card's. */
+  private pickedLimited = false;
   reads: ObsReads | null = null;
   obsMarket: ObsMarket | null = null;
   agentToken: ObsAgentToken | null = null;
@@ -250,6 +266,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     document.addEventListener('visibilitychange', this.onVisible);
     window.addEventListener('online', this.onVisible);
     window.addEventListener('pageshow', this.onVisible);
+    // ?agent=0x... opens that agent's panel before the first read goes out, so the read includes it.
+    this.openAgentFromUrl();
     // The first read sets the clock; every answer sets the next.
     this.refresh();
     this.watchMyWallet();
@@ -324,11 +342,110 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (document.hidden) { return; }
     this.err = '';
     this.obs.dashboard(this.chartHours, 30, 8).subscribe({
-      next: (d) => { this.applyDashboard(d); this.scheduleRefresh(tickStatus(null, this.myBookLimited)); },
-      error: (e: { status?: number }) => { this.err = 'dashboard'; this.scheduleRefresh(tickStatus(e?.status ?? 0, this.myBookLimited)); }
+      next: (d) => { this.applyDashboard(d); this.scheduleRefresh(tickStatus(null, this.myBookLimited || this.pickedLimited)); },
+      error: (e: { status?: number }) => { this.err = 'dashboard'; this.scheduleRefresh(tickStatus(e?.status ?? 0, this.myBookLimited || this.pickedLimited)); }
     });
     this.refreshAssetMarkets();
     this.refreshMyAgent();
+    this.refreshPicked();
+  }
+
+  // ---- the open agent -------------------------------------------------
+
+  isPicked(a: ObsPublicAgent): boolean {
+    return !!a.walletAddress && !!this.pickedWallet && a.walletAddress.toLowerCase() === this.pickedWallet.toLowerCase();
+  }
+
+  /** A click anywhere on a row opens its agent, except on the wallet link, which stays a link; the name is a button too, for the keyboard. */
+  rowClick(a: ObsPublicAgent, ev: Event): void {
+    const t = ev.target as HTMLElement | null;
+    if (t?.closest?.('a, button')) { return; }
+    this.toggleAgent(a);
+  }
+
+  /** The row's name button: opens the agent's book below the table, or closes it when it is the one open. */
+  toggleAgent(a: ObsPublicAgent): void {
+    if (!a.walletAddress) { return; }
+    if (this.isPicked(a)) { this.closeAgent(); return; }
+    this.pickAgent(a.walletAddress, true, true);
+  }
+
+  closeAgent(): void {
+    this.pickedWallet = null;
+    this.picked = null;
+    this.pickedTrades = [];
+    this.pickedSpark = null;
+    this.pickedState = 'reading';
+    this.pickedLimited = false;
+    this.setAgentParam(null);
+  }
+
+  /**
+   * The panel opens on this agent and reads its book at once; the page's clock re-reads it on every tick after.
+   * The address bar carries the choice (?agent=0x...) so the page can be shared open on one agent, and the same
+   * parameter on load opens it (writeUrl false: the bar already says so). replaceState rather than the router: the
+   * site serves this page at /agent and opening a row is not a navigation to go back from (2026-09-08).
+   */
+  private pickAgent(wallet: string, writeUrl: boolean, focus = false): void {
+    this.pickedWallet = wallet;
+    this.picked = null;
+    this.pickedTrades = [];
+    this.pickedSpark = null;
+    this.pickedState = 'reading';
+    this.pickedLimited = false;
+    if (writeUrl) { this.setAgentParam(wallet); }
+    this.refreshPicked();
+    // Focus follows a click into the panel, which also brings it into view under a long table; not on a deep link, where the page is still settling.
+    if (focus && typeof requestAnimationFrame === 'function') { requestAnimationFrame(() => document.getElementById('agent-panel')?.focus()); }
+  }
+
+  /**
+   * The open agent's book, on the page's clock: called from refresh(), so it shares the cadence, the hidden-tab pause
+   * and the 429 backoff (its 429 rides into the clock with the card's, through tickStatus), and once when a row
+   * opens. A 404 is an agent that no longer follows: the panel says so and the next tick asks again. An answer for
+   * a row closed or swapped while the read was out is dropped.
+   */
+  private refreshPicked(): void {
+    const wallet = this.pickedWallet;
+    if (!wallet || document.hidden || this.pickedBusy) { return; }
+    this.pickedBusy = true;
+    this.obs.agentDetail(wallet).pipe(timeout(MY_BOOK_TIMEOUT_MS)).subscribe({
+      next: (d) => {
+        this.pickedBusy = false;
+        if (this.pickedWallet !== wallet) { return; }
+        this.pickedLimited = false;
+        this.picked = d;
+        this.pickedTrades = [...(d.trades || [])].reverse();
+        this.pickedSpark = sparkline(d.series || []);
+        this.pickedState = 'book';
+      },
+      error: (e: { status?: number }) => {
+        this.pickedBusy = false;
+        if (this.pickedWallet !== wallet) { return; }
+        if (e?.status === 404) { this.picked = null; this.pickedTrades = []; this.pickedSpark = null; this.pickedState = 'gone'; return; }
+        if (e?.status === 429) { this.pickedLimited = true; }
+        this.pickedState = 'failed';
+      }
+    });
+  }
+
+  /** The choice in the address bar, every other parameter kept (?api= among them); a bar that cannot be written changes nothing else. */
+  private setAgentParam(wallet: string | null): void {
+    if (typeof window === 'undefined' || typeof window.history?.replaceState !== 'function') { return; }
+    try {
+      const url = new URL(window.location.href);
+      if (wallet) { url.searchParams.set('agent', wallet); } else { url.searchParams.delete('agent'); }
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    } catch { /* the panel is open all the same */ }
+  }
+
+  /** ?agent=0x... on load opens that agent; anything that is not a wallet address is ignored. */
+  private openAgentFromUrl(): void {
+    if (typeof window === 'undefined') { return; }
+    try {
+      const w = new URLSearchParams(window.location.search).get('agent') || '';
+      if (/^0x[0-9a-fA-F]{40}$/.test(w)) { this.pickAgent(w, false); }
+    } catch { /* no bar to read */ }
   }
 
   // ---- your agent ------------------------------------------------------

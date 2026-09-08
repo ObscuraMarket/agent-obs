@@ -459,6 +459,41 @@ the last 24 hours, holders from its Transfer events; each is `null` until
 it can be measured. Cached a minute. The desk never trades this token; the
 rails refuse it by contract, and the launch feed never puts it on the board.
 
+### `GET /api/obs/agents` and `GET /api/obs/agents/<wallet>`
+
+Every agent following the desk, for anyone, and any one of them by its own
+wallet. An agent is shown by its own name and its own derived wallet, never
+the wallet of the person who signed in; that address is nowhere in either
+answer.
+
+`/api/obs/agents`: `{ ok, agents: [{ name, wallet, walletAddress,
+walletUrl, on, mode, sizeUsd, since, positions: [{ asset, valueUsd,
+unrealizedPct }], realizedUsd, trades, exits }], on, live, at }`, on first
+and by realized dollars, fifty at most, cached thirty seconds. `wallet` is
+the agent's own wallet shortened for a table cell; `walletAddress` (since
+September 8) is the same wallet in full, the key the row opens on; both
+are `null` for an agent whose wallet the desk cannot show.
+
+`/api/obs/agents/0x...` (since September 8): that agent's book, the same
+shape `/api/obs/my-agent/book` gives its owner plus the series: `{ ok,
+name, wallet, walletUrl, on, mode, sizeUsd, since, walletEth, ethUsd,
+positions, realizedUsd, unrealizedUsd, equityUsd, trades, tradeCount, wins,
+losses, series, at }`. `wallet` is the agent's, in full. `trades` is the
+last fifty, newest last, in the book's row shape (`at`, `kind` entry or
+exit, `asset`, `usd`, an exit's `pnlUsd`, `status`, `txUrl`). `series` is
+the realized dollars cumulative at each exit, in exit time, `[{ at, usd }]`,
+empty until the first exit: draw it as the sparkline. `walletEth` is read
+once per wallet per thirty seconds and held to three seconds, null when
+late. The path is matched whatever the address's case. Anything that is
+not `0x` and forty hex characters is `400 { ok: false, error }`; a wallet
+no follower's agent owns is `404 { ok: false, error }` (an agent started in
+the last thirty seconds can answer 404 until the next build of the lookup;
+the reference page says the agent is not following and asks again on its
+next tick). Cached ten seconds per wallet (`Cache-Control: public,
+max-age=10`), under the same per-client budget as every other read. The
+reference page opens it from the Agents table (a row's name is a button)
+and from `/agent?agent=0x...`.
+
 ### `GET /api/obs/research?limit=50`
 
 The research log: what the desk learned about tokens between cycles, one

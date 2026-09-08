@@ -524,6 +524,8 @@ function pricesNow(p: Record<string, unknown>, now: number): Prices {
 export interface PublicAgent {
   name: string;
   wallet: string | null;
+  /** The agent's own wallet in full, the key of GET /api/obs/agents/<wallet>; null when the agent has none. */
+  walletAddress: string | null;
   walletUrl: string | null;
   on: boolean;
   mode: "paper" | "live";
@@ -553,6 +555,7 @@ async function agentsPayload(now: number): Promise<{ ok: true; agents: PublicAge
     agents.push({
       name: agentDisplayName(a),
       wallet: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : null,
+      walletAddress: wallet,
       walletUrl: wallet ? `${EXPLORER_URL}/address/${wallet}` : null,
       on: state.on, mode: state.mode, sizeUsd: state.sizeUsd, since: state.since,
       positions: book.positions.positions.map((x) => ({ asset: x.asset, valueUsd: x.valueUsd, unrealizedPct: x.unrealizedPct })),
@@ -640,7 +643,7 @@ const MY_AGENT_BOOK_TRADES = 20;
  * are worth: null when the wallet could not be read, ETH is unpriced or a position is unpriced (a partial sum is never
  * shown as the whole); a paper agent moves no money, so its equity is what its paper positions are worth. Wins and losses count the exits by their realized result. Exported for tests.
  */
-export function myAgentBookPayload(name: string, book: FollowBook, wallet: string | null, walletEth: number | null, ethUsd: number | null, now: number): MyAgentBook {
+export function myAgentBookPayload(name: string, book: FollowBook, wallet: string | null, walletEth: number | null, ethUsd: number | null, now: number, lastTrades = MY_AGENT_BOOK_TRADES): MyAgentBook {
   const s = book.state;
   const pos = book.positions;
   const positions = pos.positions.map((x) => ({ asset: x.asset, qty: x.qty, priceUsd: x.priceUsd, valueUsd: x.valueUsd, avgCostUsd: x.avgCostUsd, unrealizedUsd: x.unrealizedUsd, unrealizedPct: x.unrealizedPct }));
@@ -654,7 +657,7 @@ export function myAgentBookPayload(name: string, book: FollowBook, wallet: strin
   // after an entry that came later, and "newest last" broke on the card (2026-09-08).
   const stamp = (t: Trade) => t.updatedAt ?? t.at;
   const rows = [...book.trades].sort((a, b) => stamp(a) - stamp(b));
-  const trades: MyAgentBookTrade[] = rows.slice(-MY_AGENT_BOOK_TRADES).map((t) => ({
+  const trades: MyAgentBookTrade[] = rows.slice(-lastTrades).map((t) => ({
     at: stamp(t),
     kind: t.exit ? "exit" : "entry",
     asset: t.exit ? t.from.asset : t.to.asset,
@@ -697,16 +700,74 @@ function walletEthCached(address: string, wallet: string | null, now: number): P
   if (!wallet) return Promise.resolve(null);
   return walletEthCache.get(address.toLowerCase(), () => withinDeadline(() => agentBalanceEth(address), WALLET_ETH_DEADLINE_MS), now);
 }
+/**
+ * The pieces every view of one agent's book is built from: its state and trades marked at the desk's prices, its
+ * wallet and that wallet's ETH (cached, within the deadline), and the ETH price the equity is figured at. The
+ * owner's read and the public read share this, so the two views never disagree on a number (2026-09-08).
+ */
+async function agentBookParts(address: string, now: number): Promise<{ name: string; book: FollowBook; wallet: string | null; walletEth: number | null; ethUsd: number | null }> {
+  const state = followState(readFollow(), address);
+  const p = await pnlPayload(1, now, false);
+  const prices = pricesNow(p, now);
+  const wallet = agentWalletAddressOrNull(address);
+  const walletEth = await walletEthCached(address, wallet, now);
+  const book = state.mode === "live" ? liveBook(address, state, readFollowTrades(), readFollowNotes(), prices, walletEth) : followBook(deskFromDisk().book.trades, state, prices);
+  const ethUsd = prices.ETH ?? (await cachedPrices(["ETH"]).catch(() => ({} as Record<string, number | null>))).ETH ?? latestEthUsd(now);
+  return { name: agentDisplayName(address), book, wallet, walletEth, ethUsd };
+}
 function myAgentBook(address: string, now: number): Promise<MyAgentBook> {
   return myAgentBookCache.get(address.toLowerCase(), async () => {
-    const state = followState(readFollow(), address);
-    const p = await pnlPayload(1, now, false);
-    const prices = pricesNow(p, now);
-    const wallet = agentWalletAddressOrNull(address);
-    const walletEth = await walletEthCached(address, wallet, now);
-    const book = state.mode === "live" ? liveBook(address, state, readFollowTrades(), readFollowNotes(), prices, walletEth) : followBook(deskFromDisk().book.trades, state, prices);
-    const ethUsd = prices.ETH ?? (await cachedPrices(["ETH"]).catch(() => ({} as Record<string, number | null>))).ETH ?? latestEthUsd(now);
-    return myAgentBookPayload(agentDisplayName(address), book, wallet, walletEth, ethUsd, now);
+    const x = await agentBookParts(address, now);
+    return myAgentBookPayload(x.name, x.book, x.wallet, x.walletEth, x.ethUsd, now);
+  }, now);
+}
+
+// ---- One agent, in public, by its own wallet -------------------------------------------------------------------
+// The Agents table's rows open on this: the same book its owner reads, keyed on the agent's own wallet address, for
+// anyone. The person's signing wallet is the one thing the route must never say: it is the lookup's answer, not
+// its input, and the payload is built from the agent's side only (2026-09-08).
+export interface PublicAgentDetail extends MyAgentBook {
+  wallet: string;
+  walletUrl: string;
+  /** Realized dollars, cumulative, at each exit in time order: the sparkline. Empty until the first exit. */
+  series: Array<{ at: number; usd: number }>;
+}
+export const PUBLIC_AGENT_TRADES = 50;
+export const isAgentWallet = (w: string): boolean => /^0x[0-9a-fA-F]{40}$/.test(w);
+/** PURE: the public view of one agent's book: the owner's payload with the last fifty trades and the realized series. Exported for tests. */
+export function publicAgentPayload(name: string, book: FollowBook, wallet: string, walletEth: number | null, ethUsd: number | null, now: number): PublicAgentDetail {
+  const base = myAgentBookPayload(name, book, wallet, walletEth, ethUsd, now, PUBLIC_AGENT_TRADES);
+  let sum = 0;
+  const series = [...book.positions.events].sort((a, b) => a.at - b.at).map((e) => { sum += e.usd; return { at: e.at, usd: Math.round(sum * 100) / 100 }; });
+  return { ...base, wallet, walletUrl: `${EXPLORER_URL}/address/${wallet}`, series };
+}
+const AGENT_BY_WALLET_TTL_MS = 30_000;
+let agentByWallet: { at: number; seeded: boolean; map: Map<string, string> } | null = null;
+/**
+ * The follower whose agent owns this wallet, or null. A reverse map over the follow ledger, rebuilt at most every
+ * thirty seconds: derivations are cheap but not free, and an unknown wallet must cost the desk nothing more than a
+ * map lookup, since anyone may ask (2026-09-08). A wallet started inside the thirty seconds answers 404 until the
+ * next build, the same thirty seconds the public list itself is cached for; the page says the agent is not
+ * following and tries again on its next tick. The seed arriving or going is a new map at once: with it every
+ * wallet changes, and a map built without it knows no wallet at all (a test turns the seed on mid-process).
+ */
+function followerOfWallet(wallet: string, now: number): string | null {
+  const seeded = walletsOn();
+  if (!agentByWallet || agentByWallet.seeded !== seeded || now - agentByWallet.at >= AGENT_BY_WALLET_TTL_MS) {
+    const map = new Map<string, string>();
+    for (const a of new Set(readFollow().map((r) => r.address))) {
+      const w = agentWalletAddressOrNull(a);
+      if (w) map.set(w.toLowerCase(), a);
+    }
+    agentByWallet = { at: now, seeded, map };
+  }
+  return agentByWallet.map.get(wallet.toLowerCase()) ?? null;
+}
+const publicAgentCache = new TtlCache<PublicAgentDetail>(10_000);
+function publicAgentDetail(address: string, wallet: string, now: number): Promise<PublicAgentDetail> {
+  return publicAgentCache.get(wallet.toLowerCase(), async () => {
+    const x = await agentBookParts(address, now);
+    return publicAgentPayload(x.name, x.book, wallet, x.walletEth, x.ethUsd, now);
   }, now);
 }
 
@@ -1091,6 +1152,27 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     // Every agent following the desk, for anyone: names, their own wallets, what they hold and what they made.
     res.setHeader("Cache-Control", "public, max-age=30");
     agentsPayload(now).then((p) => json(res, 200, p)).catch((err) => json(res, 502, { ok: false, error: err instanceof Error ? err.message : "agents unavailable" }));
+    return;
+  }
+  if (path.startsWith("/api/obs/agents/")) {
+    // One agent by its own wallet, for anyone: the book its owner reads, with the realized series. The wallet in the
+    // path is the agent's, never the person's; anything but an address is refused before any lookup. The per-client
+    // budget every public read shares was spent at the top of handle(), before this line ran.
+    const wallet = path.slice("/api/obs/agents/".length);
+    if (!isAgentWallet(wallet)) {
+      json(res, 400, { ok: false, error: "say the agent's wallet address: 0x and forty hex characters" });
+      return;
+    }
+    const address = followerOfWallet(wallet, now);
+    if (!address) {
+      res.setHeader("Cache-Control", "public, max-age=10");
+      json(res, 404, { ok: false, error: "no agent with that wallet is following the desk" });
+      return;
+    }
+    res.setHeader("Cache-Control", "public, max-age=10");
+    publicAgentDetail(address, wallet, now)
+      .then((b) => json(res, 200, b))
+      .catch((err) => { console.error(`[agents] detail for ${wallet}: ${err instanceof Error ? err.message : String(err)}`); json(res, 502, { ok: false, error: "this agent's book did not answer; try again shortly" }); });
     return;
   }
   if (path === "/api/obs/console/door") {
@@ -1769,7 +1851,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/dashboard?hours=168&trades=50&feed=30", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/swaps?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET /api/obs/my-agent/book (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/dashboard?hours=168&trades=50&feed=30", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/agents", "/api/obs/agents/0x... (the agent's own wallet)", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/swaps?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET /api/obs/my-agent/book (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in

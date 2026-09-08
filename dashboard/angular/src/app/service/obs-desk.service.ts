@@ -214,7 +214,8 @@ export interface ObsInFlight {
 }
 
 /** One agent following the desk, as anyone may see it: its name and its own wallet, never the person's. */
-export interface ObsPublicAgent { name: string; wallet: string | null; walletUrl: string | null; on: boolean; mode: 'paper' | 'live'; sizeUsd: number; since: number | null; positions: Array<{ asset: string; valueUsd: number | null; unrealizedPct: number | null }>; realizedUsd: number; trades: number; exits: number; }
+/** One row of the public Agents table. `wallet` is the agent's own wallet shortened; `walletAddress` is the same in full, the key its row opens on (since September 8). */
+export interface ObsPublicAgent { name: string; wallet: string | null; walletAddress?: string | null; walletUrl: string | null; on: boolean; mode: 'paper' | 'live'; sizeUsd: number; since: number | null; positions: Array<{ asset: string; valueUsd: number | null; unrealizedPct: number | null }>; realizedUsd: number; trades: number; exits: number; }
 export interface ObsAgents { ok: boolean; agents: ObsPublicAgent[]; on: number; live: number; at: number; }
 
 export interface ObsPnl {
@@ -495,6 +496,16 @@ export interface ObsMyAgentBook {
   losses: number;
   at: number;
 }
+/**
+ * `/api/obs/agents/<wallet>`: one agent's book for anyone, by the agent's own wallet, in the owner's shape plus the
+ * series: the realized dollars cumulative at each exit, in exit time, empty until the first exit. `wallet` is the
+ * agent's, in full; the person who runs it is named nowhere. The Agents table's rows open on this (2026-09-08).
+ */
+export interface ObsAgentDetail extends ObsMyAgentBook {
+  wallet: string;
+  walletUrl: string;
+  series: Array<{ at: number; usd: number }>;
+}
 
 /**
  * The site's own pages the console can open beside itself, by command name: trade, rewards, cards, yield (see below): cards, referral,
@@ -552,6 +563,11 @@ export class ObsDeskService {
   /** `/api/obs/agents`: every agent following the desk, for anyone: on or off, live or paper, what they hold, what they made. */
   agents(): Observable<ObsAgents> {
     return this.http.get<ObsAgents>(`${this.base}/api/obs/agents`);
+  }
+
+  /** `/api/obs/agents/<wallet>`: one agent's book by its own wallet, for anyone. A 404 means no agent with that wallet follows the desk. */
+  agentDetail(wallet: string): Observable<ObsAgentDetail> {
+    return this.http.get<ObsAgentDetail>(`${this.base}/api/obs/agents/${encodeURIComponent(wallet)}`);
   }
 
   thoughts(limit = 12): Observable<ObsItems<ObsThought>> {

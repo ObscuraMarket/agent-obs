@@ -1888,3 +1888,182 @@ table.tbl.mine-tbl {
     text-align: center;
   }
 }
+
+/* ---- Agents table: a row opens its agent's book below the table ---- */
+
+.tbl tr.pick {
+  cursor: pointer;
+}
+
+.tbl tr.pick:hover td {
+  background: rgba(22, 24, 22, 0.5);
+}
+
+.tbl tr.open td {
+  background: rgba(184, 255, 61, 0.06);
+}
+
+/* The name is a real button: reachable on the keyboard, announced as open or closed, and the row's own click does the same. */
+.agent-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 700;
+  color: var(--white);
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.agent-open:hover,
+.tbl tr.pick:hover .agent-open,
+.tbl tr.open .agent-open {
+  color: var(--lime);
+  border-bottom-color: var(--lime);
+}
+
+.agent-open:focus-visible {
+  color: var(--lime);
+  outline: 2px solid var(--lime);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.agent-open .chev {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  transition: transform 0.2s ease;
+}
+
+.agent-open[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+
+.agent-panel {
+  margin-top: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: var(--box);
+}
+
+.agent-panel:focus {
+  outline: none;
+}
+
+.panel-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.panel-top .mine-sub {
+  margin: 0;
+}
+
+.panel-close {
+  background: #161816;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--white);
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.panel-close:hover {
+  border-color: var(--lime);
+  color: var(--lime);
+}
+
+.panel-close:focus-visible {
+  border-color: var(--lime);
+  color: var(--lime);
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+
+/* ---- The sparkline: realized dollars, cumulative, one point per exit ---- */
+
+.spark {
+  margin-top: 16px;
+}
+
+/* Stretched to the card's width at a fixed height; the strokes do not scale with it. */
+.spark-svg {
+  display: block;
+  width: 100%;
+  height: 84px;
+  overflow: visible;
+}
+
+.spark-zero {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+.spark-line {
+  fill: none;
+  stroke: var(--white);
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.spark-line.up {
+  stroke: var(--lime);
+  filter: drop-shadow(0 0 6px rgba(184, 255, 61, 0.35));
+}
+
+.spark-line.down {
+  stroke: var(--red);
+}
+
+.spark-line.flat {
+  stroke: var(--muted);
+}
+
+.spark-ends {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.spark-note {
+  margin: 6px 0 0;
+}
+
+@media (max-width: 760px) {
+  .agent-panel {
+    padding: 14px;
+  }
+
+  .panel-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .panel-close {
+    width: 100%;
+  }
+
+  .spark-svg {
+    height: 64px;
+  }
+}

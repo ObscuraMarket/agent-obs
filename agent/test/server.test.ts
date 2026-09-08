@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter, tapePrices, pnlFingerprint } from "../src/server.ts";
 import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX, TtlCache, attempt, dashboardQuery, handle, myAgentBookPayload, withinDeadline, WALLET_ETH_DEADLINE_MS } from "../src/server.ts";
+import { publicAgentPayload, PUBLIC_AGENT_TRADES } from "../src/server.ts";
+import { agentWalletAddressOrNull } from "../src/desk/agentWallet.ts";
+import { getAddress } from "viem";
 import { railsFromEnv } from "../src/desk/rails.ts";
 import { mintSession } from "../src/desk/accounts.ts";
 import { followState, followBook, recordFollow } from "../src/desk/follow.ts";
@@ -324,4 +327,104 @@ test("the last trades are ordered by the stamp they show: a settled exit stamped
   const p = myAgentBookPayload("Sable", followBook(desk, state, { NSDX: 0.1, ETH: 2500 }), null, null, 2500, t0 + 3600e3);
   assert.deepEqual(p.trades.map((t) => [t.kind, t.at]), [["entry", t0], ["entry", t0 + 1200e3], ["exit", t0 + 1800e3]], "newest last by the shown stamp");
   assert.ok(p.trades.every((t, i) => i === 0 || t.at >= p.trades[i - 1].at));
+});
+
+// ---- One agent in public, by its own wallet: the read behind the Agents table's rows. ----
+
+/** The rows the desk's own fixture makes: `n` round trips, the third of them losing, and one entry still open. */
+function roundTrips(n: number, t0: number): Trade[] {
+  const buy = (id: string, at: number, usd: number, amount: number): Trade => ({ at, id, status: "settled", from: { asset: "ETH", amount: usd / 2500, usd }, to: { asset: "NSDX", amount, usd }, partner: null, settlementTx: `0x${id}` });
+  const sell = (id: string, at: number, amount: number, usd: number): Trade => ({ at, id, status: "settled", exit: true, from: { asset: "NSDX", amount, usd }, to: { asset: "ETH", amount: usd / 2500, usd }, partner: null, explorerUrl: `https://x/tx/${id}` });
+  const desk: Trade[] = [];
+  for (let i = 0; i < n; i++) {
+    desk.push(buy(`b${i}`, t0 + i * 600e3, 100, 1000));
+    desk.push(sell(`s${i}`, t0 + i * 600e3 + 300e3, 1000, i % 3 === 0 ? 90 : 110));
+  }
+  desk.push(buy("open", t0 + (n + 1) * 600e3, 100, 1000));
+  return desk;
+}
+
+test("the public payload is the owner's book with the last fifty trades and the realized series, cumulative by exit time", () => {
+  const t0 = Date.UTC(2026, 8, 8, 9, 0, 0);
+  const now = t0 + 40 * 600e3;
+  const desk = roundTrips(30, t0);
+  const state = followState([{ address: "0xabc", at: t0 - 1, action: "start", sizeUsd: 50, mode: "paper" }], "0xabc");
+  const book = followBook(desk, state, { NSDX: 0.12, ETH: 2500 });
+  const wallet = "0x9999999999999999999999999999999999999999";
+  const p = publicAgentPayload("Sable", book, wallet, 0.02, 2500, now);
+  const { series, ...rest } = p;
+  assert.deepEqual(rest, myAgentBookPayload("Sable", book, wallet, 0.02, 2500, now, PUBLIC_AGENT_TRADES), "the numbers the owner reads, from the one arithmetic");
+  assert.equal(PUBLIC_AGENT_TRADES, 50);
+  assert.deepEqual([p.trades.length, p.tradeCount, p.wins, p.losses], [50, 61, 20, 10], "the last fifty ride along, every trade is counted");
+  assert.deepEqual([p.wallet, p.walletUrl], [wallet, `https://robinhoodchain.blockscout.com/address/${wallet}`]);
+  assert.equal(series.length, 30, "one point per exit");
+  assert.ok(series.every((s, i) => i === 0 || s.at >= series[i - 1].at), "in exit order");
+  // At half the desk's size each exit is five dollars either way: the running sum is the line the sparkline draws.
+  let sum = 0;
+  series.forEach((s, i) => { sum += i % 3 === 0 ? -5 : 5; assert.ok(Math.abs(s.usd - sum) < 1e-9, `point ${i} is the sum so far`); });
+  assert.ok(Math.abs(series[series.length - 1].usd - Math.round(p.realizedUsd * 100) / 100) < 1e-9, "the last point is the realized total");
+  assert.deepEqual(publicAgentPayload("Sable", followBook([], state, { ETH: 2500 }), wallet, null, 2500, now).series, [], "no exit, no series");
+});
+
+test("a public agent is asked for by a wallet address and nothing else: anything else is refused before any lookup", async () => {
+  await withServer(async (api) => {
+    for (const bad of ["not-a-wallet", "0x123", "0x" + "g".repeat(40), "0x" + "1".repeat(39), "sable"]) {
+      const r = await read(api, `/api/obs/agents/${bad}`);
+      assert.equal(r.status, 400, bad);
+      assert.equal(r.j.ok, false);
+      assert.equal(typeof r.j.error, "string");
+    }
+  });
+});
+
+test("a wallet no agent owns is not found, with the reason, and never a book", async () => {
+  await withServer(async (api) => {
+    const r = await read(api, `/api/obs/agents/0x${"d".repeat(40)}`);
+    assert.equal(r.status, 404);
+    assert.deepEqual(r.j, { ok: false, error: "no agent with that wallet is following the desk" });
+    assert.equal(r.headers.get("cache-control"), "public, max-age=10");
+  });
+});
+
+test("anyone reads a paper agent's book by the agent's own wallet: the owner's shape with the series, cached ten seconds, case-insensitive, and never the person's wallet", async () => {
+  const address = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+  const now = Date.UTC(2026, 8, 8, 13, 0, 0);
+  recordFollow(address, "start", 40, now, "paper");
+  const seed = process.env.OBS_AGENT_WALLET_SEED;
+  // Wallets on for this test alone: the seed derives the agent's own wallet, the key the route is asked by. The
+  // wallet's balance read goes to the closed port tmpdata.ts points the chain at, so it is null inside the deadline.
+  process.env.OBS_AGENT_WALLET_SEED = "server-test-seed-0123456789abcdef0123456789abcdef";
+  try {
+    const wallet = agentWalletAddressOrNull(address);
+    assert.ok(wallet, "the seed derives a wallet");
+    assert.notEqual(wallet.toLowerCase(), address.toLowerCase(), "the agent's wallet is its own, never the person's");
+    await withServer(async (api) => {
+      const list = await read(api, "/api/obs/agents");
+      assert.equal(list.status, 200);
+      const row = (list.j.agents as Array<Record<string, unknown>>).find((a) => a.walletAddress === wallet);
+      assert.ok(row, "the public list carries the agent's full wallet, the key its row opens on");
+      assert.equal(row.wallet, `${wallet.slice(0, 6)}...${wallet.slice(-4)}`, "and still shows it short");
+      const r = await fetch(`${api}/api/obs/agents/${wallet}`);
+      const text = await r.text();
+      const j = JSON.parse(text) as Record<string, any>;
+      assert.equal(r.status, 200, text);
+      assert.equal(r.headers.get("cache-control"), "public, max-age=10");
+      assert.deepEqual(Object.keys(j).sort(), [...BOOK_KEYS, "series"].sort(), "the card's fields and the series, nothing else");
+      assert.deepEqual([j.ok, j.wallet, j.walletUrl], [true, wallet, `https://robinhoodchain.blockscout.com/address/${wallet}`], "the agent's wallet in full");
+      assert.equal(typeof j.name, "string");
+      assert.deepEqual([j.on, j.mode, j.sizeUsd, j.since], [true, "paper", 40, now]);
+      assert.deepEqual([j.positions, j.trades, j.series, j.tradeCount, j.wins, j.losses, j.realizedUsd, j.unrealizedUsd, j.equityUsd], [[], [], [], 0, 0, 0, 0, 0, 0]);
+      assert.equal(j.walletEth, null, "the chain is a closed port here: the read is null inside the deadline and the book still answers");
+      assert.equal(typeof j.at, "number");
+      const hex = address.slice(2).toLowerCase();
+      assert.ok(!text.includes(address.toLowerCase()), "the person's wallet, lowercase, is nowhere in the body");
+      assert.ok(!text.includes(getAddress(address)), "nor checksummed");
+      assert.ok(!text.toLowerCase().includes(hex), "nor in any case, with or without its 0x");
+      const upper = await read(api, `/api/obs/agents/0x${wallet.slice(2).toUpperCase()}`);
+      assert.equal(upper.status, 200, "the wallet is matched whatever its case");
+      assert.equal(upper.j.at, j.at, "and inside ten seconds the read is the cached one");
+    });
+  } finally {
+    process.env.OBS_AGENT_WALLET_SEED = seed;
+  }
 });

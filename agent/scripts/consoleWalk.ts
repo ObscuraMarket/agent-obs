@@ -237,6 +237,33 @@ async function walk(): Promise<void> {
 
   const pub = await get("/api/obs/agents");
   check("the public agents route answers", pub.status === 200 && Array.isArray(pub.j.agents));
+  // The Agents table's rows open on this: one agent's book by its own wallet, for anyone, with the realized series.
+  // The list is cached thirty seconds and /agents above read it before the walk's own /start, so locally the walk's
+  // own agent is looked up by the wallet its book named; a deployed desk without the route yet answers the 404
+  // route list, which is said plainly rather than failed, since the route ships after this walk was written (2026-09-08).
+  const listedWallet = ((pub.j.agents ?? []) as Array<{ walletAddress?: string | null }>).find((a) => typeof a.walletAddress === "string")?.walletAddress ?? null;
+  const target = listedWallet ?? (LOCAL && typeof b.wallet === "string" ? b.wallet : null);
+  const probe = await get("/api/obs/agents/not-a-wallet");
+  if (!LOCAL && probe.status === 404 && Array.isArray(probe.j.routes)) {
+    console.log("  skip an agent's public book: this desk does not serve /api/obs/agents/<wallet> yet; its checks run after the deploy");
+  } else {
+    check("a public agent asked for by something that is not a wallet is refused", probe.status === 400 && probe.j.ok === false && typeof probe.j.error === "string", `${probe.status} ${JSON.stringify(probe.j).slice(0, 120)}`);
+    const unknown = await get(`/api/obs/agents/0x${"1".repeat(40)}`);
+    check("a wallet no agent owns is not found, with the reason", unknown.status === 404 && unknown.j.ok === false && typeof unknown.j.error === "string", `${unknown.status} ${JSON.stringify(unknown.j).slice(0, 120)}`);
+    if (!target) {
+      console.log("  skip an agent's public book: no listed agent has a wallet here");
+    } else {
+      const detail = await get(`/api/obs/agents/${target}`);
+      const x = detail.j;
+      const shaped = detail.status === 200 && x.ok === true && typeof x.name === "string" && typeof x.wallet === "string" && x.wallet.toLowerCase() === target.toLowerCase()
+        && typeof x.walletUrl === "string" && typeof x.on === "boolean" && /^(paper|live)$/.test(String(x.mode)) && typeof x.sizeUsd === "number"
+        && Array.isArray(x.positions) && Array.isArray(x.trades) && typeof x.tradeCount === "number" && typeof x.wins === "number" && typeof x.losses === "number" && typeof x.realizedUsd === "number"
+        && Array.isArray(x.series) && x.series.every((s: { at: unknown; usd: unknown }) => typeof s.at === "number" && typeof s.usd === "number")
+        && ["since", "walletEth", "ethUsd", "unrealizedUsd", "equityUsd"].every((k) => k in x) && typeof x.at === "number";
+      check("an agent's public book answers by its own wallet, in the panel's shape with the series", shaped, `${detail.status} ${JSON.stringify(x).slice(0, 200)}`);
+      check("the public book never names the person's wallet", detail.status === 200 && !JSON.stringify(x).toLowerCase().includes(me.address.slice(2).toLowerCase()));
+    }
+  }
   const verify = await post("/api/obs/my-agent/wallet/verify", { txHash: "0x" + "ab".repeat(32) }, token);
   check("a funding that is not on the chain is refused, not recorded", verify.status === 409 && verify.j.ok === false, `${verify.status} ${JSON.stringify(verify.j).slice(0, 120)}`);
 }

@@ -334,6 +334,92 @@
     </div>
   </div>
 
+  <!-- One agent's book, drawn once for both places it shows: the owner's "Your agent" card and the Agents table's open
+       row. Context: book, the payload in the book's shape; trades, its last trades newest first; mine, the owner's copy
+       (the console is theirs to open); spark, the realized sparkline, only where the payload carries the series -->
+  <ng-template #bookView let-b="book" let-trades="trades" let-mine="mine" let-spark="spark">
+    <div class="mine-top">
+      <div class="mine-name">{{ b.name }}</div>
+      <div class="chips mine-chips">
+        <div class="chip" [class.on]="b.on"><i></i><span>{{ b.on ? 'On' : 'Off' }}</span></div>
+        <div class="chip" [class.on]="b.mode === 'live'"><i></i><span>{{ b.mode === 'live' ? 'Live' : 'Paper' }}</span></div>
+        <div class="chip"><span class="num">${{ b.sizeUsd }} a trade</span></div>
+        <div class="chip" *ngIf="b.since"><span class="num">since {{ when(b.since) }}</span></div>
+      </div>
+    </div>
+    <div class="boxes mine-boxes">
+      <div class="box">
+        <div class="lbl">Wallet ETH</div>
+        <div class="val num" [class.mutedtx]="b.walletEth == null">{{ b.walletEth == null ? (b.wallet ? 'not read yet' : 'no wallet') : num(b.walletEth, 5) + ' ETH' }}</div>
+        <div class="sub num" *ngIf="b.walletEth != null && b.ethUsd != null">{{ usd(b.walletEth * b.ethUsd) }}</div>
+        <div class="sub" *ngIf="b.walletEth == null && b.wallet">the next read tries again</div>
+      </div>
+      <div class="box">
+        <div class="lbl">Equity</div>
+        <div class="val num" [class.mutedtx]="b.equityUsd == null">{{ b.equityUsd == null ? 'n/a' : usd(b.equityUsd) }}</div>
+        <div class="sub">{{ b.mode === 'paper' ? 'on paper' : 'wallet and positions' }}</div>
+      </div>
+      <div class="box">
+        <div class="lbl">Realized</div>
+        <div class="val num" [ngClass]="dir(b.realizedUsd)">{{ usd(b.realizedUsd, true) }}</div>
+        <div class="sub num">{{ b.wins }} won, {{ b.losses }} lost</div>
+      </div>
+      <div class="box">
+        <div class="lbl">Unrealized</div>
+        <div class="val num" [ngClass]="b.unrealizedUsd == null ? 'mutedtx' : dir(b.unrealizedUsd)">{{ b.unrealizedUsd == null ? (b.positions.length ? 'unpriced' : '$0.00') : usd(b.unrealizedUsd, true) }}</div>
+        <div class="sub num">{{ b.positions.length }} open</div>
+      </div>
+    </div>
+    <div class="spark" *ngIf="spark">
+      <div class="mine-sub">Realized, exit by exit</div>
+      <svg class="spark-svg" [attr.viewBox]="'0 0 ' + sparkW + ' ' + sparkH" preserveAspectRatio="none" role="img" [attr.aria-label]="spark.label" focusable="false">
+        <line class="spark-zero" x1="0" [attr.y1]="spark.zero" [attr.x2]="sparkW" [attr.y2]="spark.zero" vector-effect="non-scaling-stroke"/>
+        <path class="spark-line" [ngClass]="spark.cls" [attr.d]="spark.line" vector-effect="non-scaling-stroke"/>
+      </svg>
+      <div class="spark-ends num" *ngIf="!spark.note && b.series?.length">
+        <span class="mutedtx">{{ when(b.series[0].at) }}</span>
+        <span [ngClass]="dir(b.series[b.series.length - 1].usd)">{{ usd(b.series[b.series.length - 1].usd, true) }} after {{ b.series.length }} exits</span>
+        <span class="mutedtx">{{ when(b.series[b.series.length - 1].at) }}</span>
+      </div>
+      <p class="none spark-note" *ngIf="spark.note">{{ spark.note }}</p>
+    </div>
+    <div class="mine-sub">Positions</div>
+    <p class="none" *ngIf="!b.positions.length">{{ mine ? (b.on ? 'No open position right now. The desk\'s next entry is yours too.' : 'No open position. /start in the console turns your agent back on.') : 'No open position.' }}</p>
+    <div class="tbl-wrap" *ngIf="b.positions.length">
+      <table class="tbl mine-tbl">
+        <thead><tr><th>Asset</th><th class="r">Size</th><th class="r">Value</th><th class="r">Avg cost</th><th class="r">Unrealized</th></tr></thead>
+        <tbody>
+          <tr *ngFor="let x of b.positions">
+            <td class="asset">{{ x.asset }}</td>
+            <td class="r num">{{ qty(x.qty) }}</td>
+            <td class="r num"><span [class.mutedtx]="x.valueUsd == null">{{ x.valueUsd == null ? 'unpriced' : usd(x.valueUsd) }}</span></td>
+            <td class="r num"><span [class.mutedtx]="x.avgCostUsd == null">{{ x.avgCostUsd == null ? 'n/a' : price(x.avgCostUsd) }}</span></td>
+            <td class="r num">
+              <span [ngClass]="x.unrealizedUsd == null ? 'mutedtx' : dir(x.unrealizedUsd)">{{ x.unrealizedUsd == null ? 'n/a' : usd(x.unrealizedUsd, true) }}</span>
+              <span class="mutedtx" *ngIf="x.unrealizedPct != null">{{ pct(x.unrealizedPct) }}</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="mine-sub">Last trades</div>
+    <p class="none" *ngIf="!trades.length">{{ mine ? (b.on ? 'No trade yet. The desk\'s next entry is yours too.' : 'No trade yet.') : 'No trades yet.' }}</p>
+    <div class="tbl-wrap" *ngIf="trades.length">
+      <table class="tbl mine-tbl">
+        <thead><tr><th>Time</th><th>Asset</th><th>Side</th><th class="r">Dollars</th><th class="r">Result</th></tr></thead>
+        <tbody>
+          <tr *ngFor="let t of trades">
+            <td class="num">{{ when(t.at) }}</td>
+            <td class="asset"><a *ngIf="t.txUrl" [href]="t.txUrl" target="_blank" rel="noopener noreferrer">{{ t.asset }}</a><span *ngIf="!t.txUrl">{{ t.asset }}</span></td>
+            <td>{{ t.kind === 'entry' ? 'in' : 'out' }}<span class="mutedtx" *ngIf="t.status !== 'settled'"> {{ t.status }}</span></td>
+            <td class="r num"><span [class.mutedtx]="t.usd == null">{{ t.usd == null ? 'unpriced' : usd(t.usd) }}</span></td>
+            <td class="r num"><span *ngIf="t.pnlUsd != null" [ngClass]="dir(t.pnlUsd)">{{ usd(t.pnlUsd, true) }}</span><span class="mutedtx" *ngIf="t.pnlUsd == null">{{ t.kind === 'entry' ? 'open' : 'n/a' }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </ng-template>
+
   <!-- Your agent: the wallet that signed in on the console, its own book from its own signed read; never anyone else's -->
   <div class="card block mine">
     <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Your agent</h2><span class="num">{{ mySummary }}</span></div>
@@ -342,72 +428,7 @@
     <p class="none" *ngIf="myState === 'loading'">{{ myBookErr ? 'Your agent\'s book did not answer; the next read tries again.' : 'Reading your agent\'s book.' }}</p>
     <p class="none" *ngIf="myState === 'not-started'">Your agent has not started yet. <a href="/console">/start in the console</a> turns it on.</p>
     <ng-container *ngIf="myState === 'book' && myBook as b">
-      <div class="mine-top">
-        <div class="mine-name">{{ b.name }}</div>
-        <div class="chips mine-chips">
-          <div class="chip" [class.on]="b.on"><i></i><span>{{ b.on ? 'On' : 'Off' }}</span></div>
-          <div class="chip" [class.on]="b.mode === 'live'"><i></i><span>{{ b.mode === 'live' ? 'Live' : 'Paper' }}</span></div>
-          <div class="chip"><span class="num">${{ b.sizeUsd }} a trade</span></div>
-        </div>
-      </div>
-      <div class="boxes mine-boxes">
-        <div class="box">
-          <div class="lbl">Wallet ETH</div>
-          <div class="val num" [class.mutedtx]="b.walletEth == null">{{ b.walletEth == null ? (b.wallet ? 'not read yet' : 'no wallet') : num(b.walletEth, 5) + ' ETH' }}</div>
-          <div class="sub num" *ngIf="b.walletEth != null && b.ethUsd != null">{{ usd(b.walletEth * b.ethUsd) }}</div>
-          <div class="sub" *ngIf="b.walletEth == null && b.wallet">the next read tries again</div>
-        </div>
-        <div class="box">
-          <div class="lbl">Equity</div>
-          <div class="val num" [class.mutedtx]="b.equityUsd == null">{{ b.equityUsd == null ? 'n/a' : usd(b.equityUsd) }}</div>
-          <div class="sub">{{ b.mode === 'paper' ? 'on paper' : 'wallet and positions' }}</div>
-        </div>
-        <div class="box">
-          <div class="lbl">Realized</div>
-          <div class="val num" [ngClass]="dir(b.realizedUsd)">{{ usd(b.realizedUsd, true) }}</div>
-          <div class="sub num">{{ b.wins }} won, {{ b.losses }} lost</div>
-        </div>
-        <div class="box">
-          <div class="lbl">Unrealized</div>
-          <div class="val num" [ngClass]="b.unrealizedUsd == null ? 'mutedtx' : dir(b.unrealizedUsd)">{{ b.unrealizedUsd == null ? (b.positions.length ? 'unpriced' : '$0.00') : usd(b.unrealizedUsd, true) }}</div>
-          <div class="sub num">{{ b.positions.length }} open</div>
-        </div>
-      </div>
-      <div class="mine-sub">Positions</div>
-      <p class="none" *ngIf="!b.positions.length">{{ b.on ? 'No open position right now. The desk\'s next entry is yours too.' : 'No open position. /start in the console turns your agent back on.' }}</p>
-      <div class="tbl-wrap" *ngIf="b.positions.length">
-        <table class="tbl mine-tbl">
-          <thead><tr><th>Asset</th><th class="r">Size</th><th class="r">Value</th><th class="r">Avg cost</th><th class="r">Unrealized</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let x of b.positions">
-              <td class="asset">{{ x.asset }}</td>
-              <td class="r num">{{ qty(x.qty) }}</td>
-              <td class="r num"><span [class.mutedtx]="x.valueUsd == null">{{ x.valueUsd == null ? 'unpriced' : usd(x.valueUsd) }}</span></td>
-              <td class="r num"><span [class.mutedtx]="x.avgCostUsd == null">{{ x.avgCostUsd == null ? 'n/a' : price(x.avgCostUsd) }}</span></td>
-              <td class="r num">
-                <span [ngClass]="x.unrealizedUsd == null ? 'mutedtx' : dir(x.unrealizedUsd)">{{ x.unrealizedUsd == null ? 'n/a' : usd(x.unrealizedUsd, true) }}</span>
-                <span class="mutedtx" *ngIf="x.unrealizedPct != null">{{ pct(x.unrealizedPct) }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="mine-sub">Last trades</div>
-      <p class="none" *ngIf="!myTrades.length">{{ b.on ? 'No trade yet. The desk\'s next entry is yours too.' : 'No trade yet.' }}</p>
-      <div class="tbl-wrap" *ngIf="myTrades.length">
-        <table class="tbl mine-tbl">
-          <thead><tr><th>Time</th><th>Asset</th><th>Side</th><th class="r">Dollars</th><th class="r">Result</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let t of myTrades">
-              <td class="num">{{ when(t.at) }}</td>
-              <td class="asset"><a *ngIf="t.txUrl" [href]="t.txUrl" target="_blank" rel="noopener noreferrer">{{ t.asset }}</a><span *ngIf="!t.txUrl">{{ t.asset }}</span></td>
-              <td>{{ t.kind === 'entry' ? 'in' : 'out' }}<span class="mutedtx" *ngIf="t.status !== 'settled'"> {{ t.status }}</span></td>
-              <td class="r num"><span [class.mutedtx]="t.usd == null">{{ t.usd == null ? 'unpriced' : usd(t.usd) }}</span></td>
-              <td class="r num"><span *ngIf="t.pnlUsd != null" [ngClass]="dir(t.pnlUsd)">{{ usd(t.pnlUsd, true) }}</span><span class="mutedtx" *ngIf="t.pnlUsd == null">{{ t.kind === 'entry' ? 'open' : 'n/a' }}</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <ng-container *ngTemplateOutlet="bookView; context: { book: b, trades: myTrades, mine: true, spark: null }"></ng-container>
       <div class="mine-foot">
         <span class="mutedtx" *ngIf="b.wallet">Its wallet: <a class="num" [href]="b.walletUrl" target="_blank" rel="noopener noreferrer">{{ b.wallet }}</a></span>
         <span class="mutedtx" *ngIf="!b.wallet">Its wallet is not set up yet. /wallet in the console sets one up.</span>
@@ -416,7 +437,7 @@
     </ng-container>
   </div>
 
-  <!-- The agents following the desk: in public, by name and their own wallets, never the person's -->
+  <!-- The agents following the desk: in public, by name and their own wallets, never the person's. A row opens its agent's book below -->
   <div class="card block">
     <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Agents</h2><span>{{ agentsSummary }}</span></div>
     <div class="tbl-wrap">
@@ -426,8 +447,15 @@
         </thead>
         <tbody>
           <tr *ngIf="!agents.length"><td colspan="8" class="none">No agent is following the desk yet. Sign in to the console and /start to be the first.</td></tr>
-          <tr *ngFor="let a of agents">
-            <td class="asset">{{ a.name }}<span class="mutedtx" *ngIf="!a.on"> off</span></td>
+          <tr *ngFor="let a of agents" [class.pick]="!!a.walletAddress" [class.open]="isPicked(a)" (click)="rowClick(a, $event)">
+            <td class="asset">
+              <button type="button" class="agent-open" *ngIf="a.walletAddress" (click)="toggleAgent(a); $event.stopPropagation()" [attr.aria-expanded]="isPicked(a)" [attr.aria-controls]="isPicked(a) ? 'agent-panel' : null" [attr.title]="isPicked(a) ? 'Close its book' : 'Open its book'">
+                <span>{{ a.name }}</span>
+                <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+              </button>
+              <span *ngIf="!a.walletAddress">{{ a.name }}</span>
+              <span class="mutedtx" *ngIf="!a.on"> off</span>
+            </td>
             <td><span [class.mutedtx]="a.mode !== 'live'">{{ a.mode }}</span></td>
             <td class="r num">${{ a.sizeUsd }}</td>
             <td class="num">{{ a.since ? clock(a.since) : '' }}</td>
@@ -437,12 +465,29 @@
             </td>
             <td class="r num"><span [ngClass]="a.realizedUsd ? dir(a.realizedUsd) : 'mutedtx'">{{ usd(a.realizedUsd, true) }}</span></td>
             <td class="r num">{{ a.trades }}</td>
-            <td><a *ngIf="a.walletUrl" [href]="a.walletUrl" target="_blank" rel="noopener noreferrer" class="num">{{ a.wallet }}</a></td>
+            <td><a *ngIf="a.walletUrl" [href]="a.walletUrl" target="_blank" rel="noopener noreferrer" class="num" (click)="$event.stopPropagation()">{{ a.wallet }}</a></td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p class="mutedtx">Every agent follows Agent OBS trade for trade at its own size, from a wallet of its own. Yours is one sign-in away in the console.</p>
+    <!-- The open row's book, for anyone: the same markup as the owner's card, keyed on the agent's own wallet -->
+    <div class="agent-panel" id="agent-panel" tabindex="-1" *ngIf="pickedWallet">
+      <div class="panel-top">
+        <span class="mine-sub">{{ picked ? 'The book of ' + picked.name : 'Agent ' + short(pickedWallet) }}</span>
+        <button type="button" class="panel-close" (click)="closeAgent()">Close</button>
+      </div>
+      <p class="none" *ngIf="pickedState === 'reading'">Reading this agent's book.</p>
+      <p class="none" *ngIf="pickedState === 'gone'">This agent is not following the desk any more.</p>
+      <p class="none" *ngIf="pickedState === 'failed' && !picked">This agent's book did not answer; the next read tries again.</p>
+      <ng-container *ngIf="picked as b">
+        <ng-container *ngTemplateOutlet="bookView; context: { book: b, trades: pickedTrades, mine: false, spark: pickedSpark }"></ng-container>
+        <div class="mine-foot">
+          <span class="mutedtx">Its wallet: <a class="num" [href]="b.walletUrl" target="_blank" rel="noopener noreferrer">{{ b.wallet }}</a></span>
+          <span class="mutedtx">Read {{ ago(b.at) }}.</span>
+        </div>
+      </ng-container>
+    </div>
+    <p class="mutedtx">Every agent follows Agent OBS trade for trade at its own size, from a wallet of its own. Tap an agent's name to see its book. Yours is one sign-in away in the console.</p>
   </div>
 
   <!-- Positions table -->
