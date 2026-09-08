@@ -1,14 +1,13 @@
 import { AfterViewInit, Component, ElementRef, HostListener, Inject, NgZone, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
 
-import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import { timeout } from 'rxjs';
 import { REFRESH_MS, nextRefreshMs, tickStatus } from './refresh';
 import { MONTHS, agentsSummary, shortPct, sinceText, sinceTitle, visibleAgents, wholeUsd } from './agents';
 import { SPARK_H, SPARK_W, Spark, sparkline } from './sparkline';
 import {
   CgMarket, ObsDashboard, ObsDeskService, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
-  ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent,
+  ObsAgentToken, ObsLive, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent,
   ObsMyAgentBook, ObsMyAgentBookTrade, ObsAgentDetail, ObsSession, CONSOLE_WALLET, ConsoleWallet, readConsoleSession, dropConsoleSession
 } from '../../service/obs-desk.service';
 
@@ -26,11 +25,6 @@ interface StatCell { lbl: string; val: string; valCls?: string; sub?: string; su
 /** One chip of the live trades ticker. */
 interface TickerChip { side: string; sideCls: string; asset: string; amt: string; status: string; }
 
-/** One block gauge of the rails panel (daily budget, open orders). */
-interface RailGauge { label: string; used: string; blocks: string[]; }
-
-interface KvRow { k: string; v: string; icon?: 'eth' | 'usdg' | 'obs'; }
-
 /** Items queued for the terminal's typewriter. */
 interface TermItem { row: HTMLElement; tx: HTMLElement; text: string; animate: boolean; node?: HTMLElement; }
 
@@ -46,13 +40,15 @@ const EVENT_REFRESH_MS = 6_000;
 const CG_EVERY_MS = 60_000;
 /** How long a book read (the owner's, or the open agent's) waits for an answer before the next tick may try again. */
 const MY_BOOK_TIMEOUT_MS = 20_000;
+/** The hours of series the one read asks for: a week, what the page has always read. The positions and the closed trades ride on the same read. */
+const DASHBOARD_HOURS = 168;
 
 /**
  * The OBS desk: every feature of agent-obs's newest dashboard (the typewriter
- * terminal over SSE, the chart with series and ranges, positions with their
- * PnL, the rails gauges, the trades ticker) rendered in OUR design language,
- * the house cards, Plus Jakarta Sans, the lime accent, shimmer on every
- * section title, the mask background video and the ETH-to-PnL marquee.
+ * terminal over SSE, positions with their PnL, the trades ticker) rendered in
+ * OUR design language, the house cards, Plus Jakarta Sans, the lime accent,
+ * shimmer on every section title, the mask background video and the
+ * ETH-to-PnL marquee.
  */
 @Component({
   selector: 'app-agent',
@@ -151,20 +147,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   closed: ObsClosedTrade[] = [];
   /** How many tapes the live watch follows, from its last line. */
   watchingCount = 0;
-  walletRows: KvRow[] = [];
-  railGauges: RailGauge[] = [];
-  railKv: KvRow[] = [];
   ticker: TickerChip[] = [];
   tickerRoll = false;
-
-  chartHours = 168;
-  chartSeries: 'equity' | 'pnl' | 'obs' = 'equity';
-  chartVal = '$0.00';
-  chartValCls = '';
-  chartChg = '';
-  chartChgCls = '';
-  chartCap = 'OBS Desk Equity / USD · Live';
-  chartHigh = ''; chartLow = ''; chartRangeChg = ''; chartRangeCls = '';
 
   /** Terminal stream state, shown in the header pill and the terminal head. */
   streamState: 'connecting' | 'live' | 'reconnecting' | 'polling' | 'offline' = 'connecting';
@@ -179,34 +163,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   private marqueeInterval?: ReturnType<typeof setInterval>;
   private marqueeSwapTimer?: ReturnType<typeof setTimeout>;
 
-  @ViewChild('chartCanvas') chartCanvas?: ElementRef<HTMLCanvasElement>;
   @ViewChild('termEl') termEl?: ElementRef<HTMLDivElement>;
-
-  // The chart engine: a canvas drawn on a requestAnimationFrame loop outside
-  // Angular. Every motion goes through a frame-time-normalised exponential
-  // ease, the way the reference site's chart does: the y-range, the grid
-  // alphas, the live value, the reveal and the crosshair all glide.
-  private ctx: CanvasRenderingContext2D | null = null;
-  private rafId = 0;
-  private cw = 0;
-  private readonly chH = 330;
-  private chartData: Array<{ at: number; v: number }> = [];
-  private chartFmtF: (v: number | null) => string = (v) => this.usd(v);
-  private chartKey = '';
-  private reveal = 1;
-  private dispMin = 0;
-  private dispSpan = 1;
-  private rangeInit = false;
-  private liveV = 0;
-  private liveInit = false;
-  private gridAlphas = new Map<number, number>();
-  private cross = { x: 0, alpha: 0, active: false };
-  /** The curve as last stroked, so the crosshair dot rides the same line. */
-  private curve: Curve | null = null;
-  private lastFrame = 0;
-  private reduceMotion = false;
-  private dotPattern: CanvasPattern | null = null;
-  private emptyMsg = '';
 
   // Terminal internals (direct DOM: a typewriter over hundreds of lines is
   // not a job for change detection).
@@ -226,15 +183,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   private pollTimer?: ReturnType<typeof setInterval>;
   private typeTimer?: ReturnType<typeof setTimeout>;
   private refreshTimer?: ReturnType<typeof setTimeout>;
-  private resizeTimer?: ReturnType<typeof setTimeout>;
-  private ro?: ResizeObserver;
   private pendingSeed: { thoughts: ObsThought[]; trades: ObsTrade[]; canExecute: boolean; research?: ObsResearchEvent[] } | null = null;
   private lastResearchAt = 0;
-
-  private readonly onResize = () => {
-    if (this.resizeTimer) { clearTimeout(this.resizeTimer); }
-    this.resizeTimer = setTimeout(() => this.resizeCanvas(), 150);
-  };
 
   /** The polling clock: one read of the whole page, fifteen seconds after the last answer, doubling on a 429. */
   private refreshEveryMs = REFRESH_MS;
@@ -283,7 +233,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     // The stream and the typewriter run outside Angular: a 9ms typing tick
     // must not drive change detection. Bound state re-enters via zone.run.
     this.zone.runOutsideAngular(() => this.connect());
-    window.addEventListener('resize', this.onResize);
   }
 
   ngAfterViewInit(): void {
@@ -292,26 +241,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       this.pendingSeed = null;
       this.seed(s.thoughts, s.trades, s.canExecute, s.research || []);
     }
-    // Deferred: updateChart() writes bound headline values, which must not
-    // happen inside the change-detection pass that just checked them (NG0100).
-    setTimeout(() => this.updateChart());
-    // The whole chart engine lives outside the zone: the render loop, the
-    // crosshair and the resize handling must never drive change detection.
-    this.zone.runOutsideAngular(() => {
-      const cv = this.chartCanvas?.nativeElement;
-      if (!cv) { return; }
-      this.ctx = cv.getContext('2d');
-      this.reduceMotion = typeof window !== 'undefined' && !!window.matchMedia
-        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      this.resizeCanvas();
-      cv.addEventListener('mousemove', this.onChartMove);
-      cv.addEventListener('mouseleave', this.onChartLeave);
-      if (typeof ResizeObserver !== 'undefined') {
-        this.ro = new ResizeObserver(() => this.resizeCanvas());
-        this.ro.observe(cv);
-      }
-      this.rafId = requestAnimationFrame(this.frame);
-    });
   }
 
   ngOnDestroy(): void {
@@ -323,15 +252,11 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.myProvider?.removeListener?.('accountsChanged', this.onMyAccounts);
     if (this.refreshClock) { clearTimeout(this.refreshClock); }
     this.es?.close();
-    this.ro?.disconnect();
-    if (this.rafId) { cancelAnimationFrame(this.rafId); }
-    window.removeEventListener('resize', this.onResize);
     if (this.pollTimer) { clearInterval(this.pollTimer); }
     if (this.esReconnectTimer) { clearTimeout(this.esReconnectTimer); }
     if (this.esLivenessTimer) { clearInterval(this.esLivenessTimer); }
     if (this.typeTimer) { clearTimeout(this.typeTimer); }
     if (this.refreshTimer) { clearTimeout(this.refreshTimer); }
-    if (this.resizeTimer) { clearTimeout(this.resizeTimer); }
     if (this.marqueeInterval) { clearInterval(this.marqueeInterval); }
     if (this.marqueeSwapTimer) { clearTimeout(this.marqueeSwapTimer); }
   }
@@ -349,7 +274,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   refresh(): void {
     if (document.hidden) { return; }
     this.err = '';
-    this.obs.dashboard(this.chartHours, 30, 8).subscribe({
+    this.obs.dashboard(DASHBOARD_HOURS, 30, 8).subscribe({
       next: (d) => { this.applyDashboard(d); this.scheduleRefresh(tickStatus(null, this.myBookLimited || this.pickedLimited)); },
       error: (e: { status?: number }) => { this.err = 'dashboard'; this.scheduleRefresh(tickStatus(e?.status ?? 0, this.myBookLimited || this.pickedLimited)); }
     });
@@ -538,15 +463,14 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   private applyDashboard(d: ObsDashboard): void {
     const missing = (['status', 'reads', 'pnl', 'market', 'trades'] as const).filter((k) => !d[k]);
     if (missing.length) { this.err = missing.join(', '); }
-    if (d.status) { this.status = d.status; this.buildRails(d.status); }
+    if (d.status) { this.status = d.status; }
     if (d.agentToken) { this.agentToken = d.agentToken; }
-    if (d.reads) { this.reads = d.reads; this.buildWallet(d.reads); }
+    if (d.reads) { this.reads = d.reads; }
     if (d.pnl) { this.pnl = d.pnl; this.buildPortfolio(d.pnl); this.buildPositions(d.pnl); }
     if (d.agents) { this.allAgents = d.agents.agents ?? []; this.agents = visibleAgents(this.allAgents, this.pickedWallet); }
     if (d.market) { this.obsMarket = d.market; }
     if (d.trades) { this.buildTicker(d.trades.items); }
     this.buildStats();
-    this.updateChart();
   }
 
   /**
@@ -589,18 +513,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  setSeries(s: 'equity' | 'pnl' | 'obs'): void {
-    this.chartSeries = s;
-    this.buildStats();
-    this.updateChart();
-  }
-
-  setRange(h: number): void {
-    this.chartHours = h;
-    // One read at the new range, the same read the clock makes; it also puts the clock back to now.
-    this.refresh();
-  }
-
   copyAddress(): void {
     const a = this.status?.wallet?.address;
     if (!a || !navigator.clipboard) { return; }
@@ -614,9 +526,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   private buildStats(): void {
     if (this.marketAsset === 'obs') { this.buildStatsObs(); } else if (this.marketAsset === 'agent') { this.buildStatsAgent(); } else { this.buildStatsCg(); }
-    const last = this.status?.desk?.lastThoughtAt;
-    const name = this.chartSeries === 'obs' ? 'OBS / USD' : this.chartSeries === 'pnl' ? 'OBS Desk PnL / USD' : 'OBS Desk Equity / USD';
-    this.chartCap = name + (last ? ' · Last Cycle ' + this.capWords(this.ago(last)) : ' · Live');
   }
 
   /** A "+x.xx% 24h" sub line from a fractional change, coloured by direction. */
@@ -738,24 +647,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     return this.num(v, 2);
   }
 
-  private buildWallet(r: ObsReads): void {
-    const w = r.wallet;
-    if (!w) { this.walletRows = []; return; }
-    const rows: KvRow[] = [
-      { k: 'ETH · Robinhood Chain', v: this.num(w.ethRobinhood, 5), icon: 'eth' },
-      { k: 'ETH · Ethereum', v: this.num(w.ethMainnet, 5), icon: 'eth' },
-      { k: 'USDG', v: this.num(w.usdg, 2), icon: 'usdg' },
-      { k: 'OBS', v: this.num(w.obs, 0), icon: 'obs' }
-    ];
-    this.walletRows = rows;
-  }
-
-  private blocks(used: number, cap: number, cls: string): string[] {
-    const n = 10;
-    const f = cap > 0 ? Math.min(n, Math.round((used / cap) * n)) : 0;
-    return Array.from({ length: n }, (_, i) => (i < f ? cls : ''));
-  }
-
   /** The day at a glance. Every figure here is one the page already holds; nothing is fetched for it. */
   private buildSummary(): void {
     const p = this.pnl;
@@ -787,24 +678,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   howLabel(h: string): string {
     return ({ 'trail': 'trailing stop', 'floor': 'floor', 'tape-profit': 'buyers thinned', 'take-profit': 'take profit', 'time-stop': 'time stop', 'volume': 'tape rolled over', 'operator': 'operator', 'the model': 'the model sold' } as Record<string, string>)[h] ?? h;
-  }
-
-  private buildRails(s: ObsStatus): void {
-    const r: ObsRails | undefined = s.rails;
-    if (!r) { this.railGauges = []; this.railKv = []; return; }
-
-    // Nothing is counted by the day: the desk enters whenever the reads say so. The one gauge is what is open now.
-    this.buildSummary();
-    this.railGauges = [
-      { label: 'Open orders', used: `${r.openOrders} / ${r.maxOpenOrders}`, blocks: this.blocks(r.openOrders, r.maxOpenOrders, 'f') }
-    ];
-    const assets = r.allowedAssets.map((a) => a.split('@')[0]).filter((a, i, arr) => arr.indexOf(a) === i).join(' ');
-    this.railKv = [
-      { k: 'Per-swap cap', v: this.usd(r.maxSwapUsd) },
-      { k: 'Gas reserve', v: `${r.gasReserveEth} ETH` },
-      { k: 'Assets', v: assets },
-      { k: 'Partners', v: r.allowedPartners ? r.allowedPartners.join(' ') : 'Any Obscura Route' }
-    ];
   }
 
   private buildPortfolio(p: ObsPnl): void {
@@ -848,393 +721,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
       };
     });
     this.tickerRoll = this.ticker.length >= 6;
-  }
-
-  // ---- the chart -------------------------------------------------------
-
-  private seriesData(): Array<{ at: number; v: number }> {
-    if (this.chartSeries === 'obs') {
-      return (this.obsMarket?.series || [])
-        .filter((x): x is { at: number; priceUsd: number; depthUsd2pct: number | null } => x.priceUsd != null)
-        .map((x) => ({ at: x.at, v: x.priceUsd }));
-    }
-    const key = this.chartSeries === 'pnl' ? 'pnlUsd' : 'equityUsd';
-    const pts = (this.pnl?.series || [])
-      .filter((x) => x[key] != null)
-      .map((x) => ({ at: x.at, v: x[key] as number }));
-    // The curve ends at the live mark, not at the last stored snapshot.
-    const live = this.pnl?.snapshot;
-    if (live && live[key] != null && (!pts.length || live.at > pts[pts.length - 1].at)) {
-      pts.push({ at: live.at, v: live[key] as number });
-    }
-    return pts;
-  }
-
-  /**
-   * Chart data and headline update, called when data, the series or the range
-   * changes. The render loop picks the new targets up and glides there; this
-   * writes bound values, so it must run in zone contexts only.
-   */
-  private updateChart(): void {
-    const pts = this.seriesData();
-    const fmt = this.chartSeries === 'obs' ? (v: number | null) => this.price(v) : (v: number | null) => this.usd(v);
-    this.chartFmtF = fmt;
-    const s = this.pnl?.snapshot;
-    const headline = this.chartSeries === 'obs'
-      ? (this.reads?.market?.priceUsd ?? (pts.length ? pts[pts.length - 1].v : null))
-      : this.chartSeries === 'pnl' ? (s ? s.pnlUsd : null) : (s ? s.equityUsd : null);
-    this.chartVal = this.chartSeries === 'pnl' ? this.usd(headline, true) : fmt(headline);
-    this.chartValCls = this.chartSeries === 'pnl' ? this.dir(headline) : '';
-    let chg: number | null = null;
-    if (this.chartSeries === 'pnl') { chg = s?.pnlPct ?? null; }
-    else if (pts.length >= 2 && pts[0].v) { chg = (pts[pts.length - 1].v - pts[0].v) / Math.abs(pts[0].v); }
-    this.chartChg = chg == null ? '' : this.pct(chg);
-    this.chartChgCls = this.dir(chg);
-    if (pts.length < 2) {
-      this.emptyMsg = pts.length
-        ? 'one point so far. the curve starts with the next cycle.'
-        : this.chartSeries === 'obs'
-          ? 'no price samples yet. they accrue once a minute while the desk reads.'
-          : 'no snapshots yet. the desk writes one every cycle.';
-      this.chartHigh = ''; this.chartLow = ''; this.chartRangeChg = ''; this.chartRangeCls = '';
-      this.chartData = [];
-      return;
-    }
-    this.emptyMsg = '';
-    const vals = pts.map((p) => p.v);
-    const hi = Math.max(...vals), lo = Math.min(...vals);
-    this.chartHigh = this.chartSeries === 'pnl' ? this.usd(hi, true) : fmt(hi);
-    this.chartLow = this.chartSeries === 'pnl' ? this.usd(lo, true) : fmt(lo);
-    const delta = pts[pts.length - 1].v - pts[0].v;
-    this.chartRangeChg = this.chartSeries === 'pnl'
-      ? this.usd(delta, true)
-      : pts[0].v ? this.pct(delta / Math.abs(pts[0].v)) : 'n/a';
-    this.chartRangeCls = this.dir(delta);
-    const key = this.chartSeries + '|' + this.chartHours;
-    if (key !== this.chartKey) {
-      // A new series or range unfurls through the wave and rescales fresh.
-      this.chartKey = key;
-      this.reveal = this.reduceMotion ? 1 : 0;
-      this.rangeInit = false;
-      this.liveInit = false;
-      this.gridAlphas.clear();
-      this.cross.active = false;
-    }
-    this.chartData = pts;
-  }
-
-  /** Frame-time-normalised exponential ease, the reference chart's lerp. */
-  private ease(cur: number, target: number, rate: number, dt: number): number {
-    if (this.reduceMotion) { return target; }
-    const k = 1 - Math.pow(1 - rate, dt / 16.67);
-    return cur + (target - cur) * k;
-  }
-
-  /** Value at an exact time, interpolated between samples (binary search). */
-  private valueAt(pts: Array<{ at: number; v: number }>, t: number): number {
-    if (t <= pts[0].at) { return pts[0].v; }
-    if (t >= pts[pts.length - 1].at) { return pts[pts.length - 1].v; }
-    let a = 0, b = pts.length - 1;
-    while (b - a > 1) {
-      const m = (a + b) >> 1;
-      if (pts[m].at <= t) { a = m; } else { b = m; }
-    }
-    const span = pts[b].at - pts[a].at;
-    if (!span) { return pts[a].v; }
-    return pts[a].v + ((t - pts[a].at) / span) * (pts[b].v - pts[a].v);
-  }
-
-  private resizeCanvas(): void {
-    const cv = this.chartCanvas?.nativeElement;
-    if (!cv || !this.ctx) { return; }
-    const w = cv.clientWidth || 800;
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
-    if (w === this.cw && cv.width === Math.round(w * dpr)) { return; }
-    this.cw = w;
-    cv.width = Math.round(w * dpr);
-    cv.height = Math.round(this.chH * dpr);
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // The dot-grid backdrop from the line-charts-9 spec, as a pattern tile.
-    const tile = document.createElement('canvas');
-    tile.width = 20;
-    tile.height = 20;
-    const tc = tile.getContext('2d');
-    if (tc) {
-      tc.fillStyle = 'rgba(138, 150, 138, 0.16)';
-      tc.beginPath();
-      tc.arc(10, 10, 1, 0, Math.PI * 2);
-      tc.fill();
-    }
-    this.dotPattern = this.ctx.createPattern(tile, 'repeat');
-  }
-
-  private readonly onChartMove = (e: MouseEvent) => {
-    const cv = this.chartCanvas?.nativeElement;
-    if (!cv) { return; }
-    this.cross.x = e.clientX - cv.getBoundingClientRect().left;
-    this.cross.active = true;
-  };
-
-  private readonly onChartLeave = () => { this.cross.active = false; };
-
-  /** One frame of the chart. Everything eases; nothing jumps. */
-  private readonly frame = (now: number) => {
-    this.rafId = requestAnimationFrame(this.frame);
-    const ctx = this.ctx, cv = this.chartCanvas?.nativeElement;
-    if (!ctx || !cv) { return; }
-    if (document.hidden) { this.lastFrame = now; return; }
-    const dt = Math.min(50, now - (this.lastFrame || now)) || 16.67;
-    this.lastFrame = now;
-    const W = this.cw || cv.clientWidth || 800, H = this.chH;
-    const T = 24, B = 30, L = 64, R = 18;
-    const chW = W - L - R, chH = H - T - B;
-    const LIME = '#b8ff3d', CARD = '#161816';
-    const pts = this.chartData;
-    ctx.clearRect(0, 0, W, H);
-    if (pts.length < 2) {
-      if (this.emptyMsg) {
-        ctx.save();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '500 12px "Plus Jakarta Sans", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(this.emptyMsg, W / 2, H / 2);
-        ctx.restore();
-      }
-      return;
-    }
-    // Eased targets: the y-range, the live value and the reveal.
-    const vals = pts.map((p) => p.v);
-    const hiV = Math.max(...vals), loV = Math.min(...vals);
-    let lo = loV, span0 = hiV - loV;
-    if (span0 === 0) { span0 = Math.abs(hiV) * 0.02 || 1; lo -= span0 / 2; }
-    const pad = span0 * 0.08;
-    const tMin = lo - pad, tSpan = span0 + pad * 2;
-    if (!this.rangeInit) { this.dispMin = tMin; this.dispSpan = tSpan; this.rangeInit = true; }
-    this.dispMin = this.ease(this.dispMin, tMin, 0.12, dt);
-    this.dispSpan = this.ease(this.dispSpan, tSpan, 0.12, dt);
-    const lastPt = pts[pts.length - 1];
-    if (!this.liveInit) { this.liveV = lastPt.v; this.liveInit = true; }
-    this.liveV = this.ease(this.liveV, lastPt.v, 0.15, dt);
-    this.reveal = Math.min(1, this.ease(this.reveal, 1, 0.055, dt) + (this.reduceMotion ? 1 : 0.002));
-    const rv = this.reveal;
-    const t0 = pts[0].at, dtx = (lastPt.at - t0) || 1;
-    const x = (t: number) => L + ((t - t0) / dtx) * chW;
-    const y = (v: number) => T + (1 - (v - this.dispMin) / this.dispSpan) * chH;
-    if (this.dotPattern) {
-      ctx.fillStyle = this.dotPattern;
-      ctx.fillRect(0, 0, W, H);
-    }
-    this.drawGrid(ctx, dt, W, T, L, R, chH);
-    // A change unfurls through a wandering wave, the reference chart's reveal.
-    const midY = T + chH / 2, amp = chH * 0.07, ph = now * 0.001;
-    const wave = (fx: number) => midY + amp * (Math.sin(fx * 9.4 + ph) * 0.55 + Math.sin(fx * 15.7 + ph * 1.3) * 0.3 + Math.sin(fx * 4.2 + ph * 0.7) * 0.15);
-    const blend = (yy: number, xx: number) => {
-      if (rv >= 1) { return yy; }
-      const fx = Math.max(0, Math.min(1, (xx - L) / chW));
-      const edge = Math.abs(fx - 0.5) * 2;
-      const w = Math.max(0, Math.min(1, (rv - edge * 0.4) / 0.6));
-      return wave(fx) + (yy - wave(fx)) * w;
-    };
-    const px: number[] = [], py: number[] = [];
-    for (let i = 0; i < pts.length; i++) {
-      const xx = x(pts[i].at);
-      const vy = i === pts.length - 1 ? this.liveV : pts[i].v;
-      px.push(xx);
-      py.push(blend(Math.max(T, Math.min(H - B, y(vy))), xx));
-    }
-    const curve = buildCurve(px, py);
-    this.curve = curve;
-    const alpha = Math.max(0.15, rv);
-    const grad = ctx.createLinearGradient(0, T, 0, H - B);
-    grad.addColorStop(0, 'rgba(184, 255, 61, 0.10)');
-    grad.addColorStop(1, 'rgba(184, 255, 61, 0)');
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    ctx.moveTo(px[0], H - B);
-    ctx.lineTo(px[0], py[0]);
-    traceCurve(ctx, curve);
-    ctx.lineTo(px[px.length - 1], H - B);
-    ctx.closePath();
-    ctx.fillStyle = grad;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(px[0], py[0]);
-    traceCurve(ctx, curve);
-    ctx.strokeStyle = LIME;
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.shadowColor = 'rgba(184, 255, 61, 0.45)';
-    ctx.shadowBlur = 12;
-    ctx.stroke();
-    ctx.restore();
-    if (rv > 0.95) {
-      // High and low marked; the live end gets the dashed line and the pulse.
-      const hiI = vals.indexOf(hiV), loI = vals.indexOf(loV);
-      ctx.save();
-      for (const i of Array.from(new Set([hiI, loI]))) {
-        if (i === pts.length - 1) { continue; }
-        ctx.beginPath();
-        ctx.arc(x(pts[i].at), Math.max(T, Math.min(H - B, y(pts[i].v))), 5, 0, Math.PI * 2);
-        ctx.fillStyle = LIME;
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-        ctx.shadowBlur = 3;
-        ctx.fill();
-        ctx.stroke();
-      }
-      ctx.restore();
-      const ly = Math.max(T, Math.min(H - B, y(this.liveV)));
-      ctx.save();
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = 'rgba(184, 255, 61, 0.35)';
-      ctx.beginPath();
-      ctx.moveTo(L, ly);
-      ctx.lineTo(W - R, ly);
-      ctx.stroke();
-      ctx.restore();
-      const ex = px[px.length - 1], ey = py[py.length - 1];
-      if (!this.reduceMotion) {
-        const u = (now % 1500) / 900;
-        if (u < 1) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(ex, ey, 8 + u * 12, 0, Math.PI * 2);
-          ctx.strokeStyle = LIME;
-          ctx.lineWidth = 1.5;
-          ctx.globalAlpha = 0.35 * (1 - u);
-          ctx.stroke();
-          ctx.restore();
-        }
-      }
-      ctx.beginPath();
-      ctx.arc(ex, ey, 6.5, 0, Math.PI * 2);
-      ctx.fillStyle = CARD;
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(ex, ey, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = LIME;
-      ctx.fill();
-    }
-    this.drawTimeLabels(ctx, pts, W, H, L, R);
-    this.drawCrosshair(ctx, dt, pts, x, y, W, H, T, B, L, R);
-  };
-
-  /** Nice-stepped grid whose lines and labels crossfade as the range moves. */
-  private drawGrid(ctx: CanvasRenderingContext2D, dt: number, W: number, T: number, L: number, R: number, chH: number): void {
-    const pxPerVal = chH / this.dispSpan;
-    const seq = [2, 2.5, 2];
-    let step = Math.pow(10, Math.ceil(Math.log10(this.dispSpan || 1)));
-    let si = 0;
-    while ((step / seq[si % 3]) * pxPerVal >= 36 && si < 40) { step /= seq[si % 3]; si++; }
-    const yOf = (v: number) => T + (1 - (v - this.dispMin) / this.dispSpan) * chH;
-    const targets = new Map<number, number>();
-    const first = Math.ceil(this.dispMin / step) * step;
-    for (let v = first; v <= this.dispMin + this.dispSpan; v += step) {
-      const yy = yOf(v);
-      const edge = Math.min(yy - T, T + chH - yy);
-      const a = edge >= 28 ? 1 : edge <= 0 ? 0 : edge / 28;
-      if (a > 0) { targets.set(Math.round(v * 1e6), a); }
-    }
-    for (const key of Array.from(this.gridAlphas.keys())) {
-      if (!targets.has(key)) { targets.set(key, 0); }
-    }
-    ctx.save();
-    ctx.setLineDash([4, 8]);
-    ctx.lineWidth = 1;
-    ctx.font = '500 11.5px "Plus Jakarta Sans", sans-serif';
-    ctx.textAlign = 'right';
-    for (const [key, target] of Array.from(targets)) {
-      const cur = this.gridAlphas.get(key) ?? 0;
-      let a = this.ease(cur, target, target > cur ? 0.18 : 0.12, dt);
-      if (Math.abs(a - target) < 0.02) { a = target; }
-      if (a < 0.01 && target === 0) { this.gridAlphas.delete(key); continue; }
-      this.gridAlphas.set(key, a);
-      if (a < 0.02) { continue; }
-      const yy = yOf(key / 1e6);
-      ctx.globalAlpha = a;
-      ctx.strokeStyle = 'rgba(55, 60, 55, 0.6)';
-      ctx.beginPath();
-      ctx.moveTo(L, yy);
-      ctx.lineTo(W - R, yy);
-      ctx.stroke();
-      ctx.fillStyle = '#b8ff3d';
-      ctx.fillText(this.chartFmtF(key / 1e6), L - 10, yy + 4);
-    }
-    ctx.restore();
-  }
-
-  private drawTimeLabels(ctx: CanvasRenderingContext2D, pts: Array<{ at: number; v: number }>, W: number, H: number, L: number, R: number): void {
-    const mid = pts[Math.floor(pts.length / 2)];
-    ctx.save();
-    ctx.fillStyle = '#b8ff3d';
-    ctx.globalAlpha = 0.85;
-    ctx.font = '500 11.5px "Plus Jakarta Sans", sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(this.when(pts[0].at), L, H - 8);
-    ctx.textAlign = 'center';
-    ctx.fillText(this.when(mid.at), (L + (W - R)) / 2, H - 8);
-    ctx.textAlign = 'right';
-    ctx.fillText(this.when(pts[pts.length - 1].at), W - R, H - 8);
-    ctx.restore();
-  }
-
-  /** Crosshair: eased in and out, the dot riding the curve between samples. */
-  private drawCrosshair(ctx: CanvasRenderingContext2D, dt: number, pts: Array<{ at: number; v: number }>, x: (t: number) => number, y: (v: number) => number, W: number, H: number, T: number, B: number, L: number, R: number): void {
-    const target = this.cross.active && this.reveal > 0.9 ? 1 : 0;
-    this.cross.alpha = this.ease(this.cross.alpha, target, target ? 0.25 : 0.15, dt);
-    const a = this.cross.alpha;
-    if (a < 0.01) { return; }
-    const t0 = pts[0].at, t1 = pts[pts.length - 1].at;
-    const cx = Math.max(L, Math.min(W - R, this.cross.x));
-    const t = t0 + ((cx - L) / (W - L - R)) * (t1 - t0);
-    const v = this.valueAt(pts, t);
-    const cy = this.curve ? curveYAt(this.curve, cx) : Math.max(T, Math.min(H - B, y(v)));
-    ctx.save();
-    ctx.globalAlpha = a * 0.55;
-    ctx.strokeStyle = 'rgba(184, 255, 61, 0.6)';
-    ctx.setLineDash([4, 4]);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(cx, T);
-    ctx.lineTo(cx, H - B);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    const r = 4 * Math.min(a * 3, 1);
-    if (r > 0.5) {
-      ctx.globalAlpha = 1;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fillStyle = '#b8ff3d';
-      ctx.fill();
-    }
-    // Inline readout at the top, haloed and clamped, like the reference.
-    const valTxt = this.chartSeries === 'pnl' ? this.usd(v, true) : this.chartFmtF(v);
-    const sep = '  ·  ';
-    const timeTxt = this.when(t);
-    ctx.globalAlpha = a;
-    ctx.font = '700 13px "Plus Jakarta Sans", sans-serif';
-    const wVal = ctx.measureText(valTxt).width;
-    ctx.font = '500 13px "Plus Jakarta Sans", sans-serif';
-    const wRest = ctx.measureText(sep + timeTxt).width;
-    let tx = cx - (wVal + wRest) / 2;
-    tx = Math.max(L + 4, Math.min(W - R - wVal - wRest - 4, tx));
-    const ty = T + 10;
-    ctx.textAlign = 'left';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#161816';
-    ctx.font = '700 13px "Plus Jakarta Sans", sans-serif';
-    ctx.strokeText(valTxt, tx, ty);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(valTxt, tx, ty);
-    ctx.font = '500 13px "Plus Jakarta Sans", sans-serif';
-    ctx.strokeText(sep + timeTxt, tx + wVal, ty);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(sep + timeTxt, tx + wVal, ty);
-    ctx.restore();
   }
 
   // ---- the terminal ----------------------------------------------------
@@ -1601,7 +1087,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.pnl = merged;
     this.buildPortfolio(merged);
     this.buildPositions(merged);
-    this.updateChart();
   }
 
   private onTrade(x: ObsTrade): void {
@@ -1668,11 +1153,6 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     const d = new Date(ts);
     const pad = (n: number) => (n < 10 ? '0' : '') + n;
     return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-  }
-
-  /** Uppercase the first letter of every word, leaving the rest untouched ("2h ago" -> "2h Ago"). */
-  private capWords(s: string): string {
-    return s.replace(/\b[a-z]/g, (c) => c.toUpperCase());
   }
 
   ago(ts: number | null | undefined): string {
