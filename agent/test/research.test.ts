@@ -22,3 +22,10 @@ test("every research event reads as one plain sentence a newcomer follows", () =
   assert.equal(researchLine({ kind: "decision", symbol: "", ok: null, note: "hold. Candidates either fail launch safety checks or are gated by the entry read." }), "Decided: hold. Candidates either fail launch safety checks or are gated by the entry read.");
   assert.equal(researchLine({ kind: "decision", symbol: "", ok: false, note: "the desk could not think this cycle (HTTP 502); the exits ran, the next entry waits for the model." }), "Held: the desk could not think this cycle (HTTP 502); the exits ran, the next entry waits for the model.", "a cycle that could not think is a hold the terminal shows in red");
 });
+
+test("a read that did not complete is said as such: a refusal against a new entry, a plain fact for a token held (2026-09-08)", () => {
+  assert.equal(researchLine({ kind: "holders", symbol: "LENNY", ok: false, note: "not read (no transfers were read); a new entry is refused until it reads" }), "LENNY's holders: FAIL, not read (no transfers were read); a new entry is refused until it reads. Not buying.");
+  assert.equal(researchLine({ kind: "holders", symbol: "LENNY", ok: null, note: "not read (explorer answered 502)" }), "LENNY's holders: not read (explorer answered 502).", "no verdict attached to a held token's read");
+  assert.equal(researchLine({ kind: "launch-read", symbol: "LENNY", ok: false, note: "not read (the factory record could not be read); a new entry is refused until it reads" }), "LENNY's launch: FAIL, not read (the factory record could not be read); a new entry is refused until it reads. Not buying.");
+  assert.equal(researchLine({ kind: "launch-read", symbol: "LENNY", ok: null, note: "not read (the factory record could not be read)" }), "LENNY's launch: not read (the factory record could not be read).");
+});

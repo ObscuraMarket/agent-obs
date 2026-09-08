@@ -82,3 +82,10 @@ test("the launcher's buy and exemptions decode from launchAndBuy calldata", () =
   assert.deepEqual(d.exemptions, ["0x00000000000000000000000000000000000000a1", "0x00000000000000000000000000000000000000b2"]);
   assert.equal(decodeLaunchCall("0x12345678"), null, "another path decodes to nothing");
 });
+
+test("a factory that did not answer is no launch read, and the line says so rather than 'not a launch' (2026-09-08)", () => {
+  const unread = { ...base, exists: false, unread: ["the factory record"] };
+  assert.equal(launchLine({ ...unread, score: null, verdict: { ok: true, why: "the factory record could not be read" } }), "Launch TOK: not read (the factory record could not be read).");
+  const other = { ...base, exists: false };
+  assert.match(launchLine({ ...other, score: null, verdict: launchVerdict(other, null, R) }), /not a pons v2 launch, so no launch read/, "a token the factory does not know still reads as one");
+});

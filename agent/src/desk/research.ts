@@ -58,7 +58,8 @@ export function researchLine(e: ResearchInput): string {
       return f(s, n);
     }
     case "holders":
-      return e.ok ? `${s}'s holders: ${e.note}. OK.` : `${s}'s holders: FAIL, ${e.note}. Not buying.`;
+      // A null verdict is a fact about the read (it was not made), said without a buy or a refusal attached.
+      return e.ok == null ? `${s}'s holders: ${e.note}.` : e.ok ? `${s}'s holders: ${e.note}. OK.` : `${s}'s holders: FAIL, ${e.note}. Not buying.`;
     case "launch-read":
       return e.ok == null ? `${s}'s launch: ${e.note}.` : e.ok ? `${s}'s launch: ${e.note}. OK.` : `${s}'s launch: FAIL, ${e.note}. Not buying.`;
     case "trigger":

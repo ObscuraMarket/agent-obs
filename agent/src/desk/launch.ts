@@ -191,7 +191,9 @@ export function launchVerdict(f: LaunchFacts, score: LaunchScore | null, rules: 
 
 /** PURE: the line the agent reads. */
 export function launchLine(r: LaunchRead): string {
-  if (!r.exists) return `Launch ${r.symbol}: not a pons v2 launch, so no launch read.`;
+  // A factory that did not answer is not "not a launch": the line says the read was not made, and the gate refuses
+  // a new entry on it (readgate.ts, 2026-09-08).
+  if (!r.exists) return r.unread.includes("the factory record") ? `Launch ${r.symbol}: not read (the factory record could not be read).` : `Launch ${r.symbol}: not a pons v2 launch, so no launch read.`;
   const bits: string[] = [];
   bits.push(`pons v2, ${r.phase == null ? "phase unread" : r.phase === 0 ? "on its curve" : r.phase === 2 ? "graduated to its pool" : PHASE_NAME[r.phase] ?? `phase ${r.phase}`}`);
   const qty = (x: number) => (x >= 100 ? Math.round(x).toLocaleString("en-US") : x >= 1 ? x.toFixed(2) : x.toPrecision(3));

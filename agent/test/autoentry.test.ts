@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { autoEntryPick, autoEntryFor, type AutoEntryReads } from "../src/desk/autoentry.ts";
 import { evidenceCheck } from "../src/desk/analysis.ts";
 
-const r = (over: Partial<AutoEntryReads>): AutoEntryReads => ({ symbol: "ZZZ", grade: "B", entryOk: true, entryWhy: "quiet in a 8.9% range for 10 min with the peak 30 min old, buy pressure 57% over the last 10 min: base, entry allowed", holdersOk: true, launchOk: true, held: false, ...over });
+const r = (over: Partial<AutoEntryReads>): AutoEntryReads => ({ symbol: "ZZZ", grade: "B", entryOk: true, entryWhy: "quiet in a 8.9% range for 10 min with the peak 30 min old, buy pressure 57% over the last 10 min: base, entry allowed", holdersRead: true, holdersOk: true, launchRead: true, launchOk: true, held: false, ...over });
 
 test("the reads pick the entry: the first graded, unheld candidate that passed every read", () => {
   assert.equal(autoEntryPick([r({ symbol: "MEME", entryOk: false }), r({ symbol: "ZZZ" })])?.symbol, "ZZZ");
@@ -12,6 +12,13 @@ test("the reads pick the entry: the first graded, unheld candidate that passed e
   assert.equal(autoEntryPick([r({ launchOk: null })])?.symbol, "ZZZ", "no launch read is not a failure");
   assert.equal(autoEntryPick([r({ grade: null })]), null, "below the bar is not bought");
   assert.equal(autoEntryPick([r({ held: true })]), null, "a token already held is not bought again here");
+});
+
+test("a read the cycle does not have is not a pass: a missing holder read or launch read is refused (2026-09-08)", () => {
+  assert.equal(autoEntryPick([r({ holdersRead: false, holdersOk: false })]), null, "the holder read threw, or its scan came back empty");
+  assert.equal(autoEntryPick([r({ holdersRead: false, holdersOk: true })]), null, "a pass without a read behind it is no pass");
+  assert.equal(autoEntryPick([r({ launchRead: false, launchOk: null })]), null, "the launch read threw, or the factory did not answer: not the same as 'not a launchpad token'");
+  assert.equal(autoEntryPick([r({ symbol: "MEME", launchRead: false, launchOk: null }), r({ symbol: "ZZZ" })])?.symbol, "ZZZ", "the next candidate with every read is picked");
 });
 
 test("the entry is argued from the observation's own lines, at the rails' size, and the rails accept the argument", () => {

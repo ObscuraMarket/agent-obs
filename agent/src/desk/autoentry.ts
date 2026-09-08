@@ -4,14 +4,20 @@
 // is the public reasoning, not a veto. OBS_AUTO_ENTRY=on switches it on.
 // Pure: given the cycle's reads, the pick and the argument the rails will
 // check, built from the observation's own lines so every figure is real.
+// Passed means completed and passed: a read the cycle does not have is not
+// a pass (readgate.ts says which reads count as complete, 2026-09-08).
 
 export interface AutoEntryReads {
   symbol: string;
   grade: string | null;
   entryOk: boolean;
   entryWhy: string;
+  /** The holder read completed this cycle (holderReadComplete in readgate.ts). */
+  holdersRead: boolean;
   holdersOk: boolean;
-  /** Null when the token had no launch read (not a launchpad token). */
+  /** The launch read completed this cycle (launchReadComplete in readgate.ts). */
+  launchRead: boolean;
+  /** Null when the completed launch read had nothing to read (not a launchpad token). */
   launchOk: boolean | null;
   held: boolean;
 }
@@ -49,9 +55,9 @@ export function entryVeto(i: VetoInput): string | null {
   return null;
 }
 
-/** PURE: the first graded, unheld candidate that passed every read, in board order; null when none did. */
+/** PURE: the first graded, unheld candidate that passed every read, in board order; null when none did. A read that did not complete is not passed. */
 export function autoEntryPick(reads: AutoEntryReads[]): AutoEntryReads | null {
-  return reads.find((r) => r.grade && !r.held && r.entryOk && r.holdersOk && r.launchOk !== false) ?? null;
+  return reads.find((r) => r.grade && !r.held && r.entryOk && r.holdersRead && r.holdersOk && r.launchRead && r.launchOk !== false) ?? null;
 }
 
 /** PURE: the entry at the rails' size, argued from the observation's own lines for that token. */
