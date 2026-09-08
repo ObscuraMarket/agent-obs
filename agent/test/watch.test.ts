@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, type WatchState } from "../src/desk/watch.ts";
+import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, lockHeld, type WatchState } from "../src/desk/watch.ts";
 
 const R = watchRulesFromEnv({} as NodeJS.ProcessEnv);
 const now = 1_800_000_000_000;
@@ -31,6 +31,30 @@ test("a held token fires an exit trigger the moment its tape breaks, and a revie
   const thinning = st({ symbol: "HLD", role: "held", buyPressurePct: 38 });
   assert.match(triggersFor({ HLD: st({ symbol: "HLD", role: "held", buyPressurePct: 55 }) }, [thinning], { HLD: now - 1 * M }, now, R)[0].reason, /buyers are thinning/);
   assert.deepEqual(triggersFor({ HLD: thinning }, [thinning], { HLD: now - 1 * M }, now, R), [], "already thin, already fired");
+});
+
+test("a rail tripping at the tape's price fires an exit the look it appears, once per kind, ahead of everything", () => {
+  const held = st({ symbol: "HLD", role: "held" });
+  const floored = st({ symbol: "HLD", role: "held", rail: "floor: down 31% from cost, through the 30% floor", railKind: "floor" });
+  const t = triggersFor({ HLD: held }, [floored], { HLD: now - 1 * M }, now, R);
+  assert.equal(t.length, 1);
+  assert.equal(t[0].kind, "exit");
+  assert.equal(t[0].reason, "held HLD tripped its floor rail: floor: down 31% from cost, through the 30% floor");
+  assert.equal(t[0].what, "floor: down 31% from cost, through the 30% floor", "the short form is the rail's own sentence");
+  assert.deepEqual(triggersFor({ HLD: floored }, [floored], { HLD: now - 1 * M }, now, R), [], "the same rail does not fire again every look");
+  const trailed = st({ symbol: "HLD", role: "held", rail: "trailing stop: peaked at +40%, gave back 16%", railKind: "trail" });
+  assert.match(triggersFor({ HLD: floored }, [trailed], { HLD: now - 1 * M }, now, R)[0].reason, /tripped its trail rail/, "a different rail is a new trigger");
+  // A rail outranks the tape's own breaks on the same look.
+  const both = st({ symbol: "HLD", role: "held", trend: "rolling over", rail: "take profit: up 32%", railKind: "take-profit" });
+  assert.match(triggersFor({ HLD: held }, [both], { HLD: now - 1 * M }, now, R)[0].reason, /tripped its take-profit rail/);
+});
+
+test("the cycle's lock counts as held only while its pid lives and it is under fifteen minutes old", () => {
+  assert.equal(lockHeld({ pid: 146, at: now - 60e3 }, now, () => true), true);
+  assert.equal(lockHeld({ pid: 146, at: now - 60e3 }, now, () => false), false, "a dead pid is a stale lock");
+  assert.equal(lockHeld({ pid: 146, at: now - 16 * M }, now, () => true), false, "older than fifteen minutes is stale");
+  assert.equal(lockHeld(null, now, () => true), false);
+  assert.equal(lockHeld({ pid: 146 } as { pid: number; at: number }, now, () => true), false, "a lock without a time is not held");
 });
 
 test("exits come before entries before reviews, and the heartbeat reads at a glance", () => {

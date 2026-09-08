@@ -58,13 +58,16 @@ tsx src/desk/scoutpull.ts &
 SCOUT=$!
 trap 'log "stopping"; kill $API $LIVE $FEED $SCREENER $LAUNCH $SCOUT 2>/dev/null; exit 0' TERM INT
 
-# 4. The loops, on a one-minute tick so each cadence keeps its own clock.
+# 4. The loops, on a one-minute tick so each cadence keeps its own clock. The live watch runs the desk's cycles
+#    on its triggers; this runner's own interval cycle only runs when the watch is switched off (OBS_LIVE=off),
+#    since a runner cycle at boot held the lock while the watch's first entry trigger spawned into it and left
+#    (2026-09-08). The backup keeps its cadence either way.
+LIVE_ON="${OBS_LIVE:-on}"
 next_desk=0; next_post=0; next_engage=0
 while true; do
   now=$(date +%s)
   if (( now >= next_desk )); then
-    log "desk cycle"
-    tsx src/desk/cycle.ts
+    if [ "$LIVE_ON" != "on" ]; then log "desk cycle"; tsx src/desk/cycle.ts; fi
     bash scripts/_obs-backup.sh
     next_desk=$(( now + DESK_EVERY ))
   fi

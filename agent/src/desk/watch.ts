@@ -24,6 +24,14 @@ export interface WatchState {
   /** The last swap's price on the tape, in the quote per token, and the quote's symbol: the page prices a held token from it between wallet reads. */
   lastPrice?: number | null;
   quote?: string;
+  /**
+   * A held token's exit rail as the watch reads it at the tape's last price: the floor, the trail, the take-profit,
+   * the time stop, in the cycle's own words, or null while none trips. The kind fires the trigger once; the cycle
+   * then checks the same rails against the chain and sells. Before this the floor was only checked inside a cycle,
+   * up to the review cadence plus a queued cycle late: a LUDES floor at 30% filled at 33% (2026-09-08).
+   */
+  rail?: string | null;
+  railKind?: string | null;
 }
 
 export interface WatchRules {
@@ -60,6 +68,17 @@ export interface Trigger {
 
 const PRIORITY: Record<Trigger["kind"], number> = { exit: 0, entry: 1, held: 2 };
 
+/**
+ * PURE: whether the cycle's lock is held by a live cycle: its pid alive and the lock under fifteen minutes old, the
+ * cycle's own rule. The watch does not spawn into a held lock; the cycle it spawned would only read the lock and
+ * leave, and the trigger would be lost. Right after a redeploy the runner's own boot cycle held the lock and the
+ * watch's first entry trigger was dropped that way (2026-09-08).
+ */
+export function lockHeld(lock: { pid: number; at: number } | null, now: number, alive: (pid: number) => boolean): boolean {
+  if (!lock || typeof lock.pid !== "number" || typeof lock.at !== "number") return false;
+  return alive(lock.pid) && now - lock.at < 15 * 60e3;
+}
+
 /** PURE: what changed between two looks that is worth a desk cycle, most urgent first. */
 export function triggersFor(prev: Record<string, WatchState>, next: WatchState[], lastThinkAt: Record<string, number>, now: number, r: WatchRules): Trigger[] {
   const out: Trigger[] = [];
@@ -67,7 +86,9 @@ export function triggersFor(prev: Record<string, WatchState>, next: WatchState[]
     const p = prev[s.symbol];
     const sinceMin = lastThinkAt[s.symbol] != null ? (now - lastThinkAt[s.symbol]) / 60e3 : Infinity;
     if (s.role === "held") {
-      if (s.trend === "rolling over" && p?.trend !== "rolling over") out.push({ symbol: s.symbol, kind: "exit", reason: `the tape rolled over on held ${s.symbol}`, what: "the tape rolled over" });
+      // A rail tripping at the tape's price is the most urgent thing the watch can see: fired the look it appears.
+      if (s.railKind && s.rail && p?.railKind !== s.railKind) out.push({ symbol: s.symbol, kind: "exit", reason: `held ${s.symbol} tripped its ${s.railKind} rail: ${s.rail}`, what: s.rail });
+      else if (s.trend === "rolling over" && p?.trend !== "rolling over") out.push({ symbol: s.symbol, kind: "exit", reason: `the tape rolled over on held ${s.symbol}`, what: "the tape rolled over" });
       else if (s.offPeakPct != null && s.offPeakPct >= r.giveBackPct && (p?.offPeakPct == null || p.offPeakPct < r.giveBackPct)) out.push({ symbol: s.symbol, kind: "exit", reason: `held ${s.symbol} is ${s.offPeakPct.toFixed(0)}% off its tape peak`, what: `${s.offPeakPct.toFixed(0)}% off its tape peak` });
       else if (s.buyPressurePct != null && s.buyPressurePct < r.thinPressurePct && (p?.buyPressurePct == null || p.buyPressurePct >= r.thinPressurePct)) out.push({ symbol: s.symbol, kind: "exit", reason: `the buyers are thinning on held ${s.symbol}: buy pressure ${s.buyPressurePct.toFixed(0)}%`, what: "the buyers are thinning" });
       else if (sinceMin >= r.heldEveryMin) {

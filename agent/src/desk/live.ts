@@ -8,7 +8,7 @@
 // heartbeat goes to data/obs-live.json for the page. Replaces the
 // five-minute tick. OBS_PAPER=on watches the paper book instead.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { mkdirSync, writeFileSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR, ROOT_DIR, dataPath } from "../config.ts";
 import { readFeed, resolveAny, dynamicPoolSpec, dynamicAssets, earlyAsCandidate, curveKey, isHolding } from "./candidates.ts";
@@ -17,9 +17,14 @@ import { updateTapes, tapeStats, tapeWindowMin, type SwapRow } from "./tape.ts";
 import { entryRead, entryRulesFromEnv } from "./entry.ts";
 import { liveReads, walletBalances } from "../obscura/reads.ts";
 import { readPaper, paperBalances } from "./paper.ts";
-import { readBook, boughtSymbols } from "./book.ts";
+import { readBook, boughtSymbols, positions, type Trade } from "./book.ts";
 import { readScout } from "./scout.ts";
-import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, type WatchState, type Role, type Trigger } from "./watch.ts";
+import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, lockHeld, type WatchState, type Role, type Trigger } from "./watch.ts";
+import { exitVerdict, type HourlyStat } from "./candidates.ts";
+import { railsFromEnv } from "./rails.ts";
+import { readPrices } from "./analysis.ts";
+import { openSpanStart } from "./trade-memory.ts";
+import { latestEthUsd } from "./onchain.ts";
 import { xConfigured } from "../social/xClient.ts";
 import { raiseAlert, cycleVerdict } from "./alerts.ts";
 
@@ -71,8 +76,64 @@ function maybeSocial(now: number): void {
   if (now - socialAt >= X_EVERY_MS) { socialAt = now; runSocial("src/autopilot.ts", "x"); return; }
   if (X_ENGAGE && now - engageAt >= X_ENGAGE_MS) { engageAt = now; runSocial("src/engage.ts", "x-engage"); }
 }
-/** An exit trigger that fired while a cycle was running: held until that cycle ends, then run, since the break on the tape does not wait. */
+/**
+ * A trigger that fired while a cycle was running, or while another process held the cycle's lock: the most urgent
+ * one is kept and run the moment the desk is free. An exit does not wait for a review to finish, and an entry that
+ * flipped once is not lost to a busy desk (an entry trigger fires once; a dropped one waited fifteen minutes for
+ * a fresh look).
+ */
 let pendingExit: Trigger | null = null;
+
+/** The book and the price samples, read at most every fifteen seconds for the watch's rail read. */
+let railBookAt = 0;
+let railBook: { trades: Trade[]; flows: ReturnType<typeof readBook>["flows"] } | null = null;
+let railSamples: ReturnType<typeof readPrices> = [];
+function railInputs(now: number): { trades: Trade[]; flows: ReturnType<typeof readBook>["flows"]; samples: ReturnType<typeof readPrices> } {
+  if (!railBook || now - railBookAt >= 15_000) {
+    const b = readBook();
+    railBook = { trades: b.trades, flows: b.flows };
+    railSamples = readPrices();
+    railBookAt = now;
+  }
+  return { ...railBook, samples: railSamples };
+}
+
+/**
+ * A held token's exit rails at the tape's last price: the same pure verdict the cycle applies, on the position the
+ * book says the desk holds, so the floor, the trail and the take-profit are seen within a look of the tape crossing
+ * them rather than at the next review. The cycle still decides and sells; this only says "now".
+ */
+function railRead(symbol: string, st: WatchState, poolId: string, feedHourly: Record<string, HourlyStat[]>, now: number): { rail: string | null; railKind: string | null } {
+  const none = { rail: null, railKind: null };
+  if (PAPER || st.lastPrice == null || !(st.lastPrice > 0) || !st.quote) return none;
+  const qty = heldBalances[symbol];
+  if (!(qty > 0)) return none;
+  const ethUsd = latestEthUsd(now);
+  const quoteUsd = st.quote === "ETH" ? ethUsd : /^USD/.test(st.quote) ? 1 : null;
+  if (quoteUsd == null) return none;
+  const usdPrice = st.lastPrice * quoteUsd;
+  const { trades, flows, samples } = railInputs(now);
+  const p = positions(flows, trades, { [symbol]: qty }, { [symbol]: usdPrice, ...(ethUsd != null ? { ETH: ethUsd } : {}) }).positions.find((x) => x.asset === symbol);
+  if (!p || p.unrealizedPct == null) return none;
+  const buys = trades.filter((t) => t.to.asset === symbol && (t.status === "settled" || t.status === "pending"));
+  const firstBuy = openSpanStart(trades, symbol) ?? buys.map((t) => t.at).sort().pop() ?? now;
+  const avgCost = p.avgCostUsd;
+  const peakPx = samples.filter((s) => s.symbol === symbol && s.at >= firstBuy).reduce((m, s) => Math.max(m, s.priceUsd), usdPrice);
+  const peakPnlPct = avgCost != null && avgCost > 0 ? ((peakPx - avgCost) / avgCost) * 100 : null;
+  const tookProfit = trades.some((t) => t.from.asset === symbol && t.exit && t.at >= firstBuy && /take profit|buyers are thinning/.test(t.note ?? ""));
+  const v = exitVerdict({ ageH: (now - firstBuy) / 3600e3, pnlPct: p.unrealizedPct * 100, hourly: feedHourly[poolId.toLowerCase()] ?? [], peakPnlPct, tookProfit, tapeTrend: st.trend, tapeBuyPressurePct: st.buyPressurePct ?? null }, railsFromEnv());
+  return v ? { rail: v.reason, railKind: v.kind } : none;
+}
+
+/** Whether another process holds the cycle's lock right now: the watch waits for it rather than spawning a cycle that would leave. */
+function lockBusy(now: number): boolean {
+  try {
+    const l = JSON.parse(readFileSync(dataPath("obs-cycle.lock"), "utf8")) as { pid: number; at: number };
+    return lockHeld(l, now, (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } });
+  } catch {
+    return false;
+  }
+}
 let lastTrigger: string | null = null;
 let lastTriggerKind: Trigger["kind"] | null = null;
 let cycles = 0;
@@ -84,6 +145,7 @@ const tapeCache = new Map<string, SwapRow[]>();
 
 /** What the wallet (or the paper book) holds among the dynamic tokens, refreshed every minute, off the loop's critical path. */
 let heldInFlight = false;
+let heldBalances: Record<string, number> = {};
 function refreshHeld(now: number): void {
   if (heldInFlight || now - balancesAt < BALANCES_MS) return;
   heldInFlight = true;
@@ -95,6 +157,7 @@ function refreshHeld(now: number): void {
       const by = PAPER ? paperBalances(chain.bySymbol, readPaper()) : chain.bySymbol;
       const bought = boughtSymbols([...readBook().trades, ...(PAPER ? readPaper() : [])]);
       held = Object.values(dynamicAssets()).filter((a) => bought.has(a.symbol) && isHolding(by[a.symbol])).map((a) => a.symbol);
+      heldBalances = Object.fromEntries(held.map((s) => [s, by[s] ?? 0]));
     })
     .catch((e) => console.log(`[live] balances not read: ${e instanceof Error ? e.message : String(e)}`))
     .finally(() => {
@@ -139,7 +202,7 @@ function runCycle(t: Trigger, state: WatchState | undefined, now: number): void 
   const relay = (chunk: Buffer) => {
     for (const line of chunk.toString("utf8").split("\n")) {
       if (/^\[desk\]|^Holding|paper trade|refused|Error/.test(line)) console.log(`  ${line.slice(0, 400)}`);
-      if (/could not think|Error|failed/.test(line)) lastCycleError = line.trim();
+      if (/could not think|Error|failed|another cycle is running/.test(line)) lastCycleError = line.trim();
     }
   };
   child.stdout?.on("data", relay);
@@ -152,10 +215,12 @@ function runCycle(t: Trigger, state: WatchState | undefined, now: number): void 
     if (failed) void raiseAlert("cycle", failed, lastCycleAt);
     running = null;
     tapeCache.clear();
-    if (pendingExit) {
-      const t = pendingExit;
+    // A cycle that only read another's lock and left did nothing: its trigger is kept and runs when the lock clears.
+    if (lastCycleError && /another cycle is running/.test(lastCycleError) && !pendingExit) { pendingExit = t; console.log(`[live] the cycle left (the lock was held); its trigger is kept: ${t.reason}`); return; }
+    if (pendingExit && !lockBusy(Date.now())) {
+      const t2 = pendingExit;
       pendingExit = null;
-      runCycle(t, prev[t.symbol], Date.now());
+      runCycle(t2, prev[t2.symbol], Date.now());
     }
   });
 }
@@ -238,7 +303,11 @@ async function step(now: number): Promise<void> {
     const rows = tapes.get(spec.id as string) ?? [];
     const st = tapeStats(rows, symbol, now, 15);
     const er = entryRead(rows, symbol, now, entryRules, role !== "launch");
-    states.push({ symbol, role, entryState: er.state, entryOk: er.ok, trend: st.trend, offPeakPct: st.offPeakPct, buyPressurePct: st.buyPressurePct, swaps: st.swaps, lastSwapAgoMin: st.lastSwapAgoMin, why: er.why, lastPrice: rows.length ? rows[rows.length - 1].price : null, quote: spec.token0 === symbol ? spec.token1 : spec.token0 });
+    const state: WatchState = { symbol, role, entryState: er.state, entryOk: er.ok, trend: st.trend, offPeakPct: st.offPeakPct, buyPressurePct: st.buyPressurePct, swaps: st.swaps, lastSwapAgoMin: st.lastSwapAgoMin, why: er.why, lastPrice: rows.length ? rows[rows.length - 1].price : null, quote: spec.token0 === symbol ? spec.token1 : spec.token0 };
+    if (role === "held") {
+      try { Object.assign(state, railRead(symbol, state, spec.id as string, feed.hourly, now)); } catch (e) { console.log(`[live] rail read of ${symbol} failed: ${e instanceof Error ? e.message : String(e)}`); }
+    }
+    states.push(state);
   }
   // The tape's entry state changing on a watched token is research worth a line: the state, and the two
   // figures that decide it, at most once every three minutes per token and state so a flapping read does not flood the log.
@@ -258,10 +327,19 @@ async function step(now: number): Promise<void> {
   firstLook = false;
   const triggers = triggersFor(prev, states, lastThinkAt, now, rules);
   prev = Object.fromEntries(states.map((s) => [s.symbol, s]));
-  if (triggers.length && !running) runCycle(triggers[0], states.find((s) => s.symbol === triggers[0].symbol), now);
-  else if (triggers.length && triggers[0].kind === "exit" && !pendingExit) {
-    pendingExit = triggers[0];
-    console.log(`[live] exit trigger held for the next cycle: ${triggers[0].reason}`);
+  const busy = !!running || lockBusy(now);
+  if (triggers.length && !busy) runCycle(triggers[0], states.find((s) => s.symbol === triggers[0].symbol), now);
+  else if (triggers.length && busy) {
+    // Kept for the moment the desk is free: an exit over anything, else the first trigger unless one is already kept.
+    const t = triggers[0];
+    if (!pendingExit || (t.kind === "exit" && pendingExit.kind !== "exit")) {
+      pendingExit = t;
+      console.log(`[live] ${t.kind} trigger held for the next cycle (${running ? "a cycle is running" : "another process holds the cycle's lock"}): ${t.reason}`);
+    }
+  } else if (pendingExit && !busy) {
+    const t = pendingExit;
+    pendingExit = null;
+    runCycle(t, prev[t.symbol], now);
   }
   const lookMs = Date.now() - now;
   looks.push(lookMs);
