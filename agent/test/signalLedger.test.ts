@@ -1,10 +1,13 @@
-// The signal ledger: the board as rows, the stance, the convoy rule at each boundary, the console lines, and the
-// cycle writing it outside the auto-entry branch (2026-09-08).
+// The signal ledger: the board as rows, the stance, the convoy rule at each boundary, the console lines, the
+// cycle writing it outside the auto-entry branch, and the tail read (2026-09-08). tmpdata first: the write and
+// the tail read touch the ledger, and the data dir is fixed when config.ts loads.
+import "./tmpdata.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { signalRows, strongSignal, stanceFor, stanceOfRefusal, latestBoardOf, signalLines, signalBoardLines, convoyRulesFromEnv, SIGNALS_LEDGER, type BoardToken, type SignalRow, type SignalInputs } from "../src/desk/signalLedger.ts";
+import { signalRows, strongSignal, stanceFor, stanceOfRefusal, latestBoardOf, latestBoard, tailSignals, readSignals, signalsFor, writeSignals, signalLines, signalBoardLines, convoyRulesFromEnv, SIGNALS_LEDGER, TAIL_BYTES, type BoardToken, type SignalRow, type SignalInputs } from "../src/desk/signalLedger.ts";
+import { dataPath } from "../src/config.ts";
 
 const RULES = { depthMult: 20, maxSwapUsd: 25, topConviction: 5 };
 const AT = Date.UTC(2026, 8, 8, 14, 30, 0);
@@ -30,6 +33,17 @@ test("a token the desk bought is took and strong; the rest of the board is held 
   assert.equal(lenny.strong, true);
   assert.deepEqual(other.stance, { kind: "held", why: "the desk bought LENNY this cycle instead" });
   assert.equal(other.strong, false, "grade B is never strong");
+  // The rest of the board says what became of the want, not the model's reason about another token, and never
+  // "bought" when nothing was (review of 2026-09-08).
+  const proposed = signalRows(inputs([token("LENNY"), token("OTHER")], { decision: { kind: "propose-swap", reason: "base" }, want: { symbol: "LENNY", exit: false }, proposed: true }));
+  assert.deepEqual(proposed[1].stance, { kind: "held", why: "the desk proposed LENNY this cycle instead" });
+  const refused = signalRows(inputs([token("LENNY"), token("OTHER")], { decision: { kind: "hold", reason: "wanted 0.01 ETH@robinhood to LENNY@robinhood, refused: LENNY is at its grade A ceiling of $200" }, want: { symbol: "LENNY", exit: false, refused: "LENNY is at its grade A ceiling of $200" } }));
+  assert.deepEqual(refused[1].stance, { kind: "held", why: "the desk wanted LENNY this cycle instead" });
+  assert.equal(refused[1].strong, false, "the want was for LENNY, not OTHER");
+  const sold = signalRows(inputs([token("LENNY", { held: true }), token("OTHER")], { decision: { kind: "propose-swap", reason: "time stop" }, want: { symbol: "LENNY", exit: true }, executed: true }));
+  assert.deepEqual(sold[1].stance, { kind: "held", why: "the desk sold LENNY this cycle instead" });
+  const failed = signalRows(inputs([token("LENNY"), token("OTHER")], { decision: { kind: "hold", reason: "wanted 0.01 ETH@robinhood to LENNY@robinhood, refused: execution reverted" }, want: { symbol: "LENNY", exit: false, failed: "execution reverted" } }));
+  assert.deepEqual(failed[1].stance, { kind: "held", why: "the desk wanted LENNY this cycle instead" });
 });
 
 test("the model's hold is held with its reason, and a hold is never strong whatever the reads said", () => {
@@ -63,6 +77,31 @@ test("a sale is exit, an add-on is add-on, a proposal with trading off is took a
   const [exit] = signalRows(inputs([token("LENNY", { held: true })], { decision: { kind: "propose-swap", reason: "time stop" }, want: { symbol: "LENNY", exit: true }, executed: true }));
   assert.equal(exit.deskHeld, true);
   assert.equal(exit.strong, false, "an exit is never strong");
+});
+
+test("a sale that was refused or that reverted is still an exit, never a want to buy: a held grade A token the desk could not leave is not strong (review 2026-09-08)", () => {
+  const strongLooking = token("LENNY", { held: true });
+  const [refused] = signalRows(inputs([strongLooking], { decision: { kind: "hold", reason: "wanted 1000 LENNY@robinhood to ETH@robinhood, refused: execution reverted" }, want: { symbol: "LENNY", exit: true, refused: "execution reverted" } }));
+  assert.deepEqual(refused.stance, { kind: "exit", why: "the sale was refused: execution reverted" });
+  assert.equal(refused.strong, false, "a sale the desk could not make is not a buy for the convoy");
+  const [failed] = signalRows(inputs([strongLooking], { decision: { kind: "hold", reason: "wanted 1000 LENNY@robinhood to ETH@robinhood, refused: slippage" }, want: { symbol: "LENNY", exit: true, failed: "slippage" } }));
+  assert.deepEqual(failed.stance, { kind: "exit", why: "the sale failed: slippage" });
+  assert.equal(failed.strong, false);
+  const [bought] = signalRows(inputs([strongLooking], { decision: { kind: "propose-swap", reason: "base" }, want: { symbol: "LENNY", exit: false }, executed: true }));
+  assert.equal(bought.strong, true, "the same row with a buy that went through is strong, so the exit is what turned it off");
+});
+
+test("a want the model did not argue for is unargued, and a swap that was sent and did not go through is failed; neither is strong (review 2026-09-08)", () => {
+  assert.equal(stanceOfRefusal("not argued for: needs a thesis; at least 3 evidence lines"), "unargued");
+  assert.equal(stanceOfRefusal("no thesis, evidence, invalidation or conviction was stated"), "unargued");
+  const [unargued] = signalRows(inputs([token("LENNY")], { decision: { kind: "hold", reason: "wanted 0.01 ETH@robinhood to LENNY@robinhood, refused: not argued for: needs a thesis" }, want: { symbol: "LENNY", exit: false, refused: "not argued for: needs a thesis" } }));
+  assert.deepEqual(unargued.stance, { kind: "unargued", why: "not argued for: needs a thesis" });
+  assert.equal(unargued.strong, false, "conviction 5 with too little evidence is not a want the model argued for");
+  const [failed] = signalRows(inputs([token("LENNY")], { decision: { kind: "hold", reason: "wanted 0.01 ETH@robinhood to LENNY@robinhood, refused: the pool would not fill" }, want: { symbol: "LENNY", exit: false, failed: "the pool would not fill" } }));
+  assert.deepEqual(failed.stance, { kind: "failed", why: "the pool would not fill" });
+  assert.equal(failed.strong, false, "a pool that refused the desk's own fill is a bad convoy target whatever its depth");
+  assert.match(signalLines([unargued])[0], /\. Unargued: not argued for/);
+  assert.match(signalLines([failed])[0], /\. Failed: the pool would not fill$/);
 });
 
 test("a failed holder read is incomplete, names the failure, and is never strong", () => {
@@ -114,7 +153,7 @@ test("the convoy rule at each boundary: depth, conviction, grade, each read, the
   assert.equal(strongSignal({ ...base, launch: { ...base.launch, ok: false } }, 5, RULES), false);
   assert.equal(strongSignal({ ...base, blacklisted: true }, 5, RULES), false);
   for (const kind of ["add-on", "full", "spaced", "brake", "refused"] as const) assert.equal(strongSignal({ ...base, stance: { kind, why: "" } }, 5, RULES), true, `${kind} was a want`);
-  for (const kind of ["held", "exit"] as const) assert.equal(strongSignal({ ...base, stance: { kind, why: "" } }, 5, RULES), false, `${kind} was not`);
+  for (const kind of ["held", "exit", "unargued", "failed"] as const) assert.equal(strongSignal({ ...base, stance: { kind, why: "" } }, 5, RULES), false, `${kind} was not`);
   assert.equal(strongSignal(base, 5, { ...RULES, depthMult: 21 }), false, "the multiplier is the rule");
   assert.deepEqual(convoyRulesFromEnv({ OBS_CONVOY_DEPTH_MULT: "30", OBS_MAX_SWAP_USD: "40" }), { depthMult: 30, maxSwapUsd: 40, topConviction: 5 });
   assert.deepEqual(convoyRulesFromEnv({}), { depthMult: 20, maxSwapUsd: 25, topConviction: 5 });
@@ -126,6 +165,44 @@ test("the latest board is the rows of the latest cycle, in the order they were w
   const board = latestBoardOf([...older, ...latest, ...older]);
   assert.deepEqual(board.map((r) => r.symbol), ["C1", "D1"]);
   assert.deepEqual(latestBoardOf([]), []);
+});
+
+test("the writer counts the rows that landed, and the board is read from the ledger's tail, never the whole file (review 2026-09-08)", () => {
+  assert.deepEqual(latestBoard(), [], "no file yet is an empty board, not a throw");
+  assert.deepEqual(tailSignals(), []);
+  // Enough cycles that the file is several times the tail (a row is about 850 bytes): only the last ones are parsed.
+  // The writer's one log line per cycle is quieted for the loop.
+  const CYCLES = 600;
+  const first = AT - CYCLES * 60e3;
+  let written = 0;
+  const log = console.log;
+  console.log = () => {};
+  try {
+    for (let k = 0; k < CYCLES; k++) {
+      const at = first + k * 60e3;
+      const w = writeSignals(inputs([token(`T${k}A`), token(`T${k}B`, { grade: { grade: "B", capUsd: 100, depthUsd: 400 } })], { at, cycleId: at, decision: { kind: "propose-swap", reason: "base" }, want: { symbol: `T${k}A`, exit: false }, executed: true }));
+      assert.deepEqual([w.rows.length, w.strong, w.landed], [2, 1, 2]);
+      written += w.landed;
+    }
+  } finally {
+    console.log = log;
+  }
+  assert.equal(written, 2 * CYCLES);
+  const size = statSync(dataPath(SIGNALS_LEDGER)).size;
+  assert.ok(size > 3 * TAIL_BYTES, `the file is ${size} bytes, past the tail several times over`);
+  const tail = tailSignals();
+  assert.ok(tail.length > 2 && tail.length < 2 * CYCLES, `the tail holds some cycles, not all: ${tail.length} rows`);
+  const cycles = [...new Set(tail.map((r) => r.cycleId))].sort((a, b) => a - b);
+  // The chunk starts mid-row: the oldest cycle in the tail may keep only its later rows; every cycle after it is whole.
+  for (const c of cycles.slice(1)) assert.equal(tail.filter((r) => r.cycleId === c).length, 2, "every cycle after the oldest is whole once the partial first line is dropped");
+  assert.ok(tail.every((r) => typeof r.stance.kind === "string"), "no half-parsed row");
+  const board = latestBoard();
+  assert.deepEqual(board.map((r) => r.symbol), ["T599A", "T599B"]);
+  assert.deepEqual(board.map((r) => r.strong), [true, false]);
+  assert.deepEqual(latestBoardOf(readSignals()).map((r) => r.symbol), ["T599A", "T599B"], "the whole history agrees with the tail");
+  assert.equal(readSignals().length, 2 * CYCLES);
+  assert.deepEqual(signalsFor("t599a").map((r) => r.symbol), ["T599A"], "a symbol's rows, case-insensitive, from the tail");
+  assert.deepEqual(tailSignals(1).length, 0, "a tail of one byte holds no whole row");
 });
 
 test("the console lines: one per row, the symbol first, the stance last, no em dash; the board's header counts the strong rows", () => {
@@ -148,12 +225,13 @@ test("the cycle writes the signal rows once, at the top level after the decision
   const lines = src.split("\n");
   const writer = lines.filter((l) => l.includes("writeSignals("));
   assert.equal(writer.length, 1, "one write per cycle");
-  assert.ok(writer[0].startsWith("writeSignals("), "the write is a top-level statement, not inside any branch");
+  assert.ok(writer[0].startsWith("const signals = writeSignals("), "the write is a top-level statement, not inside any branch, and its landed count is kept");
+  assert.ok(src.includes("signals.landed < signals.rows.length"), "a board that did not land in full is said");
   const autoEntry = src.indexOf('(process.env.OBS_AUTO_ENTRY ?? "off") === "on"');
-  const readsFor = lines.find((l) => l.startsWith("const readsFor = "));
-  assert.ok(readsFor, "the board's reads are built at the top level");
-  assert.ok(src.indexOf("const readsFor = ") < autoEntry, "and before the auto-entry branch, which uses them");
-  assert.ok(src.indexOf("autoEntryPick(readsFor)") > autoEntry, "the branch still picks from the same structure");
+  assert.ok(lines.some((l) => l.startsWith("const heldSet = ")), "what the desk holds is known at the top level, for the pick and the rows alike");
+  assert.ok(src.indexOf("const readsFor = ") > autoEntry, "the pick's own structure is built inside the auto-entry branch, the only place that reads it (review 2026-09-08)");
+  assert.ok(src.indexOf("autoEntryPick(readsFor)") > autoEntry);
+  assert.ok(src.includes("want.failed = r.reason"), "an executor failure is a failure on the want, not a refusal");
   const write = src.indexOf("writeSignals(");
   assert.ok(write > src.indexOf('if (decision.kind === "propose-swap" && decision.from'), "after the decision block");
   assert.ok(write > src.indexOf('console.log("DRY RUN, nothing recorded.")'), "a dry run writes nothing");

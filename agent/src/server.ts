@@ -55,7 +55,7 @@ import { shouldEndTurn, meteredReply, type TurnState } from "./desk/chatTurn.ts"
 import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines, agentsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
-import { holderGate, forgetHolder, gateMode, doorNow } from "./desk/gate.ts";
+import { holderGate, forgetHolder, gateMode, doorNow, allowlisted } from "./desk/gate.ts";
 import { latestBoard, signalBoardLines } from "./desk/signalLedger.ts";
 import { followState, readFollow, recordFollow, checkSize, followMaxUsd, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, liveHoldings, mirrorTrades, followEvents, type FollowMode, type FollowBook } from "./desk/follow.ts";
 import { readEntries } from "./desk/trade-memory.ts";
@@ -1396,16 +1396,20 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       const before = address ? getSettings(address) : {};
       const routed = routeConsole(line, { settings: before, signedIn: !!address, swaps: standing.swaps, apps: appsOn(), gate: gateMode() });
       const base = { lines: routed.lines, suggest: routed.suggest };
-      // The signal ledger is the owner's read, never public: no bearer is a 401 as on every signed route, a closed
-      // door a 403, and the board is served nowhere else, not the stream and not the strip. The research rows already
-      // tell the desk's next buy 80 to 100 seconds ahead (investigated 2026-09-08); the board must not add to that.
+      // The signal ledger is the operator's read, never public: no bearer is a 401 as on every signed route, a closed
+      // door a 403, a signed wallet off OBS_CONSOLE_ALLOWLIST a 403 too, and the board is served nowhere else, not
+      // the stream and not the strip. The research rows already tell the desk's next buy 80 to 100 seconds ahead
+      // (investigated 2026-09-08); the board must not add to that, and with the door open to holders it would have:
+      // the review of 2026-09-08 found any holder wallet could poll the strong rows, the rows the convoy will act
+      // on in the next step, so the list is asked here whatever the gate mode.
       if (routed.effect.kind === "signals") {
         if (!signed) { json(res, 401, { ok: false, error: "sign in with your wallet first" }); return; }
         if (closed) { json(res, 403, { ok: false, code: "not_holder", error: door?.reason ?? "this wallet is not at the door any more; sign in again" }); return; }
+        if (!allowlisted(signed)) { json(res, 403, { ok: false, code: "not_operator", error: "The signal board is the operator's read; this wallet is not on the operator's list." }); return; }
         json(res, 200, { ok: true, effect: "signals", lines: signalBoardLines(latestBoard(), routed.effect.n), suggest: ["/signals 5", "/desk", "/research"] });
         return;
       }
-      const needsWallet =routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps" || routed.effect.kind === "credits" || routed.effect.kind === "follow" || routed.effect.kind === "agentWallet" || (routed.effect.kind === "model" && routed.effect.action === "set");
+      const needsWallet = routed.effect.kind === "chat" || routed.effect.kind === "settings" || routed.effect.kind === "read" || routed.effect.kind === "apps" || routed.effect.kind === "credits" || routed.effect.kind === "follow" || routed.effect.kind === "agentWallet" || (routed.effect.kind === "model" && routed.effect.action === "set");
       if (needsWallet && !address) {
         // A wallet whose door has closed keeps the two things that are its own money: its agent's wallet (/wallet,
         // /withdraw) and turning its agent off (/stop, /agent). Everything else answers with the door's own words,

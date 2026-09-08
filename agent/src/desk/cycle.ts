@@ -519,20 +519,22 @@ let executed: Trade | null = null;
 let want: SignalWant | null = null;
 /** The desk's trade mirrored for the agents, run after the signal rows are written (the rows come first, 2026-09-08). */
 let mirror: (() => Promise<void>) | null = null;
-// The board's reads, one entry per token, for the auto entry's pick and the signal rows alike: every thinking cycle
-// has them, not only the auto-entry branch that once built them (2026-09-08). A read the cycle does not have is not
-// a pass: each entry says whether the read completed (readgate.ts, 2026-09-08).
+// What the desk holds above dust, by symbol: the auto entry's pick and the signal rows both ask it.
 const heldSet = new Set(heldDyn.map((a) => a.symbol));
-const boardSymbols = [...new Set(candidates.filter((c) => c.grade).map((c) => c.symbol).concat(early.filter((e) => e.tradable).map((e) => e.symbol)))];
-const readsFor = boardSymbols.map((sym) => {
-  const er = entryReads.get(sym);
-  const hr = holderReads.get(sym);
-  const lr = launchReads.get(sym);
-  return { symbol: sym, grade: graded.get(sym)?.grade ?? null, entryOk: !!er?.ok, entryWhy: er?.why ?? "", holdersRead: holderReadComplete(hr), holdersOk: !!hr?.ok, launchRead: launchReadComplete(lr), launchOk: lr && lr.exists ? lr.verdict.ok : null, held: heldSet.has(sym) };
-});
 // The reads decide the entry (OBS_AUTO_ENTRY=on): a candidate that passed the entry read, the holder read and the
 // launch read in this same cycle is bought at the rails' size when the model held anyway; its writing stays public.
+// A read the cycle does not have is not a pass: the pick asks whether each read completed (readgate.ts, 2026-09-08).
+// The pick's board is every graded candidate and every tradable early launch; the signal rows below are the tokens
+// in play (held, the first early, the first read candidates), the ones that got a tape this cycle, read straight
+// from the read maps. The two boards differ by design, so the pick's structure is built only here (2026-09-08).
 if ((process.env.OBS_AUTO_ENTRY ?? "off") === "on" && decision.kind === "hold") {
+  const board = candidates.filter((c) => c.grade).map((c) => c.symbol).concat(early.filter((e) => e.tradable).map((e) => e.symbol));
+  const readsFor = [...new Set(board)].map((sym) => {
+    const er = entryReads.get(sym);
+    const hr = holderReads.get(sym);
+    const lr = launchReads.get(sym);
+    return { symbol: sym, grade: graded.get(sym)?.grade ?? null, entryOk: !!er?.ok, entryWhy: er?.why ?? "", holdersRead: holderReadComplete(hr), holdersOk: !!hr?.ok, launchRead: launchReadComplete(lr), launchOk: lr && lr.exists ? lr.verdict.ok : null, held: heldSet.has(sym) };
+  });
   const pick = autoEntryPick(readsFor);
   const ethUsd = prices.ETH ?? reads.prices.ethUsd ?? null;
   if (pick && ethUsd != null && ethUsd > 0) {
@@ -620,7 +622,9 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
         }
         decision = { ...decision, from: assetKey(from), to: assetKey(to), reason: `${decision.reason || "executing"}; ${PAPER ? `paper: swapped ${amt} ${from.symbol} for ${r.trade.to.amount} ${to.symbol} at full size, nothing sent` : r.trade.venue === "pool" ? `swapped ${amt} ${from.symbol} on chain, ${r.trade.status}` : `sent ${amt} ${from.symbol} via ${r.trade.partner}`}` };
       } else {
-        want.refused = r.reason;
+        // The swap was sent and did not go through: a failure, kept apart from a rails' refusal, so the signal row
+        // never reads a pool that would not fill as a want the agents should buy together (review of 2026-09-08).
+        want.failed = r.reason;
         decision = { kind: "hold", reason: `wanted ${amt} ${assetKey(from)} to ${assetKey(to)}, refused: ${r.reason}` };
       }
     } else if (decision.kind === "propose-swap") {
@@ -657,7 +661,7 @@ if (DRY) {
 // written once per thinking cycle and before the mirror, so the desk's buy is one agent acting on the same rows
 // (the operator's architecture, 2026-09-08). A fast tick that did not think left above and writes nothing.
 const launchLane = new Set(early.map((e) => e.symbol));
-writeSignals({
+const signals = writeSignals({
   at: now,
   cycleId: now,
   board: [...inPlay].filter((x): x is [string, NonNullable<ReturnType<typeof resolveAny>>] => !!x[1]?.candidate).map(([sym, a]) => ({ symbol: sym, token: a.contract ?? null, poolId: a.candidate?.poolId ?? null, lane: launchLane.has(sym) ? "launch" : "record", held: heldSet.has(sym), grade: graded.get(sym) ?? null, priceUsd: prices[sym] ?? tapeReads.get(sym)?.lastUsd ?? null, entry: entryReads.get(sym) ?? null, holders: holderReads.get(sym) ?? null, launch: launchReads.get(sym) ?? null, failed: readFailed.get(sym), tape: tapeReads.get(sym) ?? null, known: a.contract ? tokenInfo(a.contract) : null })),
@@ -668,6 +672,7 @@ writeSignals({
   conviction: parsed.analysis?.conviction ?? null,
   rules: convoyRulesFromEnv(),
 });
+if (signals.landed < signals.rows.length) console.error(`[desk] the signal board did not land in full (${signals.landed}/${signals.rows.length} rows); the agents' next read is a stale board`);
 if (mirror) await mirror();
 recordThought(entry);
 {

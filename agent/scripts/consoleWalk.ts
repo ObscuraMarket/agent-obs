@@ -71,7 +71,8 @@ async function startLocal(): Promise<void> {
     OBS_DASHBOARD_HOST: "127.0.0.1",
     OBS_DASHBOARD_RATE_PER_MIN: "1000",
     OBS_CONSOLE_GATE: "off",
-    OBS_CONSOLE_ALLOWLIST: "",
+    // The walk's own wallet is the operator here: /signals answers the list only, whatever the gate mode (2026-09-08).
+    OBS_CONSOLE_ALLOWLIST: me.address,
     OBS_AGENT_WALLET_SEED: "console-walk-seed-0123456789abcdef0123456789abcdef0123456789abcdef",
     OBS_FOLLOW_LIVE: "off",
     OBS_TRADING: "off",
@@ -147,8 +148,22 @@ async function walk(): Promise<void> {
   const whoami = await cli("/whoami");
   check("/whoami shows the setup", whoami.j.ok === true && has(whoami, /^name\s/), first(whoami));
   const signals = await cli("/signals");
-  check("/signals is the owner's read of the board", signals.j.ok === true && signals.j.effect === "signals" && /^(No signals yet|Board at \d\d:\d\dZ:)/.test(first(signals)), first(signals));
+  // Local, this wallet is on the list; against a live desk it answers the board when the key is the operator's and
+  // the operator's refusal otherwise, and either way never the board to a wallet off the list.
+  const board = signals.status === 200 && signals.j.ok === true && signals.j.effect === "signals" && /^(No signals yet|Board at \d\d:\d\dZ:)/.test(first(signals));
+  const offList = signals.status === 403 && signals.j.ok === false && signals.j.code === "not_operator";
+  check(LOCAL ? "/signals is the operator's read of the board" : "/signals is the board to the operator and a refusal to anyone else", LOCAL ? board : board || offList, `${signals.status} ${first(signals) || JSON.stringify(signals.j).slice(0, 120)}`);
   noDash(signals, "/signals");
+  if (mode === "off") {
+    // With the gate off a stranger signs in like anyone, and still does not get the board (review 2026-09-08).
+    const sch = await post("/api/obs/account/challenge", { address: stranger.address });
+    const ssig = await stranger.signMessage({ message: sch.j.message });
+    const slink = await post("/api/obs/account/link", { address: stranger.address, nonce: sch.j.nonce, signature: ssig });
+    const stoken: string | undefined = slink.j.session?.token ?? slink.j.token;
+    check("a stranger signs in with the gate off", slink.status === 200 && !!stoken, String(slink.status));
+    const sboard = await post("/api/obs/console/cli", { line: "/signals" }, stoken);
+    check("/signals refuses a signed wallet off the operator's list", sboard.status === 403 && sboard.j.code === "not_operator" && !/^Board at/.test(first(sboard)), `${sboard.status} ${JSON.stringify(sboard.j).slice(0, 120)}`);
+  }
   const status = await cli("/status");
   check("/status is the person's own agent once signed in", status.j.ok === true && status.j.effect === "follow" && /^Your agent is (on|off)/.test(first(status)), first(status));
   check("/status ends with the desk it follows", has(status, /Agent OBS, the desk it follows|\/desk shows the desk/), status.lines.join(" | ").slice(0, 200));

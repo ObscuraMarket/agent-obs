@@ -172,7 +172,7 @@ Set on the desk service once agents trade real money (2026-09-08). Each is docum
 | OBS_FOLLOW_LIVE | off stops every agent's live trading at once | on |
 | OBS_FOLLOW_MAX_USD | the most an agent may put into one entry; blank is the desk's own cap | blank (200) |
 | OBS_FOLLOW_PARALLEL | agents mirrored at once after a desk trade | 4 |
-| OBS_CONVOY_DEPTH_MULT | the convoy depth rule: a signal row is strong only when its pool is this many times OBS_MAX_SWAP_USD deep (the signal ledger, read with /signals) | 20 |
+| OBS_CONVOY_DEPTH_MULT | the convoy depth rule: a signal row is strong only when the desk itself wanted into it at grade A with every read passed and its conviction at the top, and its pool is this many times OBS_MAX_SWAP_USD deep; a hold or a sale is never strong (the signal ledger, read with /signals by the wallets on OBS_CONSOLE_ALLOWLIST) | 20 |
 | OBS_FUND_CONFIRMATIONS | blocks before a funding is recorded | 2 |
 | OBS_WALLET_LOCK_MIN | how long one wallet's trade or withdrawal holds the wallet | 10 |
 | OBS_CONSOLE_GATE, OBS_CONSOLE_ALLOWLIST | who may sign in: holders, or the list only | allowlist |

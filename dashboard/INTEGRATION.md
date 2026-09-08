@@ -586,19 +586,25 @@ available yet.
   A guest may read the desk, take the tour, open the app's pages and quote;
   shaping the agent, `/swaps` and chat need the bearer. `suggest` entries are
   literal lines to submit, rendered as one-tap chips.
-- `/signals [n]` (bearer required; the owner's read, since 2026-09-08): the
+- `/signals [n]` (bearer required, and the wallet must be on
+  `OBS_CONSOLE_ALLOWLIST`; the operator's read, since 2026-09-08): the
   signal ledger, the board the desk wrote the last time it thought, one row
   per token in play with its grade, lane, depth, the entry, holder and launch
   reads, the tape, and the desk's own stance on it (took, held, full, spaced,
-  brake, refused, add-on, exit), plus `strong` for a convoy candidate (grade
-  A, every read completed and passed, the model's conviction at its top mark,
-  the pool at least `OBS_CONVOY_DEPTH_MULT` times the desk's per-swap cap
-  deep). The `signals` effect answers a header with the cycle time and the
-  strong count, then one line per token, `n` at most. No bearer is a 401, a
-  closed door a 403, and the ledger (`obs-signals.jsonl`) is served on no
-  public route, not the stream and not the strip: the research rows already
-  tell the desk's next buy 80 to 100 seconds ahead, and the board must not
-  add to that. The follower agents read it in-process, never over this API.
+  brake, refused, unargued, failed, add-on, exit), plus `strong` for a convoy
+  candidate (grade A, every read completed and passed, the model's conviction
+  at its top mark, the pool at least `OBS_CONVOY_DEPTH_MULT` times the desk's
+  per-swap cap deep, and the desk itself wanting into it this cycle; a hold, a
+  sale, an unargued want or a failed swap is never strong). The `signals`
+  effect answers a header with the cycle time and the strong count, then one
+  line per token, `n` at most. No bearer is a 401, a closed door a 403
+  (`not_holder`), a signed wallet off the operator's list a 403
+  (`not_operator`) whatever the gate mode, and the ledger
+  (`obs-signals.jsonl`) is served on no public route, not the stream and not
+  the strip: the research rows already tell the desk's next buy 80 to 100
+  seconds ahead, and the board must not add to that; the strong rows are what
+  the agents will buy together on, so a holder polling them would run ahead
+  of the convoy. The follower agents read it in-process, never over this API.
 - Apps (Composio; on when the desk has `COMPOSIO_API_KEY`): the `apps` effect
   answers `/apps` with `lines` (what is connected, what can be) and
   `/apps connect <app>` with `links: [{ label, url }]`, a sign-in the page

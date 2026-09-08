@@ -26,7 +26,7 @@ export type ConsoleEffect =
   | { kind: "chat"; text: string }
   | { kind: "desk"; command: DeskCommand; n?: number; /** /desk: the house desk's status even when signed in, where /status is the person's own agent. */ house?: boolean }
   | { kind: "read"; what: "whoami" | "swaps" }
-  /** The signal ledger's latest board, the owner's read: the route keeps it behind the bearer and off every public route. */
+  /** The signal ledger's latest board, the operator's read: the route keeps it behind the bearer and OBS_CONSOLE_ALLOWLIST, off every public route. */
   | { kind: "signals"; n?: number }
   | { kind: "settings"; patch: Record<string, unknown> }
   /** Client-side: the wallet does these. The route only echoes them back. */
@@ -146,7 +146,7 @@ export function helpAllLines(door: Door = {}): string[] {
   "    /desk              What Agent OBS is doing right now (/status is your own agent once you're signed in)",
   "    /agents            Every agent following the desk, in public: on or off, live or paper, what they hold, what they made",
   "    /positions /thoughts [n] /research [n] /watch /reads",
-  "    /signals [n]       The board the desk wrote when it last thought: each token's reads and the desk's stance on it; yours once signed in",
+  "    /signals [n]       The board the desk wrote when it last thought: each token's reads and the desk's stance on it; the operator's wallets only",
   "",
   "  Your wallet",
   "    /connect           Connect your wallet: your account here, and the wallet that controls your agent",
@@ -277,7 +277,9 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
     case "signals":
     case "signal": {
       // The board the desk wrote when it last thought; n caps the rows. The route answers it only to a signed-in
-      // wallet at an open door, and never puts it on a public route (2026-09-08).
+      // wallet on the operator's list (OBS_CONSOLE_ALLOWLIST), whatever the gate mode, and never puts it on a
+      // public route: the strong rows are what the convoy acts on, and a holder polling them would run ahead of
+      // it (review of 2026-09-08).
       const n = /^\d+$/.test(arg) ? Number(arg) : undefined;
       return ok([], { kind: "signals", ...(n != null ? { n } : {}) });
     }

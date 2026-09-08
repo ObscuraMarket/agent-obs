@@ -466,7 +466,7 @@ const send = async (api: string, path: string, body: unknown, token?: string): P
   return { status: r.status, j: (await r.json().catch(() => ({}))) as Record<string, any> };
 };
 
-test("/signals answers the latest board to a signed wallet, 401 with no bearer, 403 behind a closed door, and the research route carries none of it", async () => {
+test("/signals answers the latest board to a signed wallet on the operator's list, 401 with no bearer, 403 off the list or behind a closed door, and the research route carries none of it", async () => {
   const at = Date.UTC(2026, 8, 8, 14, 30, 0);
   const rows = signalRows({
     at, cycleId: at,
@@ -474,26 +474,42 @@ test("/signals answers the latest board to a signed wallet, 401 with no bearer, 
     decision: { kind: "propose-swap", reason: "base, entry allowed; swapped 0.01 ETH on chain, settled" }, want: { symbol: "LENNY", exit: false }, executed: true, proposed: false, conviction: 5, rules: { depthMult: 20, maxSwapUsd: 25, topConviction: 5 },
   });
   for (const r of rows) assert.ok(appendLedger(SIGNALS_LEDGER, r as unknown as Record<string, unknown>));
-  await withServer(async (api) => {
-    const none = await send(api, "/api/obs/console/cli", { line: "/signals" });
-    assert.equal(none.status, 401, "no bearer, no board");
-    assert.deepEqual(none.j, { ok: false, error: "sign in with your wallet first" });
-    const forged = await send(api, "/api/obs/console/cli", { line: "/signals" }, "not.a.bearer");
-    assert.equal(forged.status, 401);
-    const token = mintSession("0x4444444444444444444444444444444444444444").token;
-    const r = await send(api, "/api/obs/console/cli", { line: "/signals" }, token);
-    assert.equal(r.status, 200, JSON.stringify(r.j));
-    assert.equal(r.j.ok, true);
-    assert.equal(r.j.effect, "signals");
-    assert.equal(r.j.lines[0], "Board at 14:30Z: 1 token, 1 strong.");
-    assert.match(r.j.lines[1], /^LENNY: grade A, launch lane, depth \$900, .*strong\. Took it: base, entry allowed; swapped 0\.01 ETH on chain, settled$/);
-    for (const l of r.j.lines as string[]) assert.ok(!l.includes("—"));
-    const capped = await send(api, "/api/obs/console/cli", { line: "/signals 0" }, token);
-    assert.equal(capped.j.lines.length, 2, "a count of zero shows the whole board");
-    const research = await read(api, "/api/obs/research?limit=50");
-    assert.equal(research.status, 200);
-    assert.ok(!JSON.stringify(research.j).includes("stance"), "the public research rows carry no signal row");
-  });
+  const operator = "0x4444444444444444444444444444444444444444";
+  const list = process.env.OBS_CONSOLE_ALLOWLIST;
+  // The gate is off here (tmpdata.ts): every wallet signs in and is at the door, and the list alone decides the board.
+  process.env.OBS_CONSOLE_ALLOWLIST = operator;
+  try {
+    await withServer(async (api) => {
+      const none = await send(api, "/api/obs/console/cli", { line: "/signals" });
+      assert.equal(none.status, 401, "no bearer, no board");
+      assert.deepEqual(none.j, { ok: false, error: "sign in with your wallet first" });
+      const forged = await send(api, "/api/obs/console/cli", { line: "/signals" }, "not.a.bearer");
+      assert.equal(forged.status, 401);
+      const token = mintSession(operator).token;
+      const r = await send(api, "/api/obs/console/cli", { line: "/signals" }, token);
+      assert.equal(r.status, 200, JSON.stringify(r.j));
+      assert.equal(r.j.ok, true);
+      assert.equal(r.j.effect, "signals");
+      assert.equal(r.j.lines[0], "Board at 14:30Z: 1 token, 1 strong.");
+      assert.match(r.j.lines[1], /^LENNY: grade A, launch lane, depth \$900, .*strong\. Took it: base, entry allowed; swapped 0\.01 ETH on chain, settled$/);
+      for (const l of r.j.lines as string[]) assert.ok(!l.includes("—"));
+      const capped = await send(api, "/api/obs/console/cli", { line: "/signals 0" }, token);
+      assert.equal(capped.j.lines.length, 2, "a count of zero shows the whole board");
+      // A holder at an open door is not the operator: the strong rows are what the convoy acts on, and a wallet
+      // polling them would run ahead of it (review 2026-09-08).
+      const holder = await send(api, "/api/obs/console/cli", { line: "/signals" }, mintSession("0x6666666666666666666666666666666666666666").token);
+      assert.equal(holder.status, 403, "signed, at the door, not on the list: no board");
+      assert.equal(holder.j.code, "not_operator");
+      assert.ok(!JSON.stringify(holder.j).includes("Board at"));
+      const status = await send(api, "/api/obs/console/cli", { line: "/desk" }, mintSession("0x6666666666666666666666666666666666666666").token);
+      assert.equal(status.status, 200, "the same wallet still reads the desk: only the board is the operator's");
+      const research = await read(api, "/api/obs/research?limit=50");
+      assert.equal(research.status, 200);
+      assert.ok(!JSON.stringify(research.j).includes("stance"), "the public research rows carry no signal row");
+    });
+  } finally {
+    if (list == null) delete process.env.OBS_CONSOLE_ALLOWLIST; else process.env.OBS_CONSOLE_ALLOWLIST = list;
+  }
   const gate = process.env.OBS_CONSOLE_GATE;
   process.env.OBS_CONSOLE_GATE = "allowlist";
   try {
