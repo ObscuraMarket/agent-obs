@@ -467,6 +467,20 @@ function requireWallet(req: IncomingMessage, res: ServerResponse): string | null
 }
 
 /** The desk's read-only commands as lines, from the same payloads the page reads. */
+/**
+ * The prices an agent's book is marked at: the desk's live read when it is warm, and for anything that read has not
+ * priced (a cold read right after a restart answers from the last snapshot), the desk's latest price sample within
+ * three hours. A follower's token is one the desk holds or held, so a sample nearly always exists.
+ */
+function pricesNow(p: Record<string, unknown>, now: number): Prices {
+  const out: Prices = { ...((p.prices as Prices | undefined) ?? {}) };
+  for (const s of readPrices().filter((x) => now - x.at <= 3 * 3600e3).sort((a, b) => a.at - b.at)) {
+    const k = s.symbol.toUpperCase();
+    if (out[k] == null) out[k] = s.priceUsd;
+  }
+  return out;
+}
+
 // ---- Every agent following the desk, in public: who is on, what they hold, what they made. ----------------------
 // A person's own wallet is never shown; the agent's name and its own wallet are. Cached for thirty seconds.
 export interface PublicAgent {
@@ -488,7 +502,7 @@ async function agentsPayload(now: number): Promise<{ ok: true; agents: PublicAge
   const rows = readFollow();
   const addresses = [...new Set(rows.map((r) => r.address))];
   const p = await pnlPayload(1, now, false);
-  const prices = (p.prices as Prices | undefined) ?? {};
+  const prices = pricesNow(p, now);
   const deskTrades = deskFromDisk().book.trades;
   const tradeRows = readFollowTrades();
   const notes = readFollowNotes();
@@ -1076,7 +1090,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
             const a = address as string;
             const state = followState(readFollow(), a);
             const p = await pnlPayload(1, now, false);
-            const prices = (p.prices as Prices | undefined) ?? {};
+            const prices = pricesNow(p, now);
             const book = state.mode === "live"
               ? liveBook(a, state, readFollowTrades(), readFollowNotes(), prices, await agentBalanceEth(a).catch(() => null))
               : followBook(deskFromDisk().book.trades, state, prices);
@@ -1147,7 +1161,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
             state = recordFollow(a, "stop", undefined, now);
           }
           const p = await pnlPayload(1, now, false);
-          const prices = (p.prices as Prices | undefined) ?? {};
+          const prices = pricesNow(p, now);
           const book = state.mode === "live"
             ? liveBook(a, state, readFollowTrades(), readFollowNotes(), prices, await agentBalanceEth(a).catch(() => null))
             : followBook(deskFromDisk().book.trades, state, prices);
