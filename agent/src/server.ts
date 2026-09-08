@@ -445,6 +445,28 @@ function statusPayload(now: number): Record<string, unknown> {
   };
 }
 
+/** The agent's own token, for the Market card: the last background read, at once. Never traded by the desk. */
+function agentTokenPayload(now: number): AgentTokenRead | { contract: string; pending: true; at: number } {
+  if (!agentTokenCache) void refreshAgentToken();
+  return agentTokenCache ?? { contract: AGENT_TOKEN, pending: true, at: now };
+}
+/** The live reads with the block the agent sees. Waits on a cold read, the way the route always has. */
+async function readsPayload(): Promise<Record<string, unknown>> {
+  const r = await cachedReads();
+  return { ...r, block: readsBlock(r) };
+}
+/** The $OBS price over time, sampled from the pool, and its 24-hour change. */
+function marketPayload(hours: number, now: number): Record<string, unknown> {
+  const rows = readMarketSamples();
+  return { series: marketSeries(rows, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 365) : 168) * 3600e3, now), change24hPct: change24h(rows, now), samples: rows.length, at: now };
+}
+function tradesPayload(limit: number, now: number): Record<string, unknown> {
+  return { items: publicTrades(readBook().trades, Number.isFinite(limit) ? limit : 50), at: now };
+}
+function feedPayload(limit: number, now: number): Record<string, unknown> {
+  return { items: publicFeed(readLedger<PostRow>("x-posts.jsonl"), readLedger<PostRow>("x-replies.jsonl"), X_HANDLE, Number.isFinite(limit) ? limit : 30), at: now };
+}
+
 /** The live watch's heartbeat: what it follows block by block, and its last trigger. Live when written in the last half minute. */
 function livePayload(): Record<string, unknown> {
   const p = dataPath("obs-live.json");
@@ -534,6 +556,64 @@ async function agentsPayload(now: number): Promise<{ ok: true; agents: PublicAge
   const value = { ok: true as const, agents: agents.slice(0, 50), on: agents.filter((x) => x.on).length, live: agents.filter((x) => x.on && x.mode === "live").length, at: now };
   agentsCache = { at: now, value };
   return value;
+}
+
+// ---- The Agent page's one read ----------------------------------------------------------------------------------
+// One idle Agent page tab polled eight of these routes every fifteen seconds (2026-09-08), each poll re-reading the
+// ledgers eight times over. This is the same eight payloads assembled once and shared by every viewer for five
+// seconds. Each part keeps its route's shape exactly, and a part whose route would have failed is null here rather
+// than failing the whole read. The single routes stay, for every other consumer.
+const DASHBOARD_TTL_MS = 5_000;
+
+/** PURE: one value per key, remade once it is older than the TTL; callers inside the TTL share one making. Exported for tests. */
+export class TtlCache<T> {
+  private entries = new Map<string, { at: number; value: Promise<T> }>();
+  constructor(private ttlMs: number) {}
+  get(key: string, make: () => Promise<T>, now = Date.now()): Promise<T> {
+    const hit = this.entries.get(key);
+    if (hit && now - hit.at < this.ttlMs) return hit.value;
+    for (const [k, e] of this.entries) if (now - e.at >= this.ttlMs) this.entries.delete(k);
+    const entry = { at: now, value: make() };
+    this.entries.set(key, entry);
+    // A making that failed is not kept for the TTL: the next caller tries again.
+    entry.value.catch(() => { if (this.entries.get(key) === entry) this.entries.delete(key); });
+    return entry.value;
+  }
+}
+
+/** PURE: a read that answers null instead of throwing, so one failed part never fails the page's whole read. Exported for tests. */
+export async function attempt<T>(read: () => T | Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch {
+    return null;
+  }
+}
+
+/** PURE: the one read's query: each route's own default, clamped the way that route clamps, so equal asks share one cache entry. Exported for tests. */
+export function dashboardQuery(params: URLSearchParams): { hours: number; trades: number; feed: number } {
+  const num = (k: string, fallback: number, lo: number, hi: number) => {
+    const v = Number(params.get(k) ?? fallback);
+    return Number.isFinite(v) && v > 0 ? Math.max(lo, Math.min(hi, v)) : fallback;
+  };
+  return { hours: num("hours", 168, 1, 24 * 365), trades: num("trades", 50, 1, 500), feed: num("feed", 30, 1, 200) };
+}
+
+const dashboardCache = new TtlCache<Record<string, unknown>>(DASHBOARD_TTL_MS);
+function dashboardPayload(q: { hours: number; trades: number; feed: number }, now: number): Promise<Record<string, unknown>> {
+  return dashboardCache.get(`${q.hours}|${q.trades}|${q.feed}`, async () => {
+    const [status, agentToken, reads, pnl, agents, market, trades, feed] = await Promise.all([
+      attempt(() => statusPayload(now)),
+      attempt(() => agentTokenPayload(now)),
+      attempt(readsPayload),
+      attempt(() => pnlPayload(q.hours, now)),
+      attempt(() => agentsPayload(now)),
+      attempt(() => marketPayload(q.hours, now)),
+      attempt(() => tradesPayload(q.trades, now)),
+      attempt(() => feedPayload(q.feed, now)),
+    ]);
+    return { status, agentToken, reads, pnl, agents, market, trades, feed, at: now };
+  }, now);
 }
 
 async function deskLines(command: string, n: number | undefined, now: number): Promise<string[]> {
@@ -842,9 +922,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/agent-token") {
-    // The agent's own token, for the Market card: the last background read, at once. Never traded by the desk.
-    if (!agentTokenCache) void refreshAgentToken();
-    json(res, 200, agentTokenCache ?? { contract: AGENT_TOKEN, pending: true, at: now });
+    json(res, 200, agentTokenPayload(now));
     return;
   }
   if (path === "/api/obs/research") {
@@ -859,8 +937,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/trades") {
-    const limit = Number(url.searchParams.get("limit") ?? 50);
-    json(res, 200, { items: publicTrades(readBook().trades, Number.isFinite(limit) ? limit : 50), at: now });
+    json(res, 200, tradesPayload(Number(url.searchParams.get("limit") ?? 50), now));
     return;
   }
   if (path === "/api/obs/pnl") {
@@ -906,14 +983,19 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/market") {
-    const hours = Number(url.searchParams.get("hours") ?? 168);
-    const rows = readMarketSamples();
-    json(res, 200, { series: marketSeries(rows, (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 365) : 168) * 3600e3, now), change24hPct: change24h(rows, now), samples: rows.length, at: now });
+    json(res, 200, marketPayload(Number(url.searchParams.get("hours") ?? 168), now));
     return;
   }
   if (path === "/api/obs/feed") {
-    const limit = Number(url.searchParams.get("limit") ?? 30);
-    json(res, 200, { items: publicFeed(readLedger<PostRow>("x-posts.jsonl"), readLedger<PostRow>("x-replies.jsonl"), X_HANDLE, Number.isFinite(limit) ? limit : 30), at: now });
+    json(res, 200, feedPayload(Number(url.searchParams.get("limit") ?? 30), now));
+    return;
+  }
+  if (path === "/api/obs/dashboard") {
+    // The Agent page's one read: every payload it polls, in one object, shared by every viewer for five seconds.
+    res.setHeader("Cache-Control", "public, max-age=5");
+    dashboardPayload(dashboardQuery(url.searchParams), now)
+      .then((p) => json(res, 200, p))
+      .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "dashboard unavailable" }));
     return;
   }
   // The swap console: a quote through the desk's router with the transactions the person's own wallet signs, where
@@ -1422,12 +1504,12 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (path === "/api/obs/reads") {
-    cachedReads()
-      .then((r) => json(res, 200, { ...r, block: readsBlock(r) }))
+    readsPayload()
+      .then((p) => json(res, 200, p))
       .catch((err) => json(res, 502, { error: err instanceof Error ? err.message : "reads unavailable" }));
     return;
   }
-  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/swaps?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
+  json(res, 404, { error: "not found", routes: ["/", "/api/obs/health", "/api/obs/dashboard?hours=168&trades=50&feed=30", "/api/obs/status", "/api/obs/thoughts?limit=20", "/api/obs/trades?limit=50", "/api/obs/pnl?hours=168", "/api/obs/feed?limit=30", "/api/obs/reads", "/api/obs/market?hours=168", "/api/obs/signals", "/api/obs/live", "/api/obs/stream?limit=12 (server-sent events)", "/api/obs/console/quote?from=ETH&to=USDG&amount=0.05&user=0x...", "/api/obs/console/swaps?address=0x...", "POST /api/obs/console/swap {address, txHash, from, to, amountIn}", "POST /api/obs/account/challenge {address}", "POST /api/obs/account/link {address, nonce, signature}", "POST /api/obs/console/cli {line} (bearer)", "POST /api/obs/my-agent/ensure (bearer)", "GET /api/obs/my-agent/history (bearer)", "GET|POST /api/obs/my-agent/settings (bearer)", "POST /api/obs/my-agent/stream {text} (bearer, server-sent events)"] });
 }
 
 // Compare paths, not URL strings: a space in the checkout path is "%20" in

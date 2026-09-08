@@ -42,6 +42,7 @@ and the live reads he is allowed to cite.
 
    | Component on the page | Endpoint | Use |
    |---|---|---|
+   | The whole page, one poll every 15 s while the tab is shown | `/api/obs/dashboard` | `status`, `agentToken`, `reads`, `pnl`, `agents`, `market`, `trades`, `feed`: each exactly as its own endpoint below answers it, or `null` when that read failed |
    | Terminal (thoughts as they land) | `/api/obs/stream`, fallback `/api/obs/thoughts` | `thoughts[]`, `decision`, `analysis` as the case under each decision, `paper: true` labelled PAPER or filtered |
    | Live dot and "watching now" | `/api/obs/live` | `live`, `watching[]` with `entryState` and `entryOk`, `lastTrigger` |
    | Signals strip (launches, board, entries) | `/api/obs/signals` | `early[]`, `candidates[]` (grade, `stable`), `tapes[]` with `entry.ok` as the green light, `launch.line` |
@@ -100,6 +101,25 @@ never zero.
 ```json
 { "status": "ok", "at": 1788260000000 }
 ```
+
+### `GET /api/obs/dashboard?hours=168&trades=50&feed=30`
+The Agent page's one read (since September 8): every payload the page
+polls, in one object, assembled once and shared by every viewer for five
+seconds (`Cache-Control: public, max-age=5`).
+```json
+{ "status": {}, "agentToken": {}, "reads": {}, "pnl": {}, "agents": {}, "market": {}, "trades": {}, "feed": {}, "at": 1788260000000 }
+```
+Each part is exactly what its own endpoint answers: `status` is
+`/api/obs/status`, `agentToken` is `/api/obs/agent-token`, `reads` is
+`/api/obs/reads`, `pnl` is `/api/obs/pnl?hours=`, `agents` is
+`/api/obs/agents`, `market` is `/api/obs/market?hours=`, `trades` is
+`/api/obs/trades?limit=` (the `trades` query) and `feed` is
+`/api/obs/feed?limit=` (the `feed` query). A part whose read failed is
+`null`, never a failed response: the page keeps that panel's last value and
+names the part in its footer. The single endpoints stay as they are for any
+other consumer. Poll this once every fifteen seconds while the tab is shown,
+nothing while it is hidden, and on a 429 double the wait until a read
+succeeds; the reference Angular page does exactly that.
 
 ### `GET /api/obs/status`
 ```json
