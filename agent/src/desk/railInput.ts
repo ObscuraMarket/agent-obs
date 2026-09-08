@@ -12,6 +12,7 @@ import { openSpanStart } from "./trade-memory.ts";
 import type { PriceSample } from "./analysis.ts";
 import type { HourlyStat } from "./candidates.ts";
 import type { SwapRow, TapeStats } from "./tape.ts";
+import { tapePeakSince, persistedPeak, type TapePeak } from "./tapePeaks.ts";
 
 export interface RailInputArgs {
   symbol: string;
@@ -21,8 +22,17 @@ export interface RailInputArgs {
   priceUsd: number | null;
   trades: Trade[];
   flows: CapitalFlow[];
-  /** The desk's own price samples: the peak since entry is read from them. */
+  /** The desk's own price samples: one source of the peak since entry. */
   samples: PriceSample[];
+  /**
+   * The pool's tape, the rows both readers hold: its post-swap prices since the first buy are the second source of
+   * the peak, in dollars at `quotePriceUsd`, the same quote price the mark is priced at. The samples alone are one
+   * read per cycle and missed the tape's high between cycles: real trails gave back 22 to 31% instead of 15% (2026-09-08).
+   */
+  tapeRows?: SwapRow[];
+  quotePriceUsd?: number | null;
+  /** The peaks the watch persisted (obs-tape-peaks.json), the third source: the tape's window is short and a redeploy empties the memory. */
+  tapePeaks?: TapePeak[];
   hourly: HourlyStat[];
   tapeTrend: TapeStats["trend"] | null;
   tapeBuyPressurePct: number | null;
@@ -44,6 +54,8 @@ export interface RailInput {
   firstBuy: number;
   /** Average dollars paid per unit; null when the ledgers never recorded a cost. */
   avgCostUsd: number | null;
+  /** The highest dollar mark seen for the position since its first buy, across every source; null when nothing priced it. The watch persists it. */
+  peakPx: number | null;
 }
 
 /** PURE: the exit verdict's input for a held token, from the ledgers and the mark handed in. */
@@ -53,9 +65,14 @@ export function railInput(a: RailInputArgs): RailInput {
   const firstBuy = openSpanStart(a.trades, a.symbol) ?? buys.map((t) => t.at).sort((x, y) => x - y).pop() ?? a.seenAt ?? a.now;
   const p = positions(a.flows, a.trades, { [a.symbol]: a.qty }, { [a.symbol]: a.priceUsd }).positions.find((x) => x.asset === a.symbol);
   const avgCostUsd = p?.avgCostUsd ?? null;
-  // The peak since entry: the desk's own samples from the first buy on, and the mark itself, against the average cost.
-  const peakPx = a.samples.filter((s) => s.symbol === a.symbol && s.at >= firstBuy).reduce((m, s) => Math.max(m, s.priceUsd), a.priceUsd ?? 0);
-  const peakPnlPct = avgCostUsd != null && avgCostUsd > 0 && peakPx > 0 ? ((peakPx - avgCostUsd) / avgCostUsd) * 100 : null;
+  // The peak since entry, against the average cost: the highest of the desk's own samples from the first buy on,
+  // the tape's swaps from the first buy on, the peak the watch persisted for this position, and the mark itself.
+  const samplePeak = a.samples.filter((s) => s.symbol === a.symbol && s.at >= firstBuy).reduce((m, s) => Math.max(m, s.priceUsd), 0);
+  const tapePeak = a.tapeRows ? tapePeakSince(a.tapeRows, firstBuy, a.quotePriceUsd ?? null) ?? 0 : 0;
+  const keptPeak = a.tapePeaks ? persistedPeak(a.tapePeaks, a.symbol, firstBuy) ?? 0 : 0;
+  const peak = Math.max(samplePeak, tapePeak, keptPeak, a.priceUsd ?? 0);
+  const peakPx = peak > 0 ? peak : null;
+  const peakPnlPct = avgCostUsd != null && avgCostUsd > 0 && peakPx != null ? ((peakPx - avgCostUsd) / avgCostUsd) * 100 : null;
   const tookProfit = a.trades.some((t) => t.from.asset === a.symbol && t.exit && t.at >= firstBuy && /take profit|buyers are thinning/.test(t.note ?? ""));
   return {
     ageH: (a.now - firstBuy) / 3600e3,
@@ -67,6 +84,7 @@ export function railInput(a: RailInputArgs): RailInput {
     tapeBuyPressurePct: a.tapeBuyPressurePct,
     firstBuy,
     avgCostUsd,
+    peakPx,
   };
 }
 

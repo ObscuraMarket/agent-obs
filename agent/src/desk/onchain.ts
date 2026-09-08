@@ -26,6 +26,7 @@ import { readPrices } from "./analysis.ts";
 import { readTape, tapeStats, tapeWindowMin } from "./tape.ts";
 import { readEntries, recordClose, positionSpans, closeFromSpan, entryForSpan, closeRow, ethUsdAt, type TradeClose } from "./trade-memory.ts";
 import { railInput, quoteUsd, tapeLastUsd } from "./railInput.ts";
+import { readTapePeaks } from "./tapePeaks.ts";
 import type { QuoteRead } from "./thoughts.ts";
 
 export const NATIVE = "0x0000000000000000000000000000000000000000" as const;
@@ -489,6 +490,8 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
   const book = readBook();
   const allTrades = [...book.trades, ...extraTrades];
   const samples = readPrices();
+  // The peaks the watch persisted: the tape's window is short, and the position's high may be behind it (2026-09-08).
+  const tapePeaks = readTapePeaks();
   // Only what the desk bought is ever sold: an airdrop in the wallet is not a position and is never touched.
   const bought = boughtSymbols(allTrades);
   for (const a of Object.values(dyn)) {
@@ -502,10 +505,12 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
     // tripped is the rail this pass sees; the price feed stands in only when the pool has not traded in the window.
     // Priced from the feed alone, this pass dismissed a floor the watch had tripped at the tape's price, and the
     // watch had raised it once (2026-09-08).
-    const priceUsd = tapeLastUsd(rows, quoteUsd(dynamicPoolSpec(a)?.quote ?? "USDG", prices, samples, now), now, tapeWindowMin()) ?? prices[a.symbol] ?? null;
+    const quotePriceUsd = quoteUsd(dynamicPoolSpec(a)?.quote ?? "USDG", prices, samples, now);
+    const priceUsd = tapeLastUsd(rows, quotePriceUsd, now, tapeWindowMin()) ?? prices[a.symbol] ?? null;
     // The position held now, not a round trip closed earlier today: its peak, its age and its take-profit memory
     // start at this span's first buy, or at the candidate's first sighting when the ledger has no buy (railInput.ts).
-    const input = railInput({ symbol: a.symbol, qty: held, priceUsd, trades: allTrades, flows: book.flows, samples, hourly, tapeTrend: tape.trend, tapeBuyPressurePct: tape.buyPressurePct, now, seenAt: a.candidate.seenAt });
+    // The peak reads the tape and the watch's persisted high too, not the cycle-time samples alone (2026-09-08).
+    const input = railInput({ symbol: a.symbol, qty: held, priceUsd, trades: allTrades, flows: book.flows, samples, tapeRows: rows, quotePriceUsd, tapePeaks, hourly, tapeTrend: tape.trend, tapeBuyPressurePct: tape.buyPressurePct, now, seenAt: a.candidate.seenAt });
     const v = exitVerdict(input, ctx.rails);
     if (!v) continue;
     const amount = v.share >= 1 ? held : Number((held * v.share).toPrecision(8));

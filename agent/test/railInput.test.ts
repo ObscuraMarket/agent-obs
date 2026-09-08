@@ -110,3 +110,36 @@ test("the quote's dollar price: a dollar stable is one, the feed first, the desk
   assert.equal(latestSampleUsd(samples, "ETH", now + 2 * H), 2500, "still within three hours of a later now");
   assert.equal(latestSampleUsd([], "ETH", now), null);
 });
+
+test("the peak since entry: the samples alone, then the tape's higher swaps, then a persisted high above both; rows before the first buy are not the position's", () => {
+  const row = (at: number, price: number, block: number): SwapRow => ({ at, block, tx: `0x${block}:0`, side: "buy", tokenAmount: 1, quoteAmount: price, price });
+  const trades = [buy("b1", t0, 100, 1_000_000)];
+  const samples = [sample(t0 + 30 * M, 0.00012)];
+  const now = t0 + 2 * H;
+  const args = { ...base, priceUsd: 0.0001, trades, samples, now };
+  // Samples only: the cycle-time read, +20% off a $0.0001 cost.
+  const alone = railInput(args);
+  near(alone.peakPnlPct, 20, "samples only");
+  near(alone.peakPx, 0.00012);
+  // The tape between cycles went higher: an ETH-quoted pool priced at the quote price the mark uses. Real trails
+  // read from cycle-time samples alone gave back 22 to 31% instead of 15% (2026-09-08).
+  const rows = [row(t0 + 45 * M, 0.00015 / 2500, 1), row(t0 + 50 * M, 0.00013 / 2500, 2)];
+  const withTape = railInput({ ...args, tapeRows: rows, quotePriceUsd: 2500 });
+  near(withTape.peakPnlPct, 50, "the tape's high wins over the samples");
+  near(withTape.peakPx, 0.00015);
+  near(railInput({ ...args, tapeRows: rows, quotePriceUsd: null }).peakPnlPct, 20, "an unpriced quote prices no tape row");
+  // A row before the first buy is the run the desk bought into, not the position's peak.
+  const before = [row(t0 - 10 * M, 0.0005 / 2500, 0), ...rows];
+  near(railInput({ ...args, tapeRows: before, quotePriceUsd: 2500 }).peakPnlPct, 50, "rows before the first buy are ignored");
+  // The persisted high, from a window that has rolled off the tape, above both.
+  const peaks = [{ symbol: "TOK", firstBuy: t0, peakPx: 0.0002, at: t0 + 20 * M }];
+  near(railInput({ ...args, tapeRows: rows, quotePriceUsd: 2500, tapePeaks: peaks }).peakPnlPct, 100, "the persisted peak wins over both");
+  near(railInput({ ...args, tapePeaks: peaks }).peakPnlPct, 100, "and reads without tape rows");
+  // A persisted peak from an earlier position of the token (a different first buy) is not this one's.
+  const stale = [{ symbol: "TOK", firstBuy: t0 - 5 * H, peakPx: 0.0009, at: t0 - 4 * H }];
+  near(railInput({ ...args, tapeRows: rows, quotePriceUsd: 2500, tapePeaks: stale }).peakPnlPct, 50, "an earlier position's peak is ignored");
+  near(railInput({ ...args, tapeRows: rows, quotePriceUsd: 2500, tapePeaks: peaks, priceUsd: 0.0003 }).peakPnlPct, 200, "the mark itself still counts");
+  // The trail decides off that peak: at +50% peak and a mark at cost, the 25% trail has fired; off the samples alone it had not.
+  assert.equal(exitVerdict(withTape, rails)?.kind, "trail");
+  assert.equal(exitVerdict(alone, rails), null);
+});
