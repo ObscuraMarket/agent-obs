@@ -217,6 +217,8 @@ export function holderRead(rows: TransferRow[], symbol: string, token: string, n
 /** PURE: the read as one observation line the agent can cite. */
 export function holdersLine(h: HolderRead): string {
   if (!h.transfers) return `Holders ${h.symbol}: not read yet.`;
+  // A read that could not count the holders says so first, and never leads with a number the model would take as one.
+  if (!h.ok && /^holders not read/.test(h.why)) return `Holders ${h.symbol} (${h.transfers} transfers): ${h.why}. HOLDERS NOT READ.`;
   const bits = [`${h.wallets} wallets`, `largest ${h.top1Pct?.toFixed(0) ?? "?"}%`, `top ten ${h.top10Pct?.toFixed(0) ?? "?"}% of circulating`, h.bundlePct != null ? `first ${h.earlyBuyers} buyers: ${h.earlySameBlock} sharing a block, ${h.earlySameSize} identical sizes (${h.bundlePct.toFixed(0)}% bundled)` : "launch outside the read window, so the first buyers are unknown"];
   if (h.freshTop10 != null) bits.push(`${h.freshTop10} of the top ten wallets are fresh`);
   return `Holders ${h.symbol} (${h.transfers} transfers): ${bits.join("; ")}. ${h.ok ? "HOLDERS OK" : `HOLDERS FAIL: ${h.why}`}.`;
@@ -357,6 +359,16 @@ export function withoutWalletCount(h: HolderRead, note: string, minWallets = 30)
   const rest = h.why.replace(countFail, "");
   if (rest.trim()) return { ...h, why: `${rest} (${note})` };
   return { ...h, ok: true, why: `wallet count not read (${note}); largest ${h.top1Pct?.toFixed(0) ?? "?"}%, top ten ${h.top10Pct?.toFixed(0) ?? "?"}% among the wallets that moved recently` };
+}
+
+/**
+ * PURE: whether a transfer scan reaches back to the token's birth: it holds the mint, the transfer from the zero
+ * address. A scan without it started somewhere in the token's life, and the wallets it saw move are a floor, never
+ * the holder count. LENNY's scan began hours after its launch, and the desk sold on "17 wallets" when the explorer
+ * went quiet and the token's age was lost with the feed (2026-09-08).
+ */
+export function scanFromLaunch(rows: TransferRow[]): boolean {
+  return rows.some((r) => r.from === ZERO);
 }
 
 /** Transaction counts for a few wallets, one call each; a wallet the chain did not answer for is left out. */

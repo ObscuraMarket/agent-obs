@@ -25,7 +25,7 @@ import { recordPrices, readPrices, priceStats, ratioStats, usSession, evidenceCh
 import { stockReference } from "../obscura/stockRef.ts";
 import { updateTape, tapeStats, tapeLine } from "./tape.ts";
 import { entryRead, entryLine, entryRulesFromEnv, type EntryRead } from "./entry.ts";
-import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, contractsAmong, explorerHolders, holderReadFromList, withoutWalletCount, type HolderRead } from "./holders.ts";
+import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastructureAddresses, balancesFrom, txCounts, contractsAmong, explorerHolders, holderReadFromList, withoutWalletCount, scanFromLaunch, type HolderRead } from "./holders.ts";
 import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
 import { readLaunch, launchLine, launchRulesFromEnv, launchRulesForRecord, type LaunchRead } from "./launch.ts";
 import { autoEntryPick, autoEntryFor, entryVeto } from "./autoentry.ts";
@@ -377,6 +377,9 @@ for (const [sym, a] of inPlay) {
       const counts = transfers.length && top.length ? await txCounts(top) : null;
       hr = holderRead(transfers, sym, a.contract ?? "", now, holderRules, infra, counts);
       if (contracts.length) hr.why += ` (${contracts.length} contract${contracts.length > 1 ? "s" : ""} among the largest holders set aside as infrastructure)`;
+      // A scan that does not hold the mint started somewhere in the token's life: its wallet count is a floor, and the
+      // read says so rather than failing the token on it or handing the model a count it would act on.
+      if (transfers.length && !scanFromLaunch(transfers)) hr = withoutWalletCount(hr, "the transfer scan does not reach back to the launch, so the wallets it saw are a floor, not the holder count", holderRules.minWallets);
     }
     holderReads.set(sym, hr);
     if (hr.transfers > 0) recordResearch({ kind: "holders", symbol: sym, ok: hr.ok, note: hr.ok ? `${hr.wallets} wallets, largest ${hr.top1Pct == null ? "?" : `${Math.round(hr.top1Pct)}%`}, top ten ${hr.top10Pct == null ? "?" : `${Math.round(hr.top10Pct)}%`}` : shortWhy(hr.why) });

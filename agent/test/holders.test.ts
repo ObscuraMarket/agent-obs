@@ -1,6 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { balancesFrom, holderRead, holdersLine, holderRulesFromEnv, holderReadFromList, explorerHolderCount, withoutWalletCount, type TransferRow, type ExplorerHolder, type HolderRead } from "../src/desk/holders.ts";
+import { balancesFrom, holderRead, holdersLine, holderRulesFromEnv, holderReadFromList, explorerHolderCount, withoutWalletCount, scanFromLaunch, type TransferRow, type ExplorerHolder, type HolderRead } from "../src/desk/holders.ts";
+
+test("a transfer scan without the mint is a floor: its count is set aside and the line never leads with it", () => {
+  const ZERO = "0x0000000000000000000000000000000000000000";
+  const pool = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
+  const late: TransferRow[] = Array.from({ length: 18 }, (_, i) => ({ at: 1_788_821_727_000 + i * 60e3, block: 57_206_929 + i, tx: `0x${i}:1`, from: pool, to: `0x${(i + 1).toString(16).padStart(40, "a")}`, amount: 1000 }));
+  assert.equal(scanFromLaunch(late), false, "no transfer from the zero address: the scan began in the token's life");
+  assert.equal(scanFromLaunch([{ at: 1, block: 1, tx: "0x0:1", from: ZERO, to: pool, amount: 1e9 }, ...late]), true);
+  const rules = holderRulesFromEnv({} as NodeJS.ProcessEnv);
+  const raw = holderRead(late, "LENNY", "0x9f05acc63880878a6cf8c805b5b2c94c2a74fe48", 1_788_842_000_000, rules, [pool]);
+  assert.match(raw.why, /^18 wallets \(\d+ needed\)/, "the plain read fails the token on a count it does not have");
+  const floored = withoutWalletCount(raw, "the transfer scan does not reach back to the launch, so the wallets it saw are a floor, not the holder count", rules.minWallets);
+  assert.equal(floored.ok, false);
+  assert.match(floored.why, /^holders not read: the transfer scan does not reach back to the launch.*saw only 18 wallets move, too few to judge/);
+  const line = holdersLine(floored);
+  assert.match(line, /^Holders LENNY \(18 transfers\): holders not read/, "the observation leads with what was not read");
+  assert.ok(!/^Holders LENNY \(18 transfers\): 18 wallets/.test(line), "never a count the model would sell on (LENNY, 2026-09-08)");
+});
 
 const R = holderRulesFromEnv({} as NodeJS.ProcessEnv);
 
