@@ -22,6 +22,8 @@ export const CAPITAL_LEDGER = "obs-agent-capital.jsonl";
 /** Gas kept back on a withdrawal of everything: a plain transfer at twice the price the chain quotes, so it lands. */
 const TRANSFER_GAS = 21_000n;
 export const MIN_FUND_ETH = 0.001;
+/** The smallest withdrawal by amount; "all" has no floor. */
+export const MIN_WITHDRAW_ETH = 0.0001;
 
 export const seedOf = (env: NodeJS.ProcessEnv = process.env): string => (env.OBS_AGENT_WALLET_SEED ?? "").trim();
 /** Agent wallets exist when the operator set a seed of some length; there is no other switch. */
@@ -160,6 +162,8 @@ export async function agentBalanceEth(address: string): Promise<number> {
 export async function withdrawEth(address: string, amount: number | "all", now = Date.now()): Promise<{ ok: true; hash: `0x${string}`; amount: number; explorerUrl: string } | { ok: false; reason: string }> {
   if (!walletsOn()) return { ok: false, reason: "Agent wallets aren't switched on here yet." };
   if (!isAddress(address)) return { ok: false, reason: "no wallet to send to" };
+  // A dust amount is a typo, and sending it would only spend gas (a 0.0000001 ETH withdrawal went out on 2026-09-08).
+  if (amount !== "all" && !(amount >= MIN_WITHDRAW_ETH)) return { ok: false, reason: `The smallest withdrawal is ${MIN_WITHDRAW_ETH} ETH; /withdraw all sends everything it can.` };
   const eth = ASSETS["ETH@robinhood"];
   const chain = viemChain(eth);
   const pub = createPublicClient({ chain, transport: transport(eth) });

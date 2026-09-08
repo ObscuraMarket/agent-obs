@@ -54,9 +54,9 @@ import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines, agentsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 import { holderGate, forgetHolder, gateMode } from "./desk/gate.ts";
-import { followState, readFollow, recordFollow, checkSize, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, mirrorTrades, followEvents, type FollowMode } from "./desk/follow.ts";
+import { followState, readFollow, recordFollow, checkSize, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, liveHoldings, mirrorTrades, followEvents, type FollowMode } from "./desk/follow.ts";
 import { readEntries } from "./desk/trade-memory.ts";
-import { liveOn } from "./desk/mirror.ts";
+import { liveOn, canStartLive } from "./desk/mirror.ts";
 import { latestEthUsd } from "./desk/onchain.ts";
 import { walletsOn, agentWalletAddress, rememberWallet, fundTx, withdrawEth, agentBalanceEth, verifyFunding, walletLines, walletBook, readAgentCapital } from "./desk/agentWallet.ts";
 import type { Prices } from "./desk/book.ts";
@@ -1129,8 +1129,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           return;
         }
         case "follow": {
-          // The wallet's own trading agent: it follows the desk at the wallet's size, on paper for now. One row per
-          // command; the book is the desk's own accounting on the mirrored trades, marked at the desk's prices.
+          // The wallet's own trading agent: it follows the desk at the wallet's size, live from its own wallet once
+          // funded, on paper until then. One row per command; the book is the desk's own accounting on the agent's
+          // trades, marked at the desk's prices.
           const a = address as string;
           const deskMax = railsFromEnv().maxSwapUsd;
           let state = followState(readFollow(), a);
@@ -1149,9 +1150,11 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
               if (forced !== "paper" && walletsOn() && liveOn()) {
                 const bal = await agentBalanceEth(a).catch(() => 0);
                 const px = (await cachedPrices(["ETH"]).catch(() => ({} as Record<string, number | null>))).ETH ?? latestEthUsd(now);
-                const need = px ? size.sizeUsd / px + railsFromEnv().gasReserveEth : null;
-                if (need != null && bal >= need) mode = "live";
-                else if (forced === "live") { json(res, 200, { ok: false, effect: "follow", lines: [`Your agent's wallet holds ${bal.toFixed(4)} ETH; $${size.sizeUsd} a trade needs about ${need != null ? need.toFixed(4) : "?"} ETH with the gas reserve. /fund it first, or /start paper.`], suggest: ["/wallet", "/fund 0.05 ETH", "/start paper"] }); return; }
+                // The same bar the mirror holds an entry to, and an agent holding live tokens stays live regardless.
+                const holdsLive = Object.values(liveHoldings(readFollowTrades(), a)).some((q) => q > 0);
+                const can = canStartLive(size.sizeUsd, px ?? null, bal, railsFromEnv().gasReserveEth, holdsLive);
+                if (can.ok) mode = "live";
+                else if (forced === "live") { json(res, 200, { ok: false, effect: "follow", lines: [can.reason], suggest: ["/wallet", "/fund 0.05 ETH", "/start paper"] }); return; }
               } else if (forced === "live") { json(res, 200, { ok: false, effect: "follow", lines: ["Live trading isn't switched on here yet; /start paper runs it on paper."], suggest: ["/start paper", "/wallet"] }); return; }
               startedLive = mode === "live";
             }

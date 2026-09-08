@@ -29,6 +29,21 @@ export function entryAmountEth(sizeUsd: number, ethUsd: number, balanceEth: numb
   return { amount: Number(Math.min(want, room).toPrecision(8)) };
 }
 
+/**
+ * PURE: whether an agent may start live: its wallet covers an entry by the mirror's own rule (half the size above
+ * the gas reserve), or it already holds tokens it bought live, which stay live whatever its ETH is. A stricter bar
+ * at /start than at the entry itself left a live agent holding two tokens unable to restart after a /stop, and a
+ * paper start then hid what it held (2026-09-08).
+ */
+export function canStartLive(sizeUsd: number, ethUsd: number | null, balanceEth: number, gasReserveEth: number, holdsLive: boolean): { ok: true } | { ok: false; reason: string } {
+  if (holdsLive) return { ok: true };
+  if (!(ethUsd != null && ethUsd > 0)) return { ok: false, reason: "ETH is unpriced right now; try again in a moment" };
+  const r = entryAmountEth(sizeUsd, ethUsd, balanceEth, gasReserveEth);
+  if ("amount" in r) return { ok: true };
+  const least = (sizeUsd / ethUsd) * 0.5 + gasReserveEth;
+  return { ok: false, reason: `Your agent's wallet holds ${balanceEth.toFixed(4)} ETH; $${sizeUsd} a trade needs at least ${least.toFixed(4)} ETH (half the size above the ${gasReserveEth} ETH gas reserve). /fund it first, or /start paper.` };
+}
+
 /** PURE: the share of its own holding an agent sells when the desk sold `sold` of the `heldBefore` it had. */
 export function exitShare(sold: number, heldBefore: number | null): number {
   if (heldBefore == null || !(heldBefore > 0)) return 1;

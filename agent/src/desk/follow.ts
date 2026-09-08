@@ -1,8 +1,8 @@
 // A wallet's own trading agent, controlled from the console: /start, /stop, /size, /agent. It never decides a trade
 // of its own. It follows Agent OBS: every entry and every exit the house desk makes after the moment it was turned
-// on is mirrored on the wallet's own book at the wallet's size, at the desk's fill price. On paper for now: the
-// book is real, the trades are the desk's real trades, and no money moves until the money path can sign for a
-// second wallet. The same commands run the live version when it exists; the console says which it is.
+// on is mirrored at the wallet's size. Live, it trades real ETH from the agent's own derived wallet (mirror.ts);
+// on paper, the book is real and the trades are the desk's real trades at the desk's fill price, and no money
+// moves. The same commands run both; the console says which it is.
 //
 // Pure where it matters: the state is a replay of the wallet's rows, the mirrored book is a pure function of the
 // desk's trades, so both are tested offline. One ledger row per command, appended, never rewritten.
@@ -60,7 +60,7 @@ export function checkSize(raw: unknown, deskMaxUsd: number): { sizeUsd: number }
   const n = typeof raw === "number" ? raw : Number(String(raw ?? "").replace(/[$,]/g, ""));
   if (!Number.isFinite(n)) return { error: `Say a size in dollars: /size 100 (from $${MIN_SIZE_USD} up to $${deskMaxUsd}, what the desk itself trades).` };
   if (n < MIN_SIZE_USD) return { error: `The smallest size is $${MIN_SIZE_USD} a trade.` };
-  if (n > deskMaxUsd) return { error: `The largest size is $${deskMaxUsd} a trade, what the desk itself trades: a bigger paper fill at the desk's price would not be honest.` };
+  if (n > deskMaxUsd) return { error: `The largest size is $${deskMaxUsd} a trade, what the desk itself trades.` };
   return { sizeUsd: Math.round(n) };
 }
 
@@ -185,7 +185,7 @@ export function followLines(b: FollowBook, now: number): string[] {
   if (!s.on && !b.trades.length) {
     return [
       "Your agent is off.",
-      `/start turns it on: from that moment it follows every trade Agent OBS makes, at your size ($${s.sizeUsd} a trade), on paper for now. /start 150 sets the size as it starts.`,
+      `/start turns it on: from that moment it follows every trade Agent OBS makes, at your size ($${s.sizeUsd} a trade), live from its own wallet once you fund it. /start 150 sets the size as it starts.`,
     ];
   }
   const live = s.mode === "live";
@@ -208,7 +208,7 @@ export function followLines(b: FollowBook, now: number): string[] {
   const exits = b.trades.filter((t) => t.exit).length;
   if (b.trades.length) lines.push(`  ${b.trades.length - exits} entr${b.trades.length - exits === 1 ? "y" : "ies"}, ${exits} exit${exits === 1 ? "" : "s"}, realized ${usd(b.positions.realizedUsd)} since you started.`);
   for (const n of b.notes ?? []) lines.push(`  note: ${n}`);
-  lines.push(s.on ? "  /stop turns it off. /size changes what it trades. /status shows the desk it follows." : "  /start turns it back on.");
+  lines.push(s.on ? "  /stop turns it off. /size changes what it trades. /desk shows the desk it follows." : "  /start turns it back on.");
   return lines;
 }
 

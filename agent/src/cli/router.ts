@@ -89,7 +89,7 @@ export function helpLines(door: Door = {}): string[] {
     "  /trade /rewards /cards /yield   Open a page of the app beside the console",
     "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
     `  /connect           ${connectLine(door.gate)}`,
-    "  /start [size]      Turn your trading agent on: it follows every trade Agent OBS makes, at your size, paper for now. /stop, /agent",
+    "  /start [size]      Turn your trading agent on: it follows every trade Agent OBS makes, at your size, live from its own wallet once you fund it. /stop, /agent",
     "  /wallet            Your agent's own wallet: /fund 0.05 ETH puts ETH in from your wallet, /withdraw all takes it back",
     ...(door.apps === false ? [] : ["  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent"]),
     "  /model             Pick the model your agent runs on, any of them",
@@ -123,7 +123,7 @@ export function helpAllLines(door: Door = {}): string[] {
   "",
   ]),
   "  Your trading agent (it follows Agent OBS: every entry and exit the desk makes, at your size; it never trades on its own)",
-  "    /start [size]      Turn it on, from this moment; paper for now, the same commands when it goes live",
+  "    /start [size]      Turn it on, from this moment; live from its own wallet once you fund it, on paper until then",
   "    /stop              Turn it off; it still sells what it holds when the desk does",
   "    /size <usd>        What it puts into each entry, up to what the desk itself trades",
   "    /agent             Its book: on or off, what it holds, what it has made",
@@ -165,7 +165,7 @@ export function tourFor(door: Door = {}): Array<{ title: string; lines: string[]
     { title: "Read it, don't take its word", lines: ["Every number on the page comes from a read the desk made. The thoughts are its own words;", "the research log is what it read between cycles."], tryIt: "/thoughts 2" },
     { title: "Quote through the pools", lines: ["The desk quotes the pools directly, where every swap on this chain settles, and shows", "the app's Relay route beside it, so you can see the spread for yourself."], tryIt: "/quote 0.05 ETH USDG" },
     { title: "Swap from your own wallet", lines: ["Your wallet signs, the swap pays your address in the same transaction, and the desk", "reads it off the chain. Nothing is ever held for you."], tryIt: "/swap 0.05 ETH USDG" },
-    { title: "An agent of your own", lines: [`${who} and you get a basic agent, like any other assistant,`, "that you train right here: name it, set its style and voice, tell it what you want. It remembers", "your conversation and belongs to the wallet you connected, which controls it. It does not trade for you."], tryIt: "/connect" },
+    { title: "An agent of your own", lines: [`${who} and you get a basic agent, like any other assistant,`, "that you train right here: name it, set its style and voice, tell it what you want. It remembers", "your conversation and belongs to the wallet you connected, which controls it. Turn it on with /start and it trades too:", "every trade Agent OBS makes, at your size, from its own wallet once you fund it."], tryIt: "/connect" },
   ];
 }
 export const TOUR = tourFor();
