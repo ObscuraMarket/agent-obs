@@ -72,7 +72,7 @@ test("the post speaks from the wallet as the chain read it, not from the ledger'
   assert.equal(fresh.holdings.KOFUKU, undefined);
   assert.equal(fresh.equityUsd, 2250);
   // An old read with nothing traded since still holds; an old read with a trade after it does not.
-  const quiet = traderHoldings([{ ...chain[0], at: T - 6 * 3600e3 }], flows, trades, 2400, T);
+  const quiet = traderHoldings([{ ...chain[0], at: T - 4 * 3600e3 }], flows, trades, 2400, T);
   assert.equal(quiet.from, "chain");
   const stale = traderHoldings([{ ...chain[0], at: T - 3 * 3600e3 }], flows, [...trades, { ...trades[0], at: T - 2 * 3600e3, id: "t2" }], 2400, T);
   assert.equal(stale.from, "ledger");
