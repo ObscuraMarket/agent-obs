@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { balanceUsd, creditsSummary, resolvePayToken, judgePayment, bonusPct, treasury, creditsOn, toCredits, fmtCredits, freeUsd, treasuryIsDesk, capitalRowFor, type CreditRow, type PayToken } from "../src/desk/credits.ts";
+import { balanceUsd, creditsSummary, resolvePayToken, judgePayment, bonusPct, treasury, creditsOn, toCredits, fmtCredits, freeUsd, treasuryIsDesk, capitalRowFor, priorRecord, confirmationsOf, judgeBlock, sampleNear, valueUsdAt, depositNote, maxAgeH, confirmationsNeeded, type CreditRow, type PayToken } from "../src/desk/credits.ts";
 import { receivedStocks } from "../src/obscura/reads.ts";
 import { parseCatalog, findModels, featured, estimateTokens, turnCostUsd, modelLine } from "../src/desk/models.ts";
 import { sanitizeSettings, describeSettings } from "../src/desk/userSettings.ts";
@@ -65,6 +65,72 @@ test("a payment is what a person names it, and what the chain says it was", () =
   const elsewhere = { ...log, topics: [TRANSFER, topic(ME), topic("0x000000000000000000000000000000000000dead")] };
   assert.match((judgePayment({ from: ME, to: tokens[1].contract, value: 0n }, [elsewhere], ME, TREASURY, tokens) as { reason: string }).reason, /nothing in that transaction reached/);
   assert.match((judgePayment({ from: "0x000000000000000000000000000000000000dead", to: TREASURY, value: 1n }, [], ME, TREASURY, tokens) as { reason: string }).reason, /not sent by this wallet/);
+});
+
+test("a recorded transaction is answered only to the wallet it was recorded for", () => {
+  const rows: CreditRow[] = [
+    { at: 1, address: ME.toLowerCase(), kind: "deposit", usd: 10, token: "USDG", amount: 10, txHash: "0xabc" },
+    { at: 2, address: ME.toLowerCase(), kind: "charge", usd: 0.01 },
+  ];
+  const mine = priorRecord(rows, "0xABC", ME);
+  assert.ok(mine && "row" in mine && mine.row.txHash === "0xabc", "the same wallet gets its row back, whatever the case of the hash");
+  const theirs = priorRecord(rows, "0xabc", "0x000000000000000000000000000000000000dead");
+  assert.ok(theirs && "reason" in theirs);
+  assert.equal((theirs as { reason: string }).reason, "that transaction is already counted for the address that sent it");
+  assert.equal(priorRecord(rows, "0xdef", ME), null, "an unknown hash is not a prior");
+  assert.equal(priorRecord([], "0xabc", ME), null);
+});
+
+test("a payment counts once it is deep enough and while it is recent enough", () => {
+  const H = 3600e3;
+  const now = 1_700_000_000_000;
+  const rule = { confirmations: 3, maxAgeH: 24 };
+  assert.equal(confirmationsOf(100n, 100n), 1, "the block it landed in is the first confirmation");
+  assert.equal(confirmationsOf(100n, 102n), 3);
+  assert.equal(confirmationsOf(100n, 99n), 0, "a node behind the block confirms nothing");
+  const ok = judgeBlock({ blockNumber: 100n, head: 102n, blockAt: now - 2 * H }, now, rule);
+  assert.deepEqual(ok, { ok: true, confirmations: 3, ageH: 2 });
+  const shallow = judgeBlock({ blockNumber: 100n, head: 100n, blockAt: now - 60e3 }, now, rule) as { reason: string };
+  assert.equal(shallow.reason, "that transaction has 1 confirmation and 3 are needed; give it a moment and try again");
+  const behind = judgeBlock({ blockNumber: 100n, head: 98n, blockAt: now - 60e3 }, now, rule) as { reason: string };
+  assert.match(behind.reason, /^that transaction has 0 confirmations and 3 are needed/);
+  const old = judgeBlock({ blockNumber: 100n, head: 5000n, blockAt: now - 30 * H }, now, rule) as { reason: string };
+  assert.equal(old.reason, "that transaction landed 30 hours ago and only the last 24 hours count");
+  const ancient = judgeBlock({ blockNumber: 100n, head: 5000n, blockAt: now - 10 * 24 * H }, now, rule) as { reason: string };
+  assert.equal(ancient.reason, "that transaction landed 10 days ago and only the last 24 hours count");
+  assert.ok("ok" in judgeBlock({ blockNumber: 100n, head: 5000n, blockAt: now - 24 * H }, now, rule), "the window's edge is inside it");
+  assert.ok("ok" in judgeBlock({ blockNumber: 100n, head: 5000n, blockAt: now - 10 * 24 * H }, now, { confirmations: 2, maxAgeH: null }), "a funding of any age counts once it is deep enough");
+  assert.ok("ok" in judgeBlock({ blockNumber: 100n, head: 102n, blockAt: now + 30e3 }, now, rule), "a block a little ahead of this clock is not old");
+  assert.equal(maxAgeH({} as NodeJS.ProcessEnv), 24);
+  assert.equal(maxAgeH({ OBS_CREDITS_MAX_AGE_H: "6" } as NodeJS.ProcessEnv), 6);
+  assert.equal(maxAgeH({ OBS_CREDITS_MAX_AGE_H: "nope" } as NodeJS.ProcessEnv), 24, "a broken value is the default, not a window of nothing");
+  assert.equal(confirmationsNeeded({} as NodeJS.ProcessEnv), 3);
+  assert.equal(confirmationsNeeded({ OBS_CREDITS_CONFIRMATIONS: "1" } as NodeJS.ProcessEnv), 1);
+  assert.equal(confirmationsNeeded({ OBS_CREDITS_CONFIRMATIONS: "0" } as NodeJS.ProcessEnv), 3, "the block itself always counts, so nothing below one is a setting");
+});
+
+test("a payment is priced at its block from the desk's own samples, at face for a dollar, and today's price is named as such", () => {
+  const H = 3600e3;
+  const t0 = 1_700_000_000_000;
+  const samples = [
+    { at: t0 - 2 * H, symbol: "ETH", priceUsd: 2000 },
+    { at: t0 - 20 * 60e3, symbol: "ETH", priceUsd: 2100 },
+    { at: t0 + 10 * 60e3, symbol: "eth", priceUsd: 2200 },
+    { at: t0, symbol: "NVDA", priceUsd: 120 },
+  ];
+  assert.equal(sampleNear(samples, "ETH", t0)?.priceUsd, 2200, "the nearest sample, whatever its case");
+  assert.equal(sampleNear(samples, "ETH", t0 - 3 * H)?.priceUsd, 2000);
+  assert.equal(sampleNear(samples, "ETH", t0 - 5 * H), null, "nothing within an hour");
+  assert.equal(sampleNear(samples, "AOBS", t0), null, "a symbol the desk never sampled");
+  assert.deepEqual(valueUsdAt(tokens[0], 0.5, t0, samples), { usd: 1100, sampleAt: t0 + 10 * 60e3 });
+  assert.deepEqual(valueUsdAt(tokens[3], 2, t0 + 30 * 60e3, samples), { usd: 240, sampleAt: t0 });
+  assert.deepEqual(valueUsdAt(tokens[1], 12.5, t0 - 9 * H, samples), { usd: 12.5, sampleAt: null }, "a dollar is a dollar at any block");
+  assert.equal(valueUsdAt(tokens[0], 0.5, t0 - 9 * H, samples), null, "no sample near the block: the caller falls back to today's price");
+  assert.equal(valueUsdAt(tokens[0], 0, t0, samples), null);
+  assert.equal(depositNote("USDG", 0, "block"), undefined);
+  assert.equal(depositNote("AOBS", 10, "block"), "+10% for paying in AOBS");
+  assert.equal(depositNote("ETH", 0, "now"), "priced now: the desk had no price sample within an hour of the block");
+  assert.equal(depositNote("AOBS", 10, "now"), "+10% for paying in AOBS; priced now: the desk had no price sample within an hour of the block");
 });
 
 test("the catalog is read with its prices, searched by words, and a turn is priced from the text with the margin on top", () => {

@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { privateKeyToAccount } from "viem/accounts";
-import { deriveKey, agentWalletAddress, walletsOn, fundTx, judgeFunding, walletBook, walletLines, MIN_FUND_ETH } from "../src/desk/agentWallet.ts";
+import { deriveKey, agentWalletAddress, walletsOn, fundTx, judgeFunding, walletBook, walletLines, fundConfirmations, MIN_FUND_ETH, type AgentCapitalRow } from "../src/desk/agentWallet.ts";
+import { priorRecord, judgeBlock } from "../src/desk/credits.ts";
 
 const SEED = "a-seed-for-the-tests-that-is-long-enough-to-count-0123456789";
 const A = "0x1111111111111111111111111111111111111111";
@@ -35,6 +36,20 @@ test("funding is ETH to the agent's wallet and nothing else; a landed transactio
   assert.match((judgeFunding({ from: B, to: w, value: 10n ** 16n }, A, w) as { reason: string }).reason, /not sent by this wallet/);
   assert.match((judgeFunding({ from: A, to: B, value: 10n ** 16n }, A, w) as { reason: string }).reason, /did not go to your agent's wallet/);
   assert.match((judgeFunding({ from: A, to: w, value: 0n }, A, w) as { reason: string }).reason, /carried no ETH/);
+});
+
+test("a funding is recorded once for the wallet that sent it, after a couple of blocks, whatever its age", () => {
+  const rows: AgentCapitalRow[] = [{ address: A, at: 1, kind: "deposit", asset: "ETH", amount: 0.05, usd: 120, txHash: "0xaa" }];
+  const mine = priorRecord(rows, "0xAA", A);
+  assert.ok(mine && "row" in mine && mine.row.amount === 0.05);
+  assert.equal((priorRecord(rows, "0xaa", B) as { reason: string }).reason, "that transaction is already counted for the address that sent it");
+  assert.equal(fundConfirmations({} as NodeJS.ProcessEnv), 2);
+  assert.equal(fundConfirmations({ OBS_FUND_CONFIRMATIONS: "5" } as NodeJS.ProcessEnv), 5);
+  assert.equal(fundConfirmations({ OBS_FUND_CONFIRMATIONS: "-1" } as NodeJS.ProcessEnv), 2, "a broken value is the default");
+  const now = 1_700_000_000_000;
+  const rule = { confirmations: fundConfirmations({} as NodeJS.ProcessEnv), maxAgeH: null };
+  assert.match((judgeBlock({ blockNumber: 10n, head: 10n, blockAt: now }, now, rule) as { reason: string }).reason, /has 1 confirmation and 2 are needed/);
+  assert.ok("ok" in judgeBlock({ blockNumber: 10n, head: 11n, blockAt: now - 90 * 24 * 3600e3 }, now, rule), "an old funding is still ETH in the agent's wallet");
 });
 
 test("the wallet book adds up what went in and out for one person, and the lines say what to do with it", () => {

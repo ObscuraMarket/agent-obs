@@ -14,7 +14,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { appendLedger, readLedger } from "../ledger.ts";
 import { ASSETS } from "./assets.ts";
 import { viemChain, transport, readNativeBalance, type Wallet } from "./signer.ts";
-import { resolvePayToken, valueUsd } from "./credits.ts";
+import { resolvePayToken, valueUsd, priorRecord, judgeBlock } from "./credits.ts";
 import { EXPLORER_URL } from "../config.ts";
 
 export const WALLETS_LEDGER = "obs-agent-wallets.jsonl";
@@ -28,6 +28,8 @@ export const MIN_WITHDRAW_ETH = 0.0001;
 export const seedOf = (env: NodeJS.ProcessEnv = process.env): string => (env.OBS_AGENT_WALLET_SEED ?? "").trim();
 /** Agent wallets exist when the operator set a seed of some length; there is no other switch. */
 export const walletsOn = (env: NodeJS.ProcessEnv = process.env): boolean => seedOf(env).length >= 32;
+/** Blocks a funding needs under it before it is recorded, its own included (OBS_FUND_CONFIRMATIONS); at least one, blank or broken, two. */
+export const fundConfirmations = (env: NodeJS.ProcessEnv = process.env): number => { const n = Math.floor(Number(env.OBS_FUND_CONFIRMATIONS)); return n >= 1 ? n : 2; };
 export const isAddress = (a: unknown): a is `0x${string}` => typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a);
 const isTxHash = (h: unknown): h is `0x${string}` => typeof h === "string" && /^0x[0-9a-fA-F]{64}$/.test(h);
 
@@ -130,12 +132,17 @@ const ethUsd = async (amount: number): Promise<number | null> => {
   return t ? valueUsd(t, amount) : null;
 };
 
-/** A funding the person sent: read off the chain, recorded once. */
+/**
+ * A funding the person sent: read off the chain, recorded once, for the wallet that sent it, once a couple of
+ * blocks sit on top of it. A hash another wallet already had recorded is refused rather than shown (the lookup was
+ * by hash alone until 2026-09-08), and a funding in the newest block waits, so a reorg cannot leave a row for ETH
+ * that never arrived.
+ */
 export async function verifyFunding(hash: string, address: string, now = Date.now()): Promise<{ ok: true; row: AgentCapitalRow; already: boolean } | { ok: false; reason: string }> {
   if (!walletsOn()) return { ok: false, reason: "Agent wallets aren't switched on here yet." };
   if (!isTxHash(hash) || !isAddress(address)) return { ok: false, reason: "a transaction hash and a wallet are required" };
-  const prior = readAgentCapital().find((r) => r.kind === "deposit" && r.txHash.toLowerCase() === hash.toLowerCase());
-  if (prior) return { ok: true, row: prior, already: true };
+  const prior = priorRecord(readAgentCapital().filter((r) => r.kind === "deposit"), hash, address);
+  if (prior) return "reason" in prior ? { ok: false, reason: prior.reason } : { ok: true, row: prior.row, already: true };
   const wallet = agentWalletAddress(address);
   const eth = ASSETS["ETH@robinhood"];
   const pub = createPublicClient({ chain: viemChain(eth), transport: transport(eth) });
@@ -145,6 +152,10 @@ export async function verifyFunding(hash: string, address: string, now = Date.no
   const tx = await pub.getTransaction({ hash: hash as Hex });
   const j = judgeFunding({ from: tx.from, to: tx.to ?? null, value: tx.value }, address, wallet);
   if ("reason" in j) return { ok: false, reason: j.reason };
+  // A funding of any age is still ETH in the agent's wallet, so only the depth is judged here, never the age.
+  const [head, block] = await Promise.all([pub.getBlockNumber(), pub.getBlock({ blockNumber: receipt.blockNumber })]);
+  const depth = judgeBlock({ blockNumber: receipt.blockNumber, head, blockAt: Number(block.timestamp) * 1000 }, now, { confirmations: fundConfirmations(), maxAgeH: null });
+  if ("reason" in depth) return { ok: false, reason: depth.reason };
   const row: AgentCapitalRow = { address: address.toLowerCase(), at: now, kind: "deposit", asset: "ETH", amount: j.amount, usd: await ethUsd(j.amount), txHash: hash.toLowerCase() };
   appendLedger(CAPITAL_LEDGER, row as unknown as Record<string, unknown>);
   return { ok: true, row, already: false };
