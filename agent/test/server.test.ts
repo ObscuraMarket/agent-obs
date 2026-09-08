@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter, tapePrices, pnlFingerprint } from "../src/server.ts";
-import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX } from "../src/server.ts";
+import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX, TtlCache, attempt, dashboardQuery } from "../src/server.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
 const posts = [
@@ -140,4 +140,37 @@ test("the stream pushes the positions only when something moved", () => {
   assert.equal(pnlFingerprint(a), pnlFingerprint({ snapshot: { equityUsd: 10153.194 }, positions: [{ asset: "NSDX", qty: 1_720_174, valueUsd: 103.001 }] }), "a change under a cent is no change");
   assert.notEqual(pnlFingerprint(a), pnlFingerprint({ ...a, positions: [{ asset: "NSDX", qty: 1_720_174, valueUsd: 104 }] }));
   assert.notEqual(pnlFingerprint(a), pnlFingerprint({ ...a, positions: [] }), "a position closed");
+});
+
+test("the page's one read is made once per query and shared for the TTL, remade after it, and a failed making is tried again", async () => {
+  const c = new TtlCache<number>(5000);
+  let made = 0;
+  const make = () => Promise.resolve(++made);
+  assert.equal(await c.get("a", make, 0), 1);
+  assert.equal(await c.get("a", make, 4999), 1, "inside the TTL every caller shares the first making");
+  assert.equal(made, 1);
+  assert.equal(await c.get("b", make, 4999), 2, "another query is its own making");
+  assert.equal(await c.get("a", make, 5000), 3, "past the TTL it is remade");
+  await assert.rejects(c.get("c", () => Promise.reject(new Error("cold")), 6000));
+  assert.equal(await c.get("c", make, 6001), 4, "a failure is not kept for five seconds");
+  const slow = new TtlCache<string>(5000);
+  let pending = 0;
+  const share = () => { pending++; return new Promise<string>((r) => setTimeout(() => r("done"), 5)); };
+  const [x, y] = await Promise.all([slow.get("k", share, 0), slow.get("k", share, 1)]);
+  assert.deepEqual([x, y, pending], ["done", "done", 1], "two callers while one making is in flight share it");
+});
+
+test("a part of the one read that fails is null, never the whole read", async () => {
+  assert.equal(await attempt(() => { throw new Error("ledger unreadable"); }), null);
+  assert.equal(await attempt(() => Promise.reject(new Error("reads unavailable"))), null);
+  assert.deepEqual(await attempt(() => ({ items: [], at: 1 })), { items: [], at: 1 });
+  assert.equal(await attempt(async () => 2), 2);
+});
+
+test("the one read's query carries each route's own default and clamp, so equal asks share one entry", () => {
+  assert.deepEqual(dashboardQuery(new URLSearchParams("")), { hours: 168, trades: 50, feed: 30 });
+  assert.deepEqual(dashboardQuery(new URLSearchParams("hours=24&trades=30&feed=8")), { hours: 24, trades: 30, feed: 8 });
+  assert.deepEqual(dashboardQuery(new URLSearchParams("hours=abc&trades=-1&feed=9999")), { hours: 168, trades: 50, feed: 200 }, "nonsense is the default, too much is the cap");
+  assert.deepEqual(dashboardQuery(new URLSearchParams("hours=0&trades=0.5&feed=0")), { hours: 168, trades: 1, feed: 30 });
+  assert.equal(dashboardQuery(new URLSearchParams("hours=999999")).hours, 24 * 365, "a year at most, the market route's own cap");
 });

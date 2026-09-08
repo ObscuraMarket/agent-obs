@@ -1,10 +1,10 @@
 import { AfterViewInit, Component, ElementRef, HostListener, NgZone, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
-import { Subscription, interval } from 'rxjs';
 
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
+import { REFRESH_MS, nextRefreshMs } from './refresh';
 import {
-  CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
+  CgMarket, ObsDashboard, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
   ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
 } from '../../service/obs-desk.service';
 
@@ -33,6 +33,14 @@ interface TermItem { row: HTMLElement; tx: HTMLElement; text: string; animate: b
 const STABLE: { [asset: string]: 1 } = { USDG: 1, USDC: 1, USDT: 1, DAI: 1 };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const TERM_LINE_CAP = 700;
+/**
+ * A thought or a trade on the stream refreshes the panels a moment later, once the ledger write behind it has landed.
+ * Six seconds: past the API's five-second cache of the one read, so the refresh is never answered from an assembly
+ * older than the event (2026-09-08).
+ */
+const EVENT_REFRESH_MS = 6_000;
+/** CoinGecko's free API refreshes about once a minute; asking it more often only spends the viewer's budget. */
+const CG_EVERY_MS = 60_000;
 
 /**
  * The OBS desk: every feature of agent-obs's newest dashboard (the typewriter
@@ -170,7 +178,13 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.resizeTimer = setTimeout(() => this.resizeCanvas(), 150);
   };
 
-  private poll?: Subscription;
+  /** The polling clock: one read of the whole page, fifteen seconds after the last answer, doubling on a 429. */
+  private refreshEveryMs = REFRESH_MS;
+  private refreshClock?: ReturnType<typeof setTimeout>;
+  /** Set on destroy: a read that lands after the person has left the page must not set the clock again. */
+  private destroyed = false;
+  /** When CoinGecko was last asked for the strip's other assets. */
+  private cgAt = 0;
 
   constructor(private obs: ObsDeskService, private zone: NgZone, title: Title, meta: Meta) {
     title.setTitle('Obscura - OBS Desk');
@@ -185,7 +199,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   /**
    * A tab in the background can keep a stream connection that is dead without knowing it, and its timers slow to a
    * crawl; the terminal then sits where it was, minutes behind. When the tab comes back, a stale stream is reopened
-   * at once (the hello replays every line missed, in order) and the panels refresh.
+   * at once (the hello replays every line missed, in order) and the panels refresh, which also restarts the polling
+   * clock that stopped while the tab was hidden.
    */
   private readonly onVisible = () => {
     if (document.hidden) { return; }
@@ -201,8 +216,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     document.addEventListener('visibilitychange', this.onVisible);
     window.addEventListener('online', this.onVisible);
     window.addEventListener('pageshow', this.onVisible);
+    // The first read sets the clock; every answer sets the next.
     this.refresh();
-    this.poll = interval(15_000).subscribe(() => this.refresh());
     this.startMarquee();
     // The stream and the typewriter run outside Angular: a 9ms typing tick
     // must not drive change detection. Bound state re-enters via zone.run.
@@ -242,7 +257,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     document.removeEventListener('visibilitychange', this.onVisible);
     window.removeEventListener('online', this.onVisible);
     window.removeEventListener('pageshow', this.onVisible);
-    this.poll?.unsubscribe();
+    this.destroyed = true;
+    if (this.refreshClock) { clearTimeout(this.refreshClock); }
     this.es?.close();
     this.ro?.disconnect();
     if (this.rafId) { cancelAnimationFrame(this.rafId); }
@@ -259,18 +275,60 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   // ---- data ------------------------------------------------------------
 
+  /**
+   * One read for the whole page: /api/obs/dashboard carries every payload the page used to poll one route at a time
+   * (nine requests every fifteen seconds from an idle tab, hidden or not, until 2026-09-08), fanned out here to the
+   * same fields. A hidden tab reads nothing and its clock stops; the tab coming back reads once and the clock
+   * restarts (onVisible). A 429 doubles the wait until a read succeeds.
+   */
   refresh(): void {
+    if (document.hidden) { return; }
     this.err = '';
-    const fail = (path: string) => () => { this.err = path; };
-    this.obs.status().subscribe({ next: (s) => { this.status = s; this.buildRails(s); this.buildStats(); }, error: fail('status') });
-    this.obs.agentToken().subscribe({ next: (t) => { this.agentToken = t; if (this.marketAsset === 'agent') { this.buildStats(); } }, error: () => { /* the card keeps its placeholders */ } });
-    this.obs.reads().subscribe({ next: (r) => { this.reads = r; this.buildWallet(r); this.buildStats(); if (this.chartSeries === 'obs') { this.updateChart(); } }, error: fail('reads') });
-    this.obs.pnl(this.chartHours).subscribe({ next: (p) => { this.pnl = p; this.buildPortfolio(p); this.buildPositions(p); this.updateChart(); }, error: fail('pnl') });
-    // The agents following the desk, in public; a failed read leaves the last list standing.
-    this.obs.agents().subscribe({ next: (a) => { this.agents = a.agents ?? []; this.agentsOn = a.on ?? 0; this.agentsLive = a.live ?? 0; }, error: () => undefined });
-    this.obs.market(this.chartHours).subscribe({ next: (m) => { this.obsMarket = m; this.buildStats(); if (this.chartSeries === 'obs') { this.updateChart(); } }, error: fail('market') });
-    this.obs.trades(30).subscribe({ next: (t) => { this.buildTicker(t.items); }, error: fail('trades') });
-    this.obs.feed(8).subscribe({ next: (f) => { this.feed = f.items.slice(0, 6); }, error: fail('feed') });
+    this.obs.dashboard(this.chartHours, 30, 8).subscribe({
+      next: (d) => { this.applyDashboard(d); this.scheduleRefresh(null); },
+      error: (e: { status?: number }) => { this.err = 'dashboard'; this.scheduleRefresh(e?.status ?? 0); }
+    });
+    this.refreshAssetMarkets();
+  }
+
+  /** The next read, on the clock: fifteen seconds after a success, doubling on a 429. One clock, whichever read last set it. */
+  private scheduleRefresh(failedStatus: number | null): void {
+    if (this.destroyed) { return; }
+    this.refreshEveryMs = nextRefreshMs(this.refreshEveryMs, failedStatus);
+    if (this.refreshClock) { clearTimeout(this.refreshClock); }
+    this.refreshClock = setTimeout(() => { this.refreshClock = undefined; this.refresh(); }, this.refreshEveryMs);
+  }
+
+  /**
+   * The one read fanned out to the fields each route filled before. A part the API could not read is null: that
+   * panel keeps its last value and the footer names the part, as it named the route before. The agent's token and
+   * the agents list never raise the footer: the card keeps its placeholders, the list stands.
+   */
+  private applyDashboard(d: ObsDashboard): void {
+    const missing = (['status', 'reads', 'pnl', 'market', 'trades', 'feed'] as const).filter((k) => !d[k]);
+    if (missing.length) { this.err = missing.join(', '); }
+    if (d.status) { this.status = d.status; this.buildRails(d.status); }
+    if (d.agentToken) { this.agentToken = d.agentToken; }
+    if (d.reads) { this.reads = d.reads; this.buildWallet(d.reads); }
+    if (d.pnl) { this.pnl = d.pnl; this.buildPortfolio(d.pnl); this.buildPositions(d.pnl); }
+    if (d.agents) { this.agents = d.agents.agents ?? []; this.agentsOn = d.agents.on ?? 0; this.agentsLive = d.agents.live ?? 0; }
+    if (d.market) { this.obsMarket = d.market; }
+    if (d.trades) { this.buildTicker(d.trades.items); }
+    if (d.feed) { this.feed = d.feed.items.slice(0, 6); }
+    this.buildStats();
+    this.updateChart();
+  }
+
+  /**
+   * CoinGecko's rows for the strip's other assets, read from the browser and not through the desk: the desk's own
+   * CoinGecko budget marks its book, and CoinGecko counts by address. Asked only while the strip shows one of those
+   * assets, once a minute, and at once when the strip switches to one it has no row for; it was asked every fifteen
+   * seconds by every viewer whatever the strip showed (2026-09-08).
+   */
+  private refreshAssetMarkets(now = false): void {
+    if (this.marketAsset === 'obs' || this.marketAsset === 'agent') { return; }
+    if (!now && Date.now() - this.cgAt < CG_EVERY_MS) { return; }
+    this.cgAt = Date.now();
     this.obs.assetMarkets().subscribe({
       next: (rows) => {
         const map: { [id: string]: MarketAssetId } = {
@@ -287,6 +345,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.marketAsset = id;
     this.assetMenuOpen = false;
     this.buildStats();
+    this.refreshAssetMarkets(!this.cg[id]);
   }
 
   get marketAssetLabel(): string {
@@ -308,8 +367,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
 
   setRange(h: number): void {
     this.chartHours = h;
-    this.obs.pnl(h).subscribe({ next: (p) => { this.pnl = p; this.buildPortfolio(p); this.buildPositions(p); this.updateChart(); } });
-    this.obs.market(h).subscribe({ next: (m) => { this.obsMarket = m; this.buildStats(); this.updateChart(); } });
+    // One read at the new range, the same read the clock makes; it also puts the clock back to now.
+    this.refresh();
   }
 
   copyAddress(): void {
@@ -1262,7 +1321,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.lastThoughtAt = t.at;
     this.push(this.cycleLines(t, true, true));
     if (this.refreshTimer) { clearTimeout(this.refreshTimer); }
-    this.refreshTimer = setTimeout(() => this.zone.run(() => this.refresh()), 3000);
+    this.refreshTimer = setTimeout(() => this.zone.run(() => this.refresh()), EVENT_REFRESH_MS);
   }
 
   /** One line of research: what the desk learned about a token, as it learned it. */
@@ -1321,7 +1380,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.lastTradeAt = at;
     this.push([this.tradeLine(x, true)]);
     if (this.refreshTimer) { clearTimeout(this.refreshTimer); }
-    this.refreshTimer = setTimeout(() => this.zone.run(() => this.refresh()), 3000);
+    this.refreshTimer = setTimeout(() => this.zone.run(() => this.refresh()), EVENT_REFRESH_MS);
   }
 
   // ---- formatting ------------------------------------------------------

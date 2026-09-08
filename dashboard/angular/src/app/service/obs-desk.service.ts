@@ -307,6 +307,23 @@ export interface ObsMarket {
 
 export interface ObsItems<T> { items: T[]; at: number; }
 
+/**
+ * `/api/obs/dashboard`: every payload the Agent page polls, in one object (since September 8). Each part is exactly
+ * what its own endpoint answers (`status` is `/api/obs/status`, `pnl` is `/api/obs/pnl?hours=`, and so on), or null
+ * when that one read failed; the API assembles it once and shares it with every viewer for five seconds.
+ */
+export interface ObsDashboard {
+  status: ObsStatus | null;
+  agentToken: ObsAgentToken | null;
+  reads: ObsReads | null;
+  pnl: ObsPnl | null;
+  agents: ObsAgents | null;
+  market: ObsMarket | null;
+  trades: ObsItems<ObsTrade> | null;
+  feed: ObsItems<ObsFeedItem> | null;
+  at: number;
+}
+
 /** One row of CoinGecko's /coins/markets, for the Market asset switcher. */
 export interface CgMarket {
   id: string;
@@ -456,6 +473,15 @@ export class ObsDeskService {
   /** `/api/obs/console/door?address=`: whether this wallet may use the console, the same door sign-in uses. The site's header lights the Console link with it. */
   door(address: string): Observable<{ ok: boolean; open: boolean; mode?: string; reason?: string }> {
     return this.http.get<{ ok: boolean; open: boolean; mode?: string; reason?: string }>(`${this.base}/api/obs/console/door`, { params: { address } });
+  }
+
+  /**
+   * The Agent page's one read: `status`, `agentToken`, `reads`, `pnl`, `agents`, `market`, `trades` and `feed` in one
+   * object, each as its own endpoint answers it or null. Until 2026-09-08 the page asked for each of them on its own,
+   * every fifteen seconds: thirty-six requests a minute from one idle tab.
+   */
+  dashboard(hours = 168, trades = 30, feed = 8): Observable<ObsDashboard> {
+    return this.http.get<ObsDashboard>(`${this.base}/api/obs/dashboard`, { params: { hours, trades, feed } });
   }
 
   status(): Observable<ObsStatus> {
