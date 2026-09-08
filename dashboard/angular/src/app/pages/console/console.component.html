@@ -67,7 +67,7 @@
       <pre class="cli__out cli__out--error" *ngIf="agentError">{{ agentError }}</pre>
     </div>
 
-    <!-- The command menu: what "/" can do, each in a few words. Arrow keys move, Enter picks, Escape closes. -->
+    <!-- The command menu: what "/" can do, each in a few words. Arrow keys move, Tab picks, Enter sends a command typed in full or picks one typed in part, Escape closes. -->
     <div class="cli__menu" *ngIf="menu.length" role="listbox" aria-label="Commands">
       <button type="button" *ngFor="let m of menu; let i = index" class="cli__menu-item" [class.cli__menu-item--on]="i === menuAt" role="option" [attr.aria-selected]="i === menuAt" (mousedown)="$event.preventDefault()" (click)="pickMenu(m)">
         <span class="cli__menu-cmd">/{{ m.cmd }}</span>

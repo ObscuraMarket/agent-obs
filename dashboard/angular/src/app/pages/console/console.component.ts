@@ -276,6 +276,10 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     if (this.menu.length) {
       if (ev.key === 'ArrowDown') { ev.preventDefault(); this.menuAt = (this.menuAt + 1) % this.menu.length; return; }
       if (ev.key === 'ArrowUp') { ev.preventDefault(); this.menuAt = (this.menuAt - 1 + this.menu.length) % this.menu.length; return; }
+      // A command typed in full sends on Enter, as typed: the menu is a hint, never a gate. With the menu picking
+      // instead, "/size" then Enter only filled the line in and waited for a second Enter (2026-09-08). Enter on a
+      // part of a command still completes it from the menu, and Tab always does.
+      if (ev.key === 'Enter' && this.menu.some((m) => m.cmd === el.value.slice(1).toLowerCase())) { this.menu = []; return; }
       if (ev.key === 'Enter' || ev.key === 'Tab') { ev.preventDefault(); this.pickMenu(this.menu[this.menuAt]); return; }
       if (ev.key === 'Escape') { ev.preventDefault(); this.menu = []; return; }
     }
