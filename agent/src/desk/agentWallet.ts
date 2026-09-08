@@ -116,6 +116,9 @@ function agentAccount(address: string, env: NodeJS.ProcessEnv = process.env, row
     void page("cycle", seedAlertText(address, bad), now).catch(() => { /* raiseAlert never throws; a stand-in might */ });
     throw new WalletDerivationError(address);
   }
+  // Every derivation that passes is remembered, once: until 2026-09-08 only the /wallet command wrote the row, so a
+  // wallet shown by ensure, funded through the page or trading live had nothing for the seed guard to hold against.
+  rememberWallet(address, account.address, rows, now);
   return account;
 }
 
@@ -375,6 +378,18 @@ async function tokenUsd(token: Asset, amount: number, now: number): Promise<numb
 export async function withdrawToken(address: string, symbol: string, now = Date.now()): Promise<{ ok: true; hash: `0x${string}`; amount: number; symbol: string; explorerUrl: string } | { ok: false; reason: string }> {
   if (!walletsOn()) return { ok: false, reason: "Agent wallets aren't switched on here yet." };
   if (!isAddress(address)) return { ok: false, reason: "no wallet to send to" };
+  // Under the wallet's lock like the ETH withdrawal: this signs from the wallet the mirror's exit signs from, and the
+  // two raced on the nonce until 2026-09-08.
+  const release = acquire(address, "withdraw-token");
+  if (!release) return { ok: false, reason: "your agent is in the middle of a trade; try again in a moment" };
+  try {
+    return await sendTokenWithdrawal(address, symbol, now);
+  } finally {
+    release();
+  }
+}
+
+async function sendTokenWithdrawal(address: `0x${string}`, symbol: string, now: number): Promise<{ ok: true; hash: `0x${string}`; amount: number; symbol: string; explorerUrl: string } | { ok: false; reason: string }> {
   const pick = pickToken(symbol);
   if (!pick.ok) return pick;
   const token = pick.token;
@@ -415,6 +430,17 @@ export async function withdrawToken(address: string, symbol: string, now = Date.
 export async function sellToken(address: string, symbol: string, now = Date.now()): Promise<{ ok: true; trade: Trade } | { ok: false; reason: string }> {
   if (!walletsOn()) return { ok: false, reason: "Agent wallets aren't switched on here yet." };
   if (!isAddress(address)) return { ok: false, reason: "no wallet signed in" };
+  // Under the wallet's lock like a withdrawal: a manual sale and the mirror's exit signed from one wallet at once until 2026-09-08.
+  const release = acquire(address, "sell");
+  if (!release) return { ok: false, reason: "your agent is in the middle of a trade; try again in a moment" };
+  try {
+    return await sellTokenNow(address, symbol, now);
+  } finally {
+    release();
+  }
+}
+
+async function sellTokenNow(address: `0x${string}`, symbol: string, now: number): Promise<{ ok: true; trade: Trade } | { ok: false; reason: string }> {
   const pick = pickToken(symbol);
   if (!pick.ok) return pick;
   const token = pick.token;

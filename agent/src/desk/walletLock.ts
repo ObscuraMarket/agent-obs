@@ -7,7 +7,7 @@
 // for what.
 //
 // Advisory, the way the cycle's own lock is (cycle.ts): a lock whose process is gone, or older than
-// OBS_WALLET_LOCK_MIN minutes (three unless set), is stale and taken over, so a crash mid-send never freezes a
+// OBS_WALLET_LOCK_MIN minutes (ten unless set), is stale and taken over, so a crash mid-send never freezes a
 // wallet. The rule for "held" is pure and tested; the file work is the thin part.
 import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,9 +15,11 @@ import { dataPath } from "../config.ts";
 
 export interface LockRecord { pid: number; at: number; what: string }
 
-export const DEFAULT_LOCK_MIN = 3;
+// Ten minutes: a first exit (two approvals then the swap, each waiting for its receipt) took eight, and a three-minute
+// window let a withdrawal in mid-swap (audit, 2026-09-08).
+export const DEFAULT_LOCK_MIN = 10;
 
-/** PURE: how long a lock counts as held, in milliseconds (OBS_WALLET_LOCK_MIN): three minutes unless set to a positive number. */
+/** PURE: how long a lock counts as held, in milliseconds (OBS_WALLET_LOCK_MIN): ten minutes unless set to a positive number. */
 export function lockStaleMs(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.OBS_WALLET_LOCK_MIN ?? DEFAULT_LOCK_MIN);
   return (Number.isFinite(n) && n > 0 ? n : DEFAULT_LOCK_MIN) * 60e3;

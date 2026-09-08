@@ -2,7 +2,7 @@
 # The hosted runner: one process that does what launchd does on a Mac. It
 # restores the ledgers from the private memory repo on first boot, provisions
 # the personas on the gateway, serves the read-only API, and runs the desk
-# cycle on an interval with the daily memory backup behind it. The voice
+# cycle on an interval with the hourly memory backup behind it. The voice
 # loops stay off unless OBS_VOICE=on. Nothing here arms execution: that is
 # OBS_TRADING=on plus a mounted key, both the operator's, never this file's.
 set -u

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { staleVerdict, cycleVerdict, dueNow, webhookRequest, alertRulesFromEnv, parseBackupFailure, backupVerdict, BACKUP_FAILED_FILE, type AlertRow } from "../src/desk/alerts.ts";
+import { staleVerdict, cycleVerdict, dueNow, webhookRequest, alertRulesFromEnv, parseBackupFailure, backupVerdict, backupAgeVerdict, BACKUP_FAILED_FILE, type AlertRow } from "../src/desk/alerts.ts";
 
 const T0 = Date.UTC(2026, 8, 8, 1, 0);
 
@@ -71,6 +71,23 @@ test("the webhook gets JSON for Discord and Slack and plain text for anything el
 });
 
 test("the rules come from the environment with the defaults a desk needs", () => {
-  assert.deepEqual(alertRulesFromEnv({} as NodeJS.ProcessEnv), { webhook: "", staleMin: 10, cooldownMin: 30 });
-  assert.deepEqual(alertRulesFromEnv({ OBS_ALERT_WEBHOOK: " https://ntfy.sh/x ", OBS_ALERT_STALE_MIN: "5", OBS_ALERT_COOLDOWN_MIN: "nope" } as NodeJS.ProcessEnv), { webhook: "https://ntfy.sh/x", staleMin: 5, cooldownMin: 30 });
+  assert.deepEqual(alertRulesFromEnv({} as NodeJS.ProcessEnv), { webhook: "", staleMin: 10, cooldownMin: 30, backupMaxAgeMin: 180 });
+  assert.deepEqual(alertRulesFromEnv({ OBS_ALERT_WEBHOOK: " https://ntfy.sh/x ", OBS_ALERT_STALE_MIN: "5", OBS_ALERT_COOLDOWN_MIN: "nope" } as NodeJS.ProcessEnv), { webhook: "https://ntfy.sh/x", staleMin: 5, cooldownMin: 30, backupMaxAgeMin: 180 });
+});
+
+test("an alert with a key is due per thing, not per kind: one agent's refused exit no longer silences another's", () => {
+  const T = Date.UTC(2026, 8, 8, 15, 0, 0);
+  const rows = [{ at: T, kind: "exit" as const, text: "wallet a, PORT", key: "0xa PORT" }];
+  assert.equal(dueNow("exit", rows, T + 60e3, 30, "0xa PORT"), false, "the same wallet and token waits out the cooldown");
+  assert.equal(dueNow("exit", rows, T + 60e3, 30, "0xb PORT"), true, "another wallet's exit of the same token goes out");
+  assert.equal(dueNow("exit", rows, T + 60e3, 30, "0xa ECHELON"), true, "the same wallet's other token goes out");
+  assert.equal(dueNow("exit", rows, T + 60e3, 30), false, "without a key the kind's last alert still counts");
+});
+
+test("a backup's age is a reason once it is past the bar, from never on a fresh volume, and nothing where backups are not configured", () => {
+  const T = Date.UTC(2026, 8, 8, 15, 0, 0);
+  assert.equal(backupAgeVerdict(T - 100 * 60e3, T, 180, true), null, "100 minutes is inside a 180-minute bar");
+  assert.match(backupAgeVerdict(T - 230 * 60e3, T, 180, true) ?? "", /last landed 230 min ago, past the 180 min bar/);
+  assert.match(backupAgeVerdict(null, T, 180, true) ?? "", /no memory backup has landed on this volume yet/);
+  assert.equal(backupAgeVerdict(null, T, 180, false), null, "a machine without backups configured has nothing to say");
 });

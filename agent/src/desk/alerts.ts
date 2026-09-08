@@ -11,7 +11,7 @@ import { appendLedger, readLedger } from "../ledger.ts";
 import { DRY, dataPath } from "../config.ts";
 
 export type AlertKind = "stale" | "cycle" | "exit" | "backup";
-export interface AlertRow { at: number; kind: AlertKind; text: string }
+export interface AlertRow { at: number; kind: AlertKind; text: string; /** What the alert is about, when a kind can be about many things at once: a wallet and a token for an exit. */ key?: string }
 /** What scripts/_obs-backup.sh leaves behind while its last run failed: when, which step, and what git said. */
 export interface BackupFailure { at: number; step: string; error: string }
 /** The marker file, in the data directory; absent while the last backup landed. */
@@ -23,12 +23,14 @@ export interface AlertRules {
   staleMin: number;
   /** One alert of a kind per this many minutes (OBS_ALERT_COOLDOWN_MIN). */
   cooldownMin: number;
+  /** A backup older than this many minutes is raised while backups are configured (OBS_BACKUP_MAX_AGE_MIN). */
+  backupMaxAgeMin: number;
 }
 export const ALERTS_LEDGER = "obs-alerts.jsonl";
 
 export function alertRulesFromEnv(env: NodeJS.ProcessEnv = process.env): AlertRules {
   const n = (k: string, d: number) => { const v = Number(env[k]); return Number.isFinite(v) && v > 0 ? v : d; };
-  return { webhook: (env.OBS_ALERT_WEBHOOK ?? "").trim(), staleMin: n("OBS_ALERT_STALE_MIN", 10), cooldownMin: n("OBS_ALERT_COOLDOWN_MIN", 30) };
+  return { webhook: (env.OBS_ALERT_WEBHOOK ?? "").trim(), staleMin: n("OBS_ALERT_STALE_MIN", 10), cooldownMin: n("OBS_ALERT_COOLDOWN_MIN", 30), backupMaxAgeMin: n("OBS_BACKUP_MAX_AGE_MIN", 180) };
 }
 
 /** PURE: the live watch's silence as a reason, or null while it is looking. A watch that never wrote is not stale: it has not started. */
@@ -66,6 +68,28 @@ export function backupVerdict(f: BackupFailure | null, now: number): string | nu
   return `the memory backup failed at its ${f.step} step ${ago}: ${why}; the ledgers are not leaving this machine until it is fixed (FORCE=1 bash scripts/_obs-backup.sh retries now)`;
 }
 
+/** The stamp scripts/_obs-backup.sh writes when a backup lands: seconds since the epoch, in the data directory. */
+export const BACKUP_STAMP_FILE = ".backup-stamp";
+export function readBackupStampMs(): number | null {
+  const p = dataPath(BACKUP_STAMP_FILE);
+  if (!existsSync(p)) return null;
+  try { const n = Number(readFileSync(p, "utf8").trim()); return Number.isFinite(n) && n > 0 ? n * 1000 : null; } catch { return null; }
+}
+
+/**
+ * PURE: a backup that has not landed for too long as a reason, or null. Only where backups are configured; a volume
+ * with no stamp yet counts from never. The follower ledgers went unbacked for an afternoon behind a 20-hour throttle
+ * with nothing to say so (audit, 2026-09-08).
+ */
+export function backupAgeVerdict(stampMs: number | null, now: number, maxAgeMin: number, configured: boolean): string | null {
+  if (!configured) return null;
+  const how = "the ledgers are not leaving this machine (FORCE=1 bash scripts/_obs-backup.sh runs one now)";
+  if (stampMs == null) return `no memory backup has landed on this volume yet; ${how}`;
+  const ageMin = Math.floor((now - stampMs) / 60e3);
+  if (ageMin < maxAgeMin) return null;
+  return `the memory backup last landed ${ageMin} min ago, past the ${maxAgeMin} min bar; ${how}`;
+}
+
 /** The backup marker off the data directory; null when there is none. */
 export function readBackupFailure(): BackupFailure | null {
   const p = dataPath(BACKUP_FAILED_FILE);
@@ -73,9 +97,12 @@ export function readBackupFailure(): BackupFailure | null {
   try { return parseBackupFailure(readFileSync(p, "utf8")); } catch { return null; }
 }
 
-/** PURE: whether a kind may be raised now, given when it last was. */
-export function dueNow(kind: AlertKind, rows: AlertRow[], now: number, cooldownMin: number): boolean {
-  const last = rows.filter((r) => r.kind === kind).map((r) => r.at).sort().pop();
+/**
+ * PURE: whether a kind may be raised now, given when it last was. With a key, only alerts of the same kind about the
+ * same thing count: one agent's refused exit silenced every other agent's for half an hour until 2026-09-08.
+ */
+export function dueNow(kind: AlertKind, rows: AlertRow[], now: number, cooldownMin: number, key?: string): boolean {
+  const last = rows.filter((r) => r.kind === kind && (key == null || r.key === key)).map((r) => r.at).sort().pop();
   return last == null || now - last >= cooldownMin * 60e3;
 }
 
@@ -102,10 +129,10 @@ export function recentAlerts(now = Date.now(), hours = 24): AlertRow[] {
  * Raise an alert: once per kind per cooldown, to the ledger, the log and the webhook. Never throws; a webhook that
  * is down is a log line, not a failure of the desk. Returns whether it went out.
  */
-export async function raiseAlert(kind: AlertKind, text: string, now = Date.now(), rules: AlertRules = alertRulesFromEnv(), fetchFn: typeof fetch = fetch): Promise<boolean> {
+export async function raiseAlert(kind: AlertKind, text: string, now = Date.now(), rules: AlertRules = alertRulesFromEnv(), fetchFn: typeof fetch = fetch, key?: string): Promise<boolean> {
   if (DRY) return false;
-  if (!dueNow(kind, readAlerts(), now, rules.cooldownMin)) return false;
-  appendLedger(ALERTS_LEDGER, { at: now, kind, text });
+  if (!dueNow(kind, readAlerts(), now, rules.cooldownMin, key)) return false;
+  appendLedger(ALERTS_LEDGER, { at: now, kind, text, ...(key ? { key } : {}) });
   console.error(`[alert] ${kind}: ${text}`);
   if (!rules.webhook) return true;
   try {

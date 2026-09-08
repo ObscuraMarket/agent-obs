@@ -152,3 +152,38 @@ the pool, then verdicts, problems first. Read-only. With `--order` and
 partner's minimum, reads it back, checks the deposit address, and sends
 nothing to it; an unfunded order expires on its own.
 
+
+## 11. Followers: other people's money
+
+Since 2026-09-08 outside users run agents that trade real money from wallets the desk derives and signs for. Three
+procedures, in the order you will need them.
+
+**Seed custody.** `OBS_AGENT_WALLET_SEED` on the desk service derives every agent wallet from the seed and the
+person's signing address; it is never stored anywhere else. Keep two offline copies under your own control (paper
+or a hardware note, never a cloud document), written by hand from the Railway variable, never echoed into a
+terminal or a log. Never rotate it while any agent wallet holds a balance: a new seed derives new, empty wallets and
+the old ones go quiet with their funds inside. If a page says an agent wallet cannot be derived (the desk remembers
+one address in obs-agent-wallets.jsonl and today's seed derives another), the seed was changed: put the previous
+seed back and the wallets are found again; nothing on chain has moved.
+
+**A user says funds are missing.** Read their book first: `/agent` and `/wallet` in the console, or
+`GET /api/obs/agents/<agent wallet>` for the same view anyone sees. Then the chain: the agent wallet's page on
+https://robinhoodchain.blockscout.com shows every transfer in and out. The ledgers to hold against it are
+obs-agent-capital.jsonl (fundings and withdrawals the desk recorded), obs-follow-trades.jsonl (every trade it made
+for them) and obs-follow-notes.jsonl (every leg it skipped, refused or failed, with the reason). A withdrawal only
+ever goes to the wallet that signed in, so "missing" funds are one of: a funding sent from a different wallet than
+the one signed in (recorded on chain, not in the ledger; /wallet still shows the balance), a token the desk sold
+that the wallet still holds (see the stuck mirror below), or gas. If the desk is down and cannot come back, pay
+them from the wallet directly: on a machine you trust, with the seed in the environment for one command,
+`npx tsx scripts/deriveAgentWallet.ts 0x<their signing address> --key` prints the agent wallet's private key;
+import it into a wallet and send everything to the address they signed in with.
+
+**A stuck mirror.** The sign: a follower's book shows a token the desk no longer holds. The causes, in the notes:
+an exit leg skipped (the wallet was busy), refused (a rail, a route, no gas), failed (a revert, a timeout), or cut
+by a redeploy mid-leg. The owner can sell it at any time with `/sell SYMBOL` in the console, and that is the first
+answer. Trading switched off (`OBS_TRADING=off`) refuses follower exits too, so switch it back on before asking
+anyone to sell. The exit alerts (one per wallet and token per half hour) name the wallet and the reason.
+
+**Backups.** The ledgers above leave the box hourly, to the private memory repo; `GET /api/obs/health` carries
+`backup.ageMin`, and an alert is raised when it passes `OBS_BACKUP_MAX_AGE_MIN` (180) or the checkout is missing.
+`FORCE=1 bash scripts/_obs-backup.sh` runs one now; a redeploy runs one at boot.

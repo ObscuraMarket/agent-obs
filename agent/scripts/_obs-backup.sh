@@ -24,10 +24,18 @@ FAILED="$DATA/obs-backup-failed.json"
 export GIT_TERMINAL_PROMPT=0
 
 if [ -z "$MEM" ] || [ ! -d "$MEM/.git" ]; then
-  echo "obs memory: no private memory checkout configured (OBS_MEMORY_REPO_DIR), skipping backup"
-  exit 0
+  # A missing checkout is a failed backup, marked for the health route like a refused push: it exited quietly
+  # while the followers' ledgers went unbacked for an afternoon (audit, 2026-09-08). Skipped only where backups
+  # were never configured at all (no directory and no URL), which is a development machine.
+  if [ -z "$MEM" ] && [ -z "${OBS_MEMORY_REPO_URL:-}" ]; then echo "obs memory: no private memory checkout configured (OBS_MEMORY_REPO_DIR), skipping backup"; exit 0; fi
+  echo "obs memory: the checkout at ${MEM:-<unset>} is missing; the ledgers are not leaving this machine" >&2
+  printf '{"at":%s000,"step":"checkout","error":"no memory checkout at %s; the clone at boot did not happen"}\n' "$(date +%s)" "${MEM:-<unset>}" > "$FAILED"
+  exit 1
 fi
-if [ "$FORCE" != "1" ] && [ -f "$STAMP" ] && [ $(( $(date +%s) - $(cat "$STAMP" 2>/dev/null || echo 0) )) -lt 72000 ]; then
+# Hourly, not daily: with outside users' agents trading real money, the follow ledgers (who follows, at what size,
+# each agent wallet's record, every funding and trade) changed all afternoon while the 20-hour throttle held the
+# last backup at 11:00Z (2026-09-08). The runner calls this every 30 minutes; 55 minutes here makes it hourly.
+if [ "$FORCE" != "1" ] && [ -f "$STAMP" ] && [ $(( $(date +%s) - $(cat "$STAMP" 2>/dev/null || echo 0) )) -lt 3300 ]; then
   exit 0
 fi
 
@@ -103,8 +111,8 @@ fi
 NOW="$(date +%s)"
 if [ -n "$FAIL_STEP" ]; then
   printf '{"at":%s000,"step":"%s","error":"%s"}\n' "$NOW" "$(json_text "$FAIL_STEP")" "$(json_text "$FAIL_ERROR")" > "$FAILED"
-  # Try again in an hour, not tomorrow: the stamp is backdated so the throttle opens sooner.
-  echo $(( NOW - 72000 + 3600 )) > "$STAMP"
+  # Try again in fifteen minutes, not in an hour: the stamp is backdated so the throttle opens sooner.
+  echo $(( NOW - 3300 + 900 )) > "$STAMP"
   exit 1
 fi
 rm -f "$FAILED"

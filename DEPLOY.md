@@ -162,3 +162,21 @@ into `OBS_WALLET_JSON`, written to the wallet dir at boot, and sets
 endpoint first; the public RPC throttles. Two desks must never run against one wallet:
 when Railway is the desk, the Mac's desk timers come down.
 
+### The follower variables
+
+Set on the desk service once agents trade real money (2026-09-08). Each is documented in agent/.env.example.
+
+| Variable | What it does | Today |
+|---|---|---|
+| OBS_AGENT_WALLET_SEED | derives every agent wallet; custody itself, see RUNBOOK section 11 | set, escrowed offline |
+| OBS_FOLLOW_LIVE | off stops every agent's live trading at once | on |
+| OBS_FOLLOW_MAX_USD | the most an agent may put into one entry; blank is the desk's own cap | blank (200) |
+| OBS_FOLLOW_PARALLEL | agents mirrored at once after a desk trade | 4 |
+| OBS_FUND_CONFIRMATIONS | blocks before a funding is recorded | 2 |
+| OBS_WALLET_LOCK_MIN | how long one wallet's trade or withdrawal holds the wallet | 10 |
+| OBS_CONSOLE_GATE, OBS_CONSOLE_ALLOWLIST | who may sign in: holders, or the list only | allowlist |
+| OBS_AGENTS_HIDDEN | signing addresses kept off the public Agents board (the operator's test agents) | set |
+| OBS_SESSION_SECRET | signs the console's bearers; unset means a redeploy signs everyone out | check it is set |
+| OBS_ALERT_WEBHOOK | where alerts go (an ntfy topic) | set |
+| OBS_BACKUP_MAX_AGE_MIN | a backup older than this raises an alert | 180 |
+| OBS_MEMORY_REPO_DIR, OBS_MEMORY_REPO_URL | the private ledger backup, cloned at boot and pushed hourly | set |

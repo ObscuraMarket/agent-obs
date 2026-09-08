@@ -24,7 +24,7 @@ import { readThoughts, type Thought } from "./desk/thoughts.ts";
 import { digestThought, watchEvent, type WatchEvent } from "./desk/digest.ts";
 import { readResearch } from "./desk/research.ts";
 import { readScout } from "./desk/scout.ts";
-import { recentAlerts, raiseAlert, staleVerdict, backupVerdict, readBackupFailure, alertRulesFromEnv } from "./desk/alerts.ts";
+import { recentAlerts, raiseAlert, staleVerdict, backupVerdict, readBackupFailure, readBackupStampMs, backupAgeVerdict, alertRulesFromEnv } from "./desk/alerts.ts";
 import { readAgentToken, rememberAgentTokenRead, lastAgentTokenPrice, type AgentTokenRead } from "./desk/agentToken.ts";
 import { AGENT_TOKEN, AGENT_TOKEN_SYMBOL } from "./config.ts";
 
@@ -1153,7 +1153,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     // uptime check can read the word off the body. The latest alerts ride along.
     const beat = livePayload() as { at?: number; lastCycleAt?: number | null; lastCycleCode?: number | null };
     const stale = staleVerdict(typeof beat.at === "number" ? beat.at : null, now, alertRulesFromEnv().staleMin);
-    json(res, 200, { status: stale ? "stale" : "ok", at: now, ...(stale ? { reason: stale } : {}), live: { at: beat.at ?? null, lastCycleAt: beat.lastCycleAt ?? null, lastCycleCode: beat.lastCycleCode ?? null }, alerts: recentAlerts(now) });
+    // When the ledgers last left this machine, so an outside check can read the backup's age off the body.
+    const stampMs = readBackupStampMs();
+    json(res, 200, { status: stale ? "stale" : "ok", at: now, ...(stale ? { reason: stale } : {}), backup: { at: stampMs, ageMin: stampMs == null ? null : Math.floor((now - stampMs) / 60e3), configured: !!process.env.OBS_MEMORY_REPO_DIR }, live: { at: beat.at ?? null, lastCycleAt: beat.lastCycleAt ?? null, lastCycleCode: beat.lastCycleCode ?? null }, alerts: recentAlerts(now) });
     return;
   }
   if (path === "/api/obs/status") {
@@ -1888,6 +1890,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     const now = Date.now();
     const backup = backupVerdict(readBackupFailure(), now);
     if (backup) void raiseAlert("backup", backup, now);
+    // A backup that simply has not run is as silent as a refused one: the age is checked on the same clock.
+    const age = backupAgeVerdict(readBackupStampMs(), now, alertRulesFromEnv().backupMaxAgeMin, !!process.env.OBS_MEMORY_REPO_DIR);
+    if (age) void raiseAlert("backup", age, now);
     if (!railsFromEnv().tradingOn) return;
     const beat = livePayload() as { at?: number };
     const stale = staleVerdict(typeof beat.at === "number" ? beat.at : null, now, alertRulesFromEnv().staleMin);

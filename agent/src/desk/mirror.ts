@@ -82,6 +82,10 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
   if (!liveOn()) return;
   if (deskTrade.status !== "settled" && deskTrade.status !== "pending") return;
   const isExit = !!intent.exit;
+  // An entry the desk itself has no receipt for is not mirrored: a pending buy that later reverts would have put
+  // every follower into a token the desk never held and never sells (audit, 2026-09-08). Exits still run on a
+  // pending desk sell, since what a follower holds must leave whatever the desk's own receipt says.
+  if (!isExit && deskTrade.status !== "settled") { console.log(`[follow] the desk's ${intent.to.symbol} entry has no receipt yet; no agent mirrors it`); return; }
   const rows = readFollow();
   if (!rows.length) return;
   const tradeRows: FollowTradeRow[] = readFollowTrades();
@@ -102,7 +106,7 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
         const busy = "the agent's wallet is busy with a withdrawal or another trade";
         recordFollowNote(address, deskTrade.id, `${isExit ? "exit" : "entry"} of ${symbol} skipped: ${busy}`, now);
         // A skipped exit is someone else's money still in the token, the same as a refused one: the operator hears.
-        if (isExit) await raiseAlert("exit", `an agent's exit of ${symbol} was skipped (wallet ${address.slice(0, 8)}): ${busy}`, now);
+        if (isExit) await raiseAlert("exit", `an agent's exit of ${symbol} was skipped (wallet ${address.slice(0, 8)}): ${busy}`, now, undefined, undefined, `${address.toLowerCase()} ${symbol}`);
         return;
       }
       const w = agentWallet(address);
@@ -130,13 +134,15 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
         else {
           recordFollowNote(address, deskTrade.id, `exit of ${token.symbol} refused: ${r.reason}`, now);
           // Someone else's money that the desk could not get out: the operator hears about it at once.
-          await raiseAlert("exit", `an agent's exit of ${token.symbol} was refused (wallet ${address.slice(0, 8)}, ${Math.round(share * 100)}% of its holding): ${r.reason}`, now);
+          await raiseAlert("exit", `an agent's exit of ${token.symbol} was refused (wallet ${address.slice(0, 8)}, ${Math.round(share * 100)}% of its holding): ${r.reason}`, now, undefined, undefined, `${address.toLowerCase()} ${symbol}`);
         }
       }
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
       recordFollowNote(address, deskTrade.id, `mirror failed: ${why.slice(0, 160)}`, now);
       console.error(`[follow] mirror for ${address.slice(0, 8)} failed: ${why}`);
+      // A thrown exit is someone else's money still in the token, the same as a refused one; until 2026-09-08 it was a note only.
+      if (isExit) await raiseAlert("exit", `an agent's exit of ${symbol} failed (wallet ${address.slice(0, 8)}): ${why.slice(0, 200)}`, now, undefined, undefined, `${address.toLowerCase()} ${symbol}`).catch(() => undefined);
     } finally {
       release?.();
     }
