@@ -1,0 +1,48 @@
+# The gate on the code: every push and every pull request typechecks agent/, runs its tests and walks the console
+# against a server the walk starts itself, on a throwaway data dir with the gate off and no secrets. Each step fails
+# the job on its own exit code: a type error and a failing test reached the desk on 2026-09-07 through checks that
+# were piped and so never gated. The walk is the one step that waits on a server, so it alone is held to ten minutes.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes the run in flight; the result that matters is the head's.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+
+      - name: Install from the lockfile
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Walk the console against a server the walk starts itself
+        run: npm run console:walk
+        timeout-minutes: 10

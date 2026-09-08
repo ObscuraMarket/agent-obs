@@ -28,6 +28,16 @@ changed() {
 [ "$1" = "--force" ] || { [ -f "$STAMP.failed" ] && [ "$(cat "$STAMP.failed")" = "$HEAD" ] && { echo "main ${HEAD:0:7} failed to deploy last time; run with --force to retry"; exit 1; }; }
 cd "$ROOT/ops/railway" || exit 1
 echo "=== main ${HEAD:0:7}, $(date) ==="
+# Nothing goes up that does not typecheck and pass its tests, --force included: a type error and a failing test
+# reached the desk on 2026-09-07 through checks that were piped and so never gated. Each check is read on its own
+# exit code, quiet when it passes and the tail when it fails. A head that fails a check is marked the way a head
+# that failed to deploy is, so the timer does not run the same failure every ten minutes; --force retries it.
+check() {
+  local out rc; out="$(cd "$ROOT/agent" && npm run --silent "$1" 2>&1)"; rc=$?
+  if [ "$rc" = 0 ]; then echo "agent: $1 passed"; return 0; fi
+  echo "agent: $1 exited $rc"; tail -n 30 <<<"$out"; return 1
+}
+if ! { check typecheck && check test; }; then echo "$HEAD" > "$STAMP.failed"; echo "main ${HEAD:0:7} does not pass its checks; nothing deployed and the stamp was not advanced"; exit 1; fi
 ok=1
 # Success is railway's own exit code, never grep's: a deploy that printed "Error" matched the grep and advanced the
 # stamp, so the job then reported "unchanged" while the old image kept running (2026-09-08).
