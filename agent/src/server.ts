@@ -54,7 +54,7 @@ import { refreshModel, modelFor, personaFor, approveTool, ensureUserAgent, strea
 import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines, agentsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
-import { holderGate, forgetHolder, gateMode } from "./desk/gate.ts";
+import { holderGate, forgetHolder, gateMode, doorNow } from "./desk/gate.ts";
 import { followState, readFollow, recordFollow, checkSize, followMaxUsd, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, liveHoldings, mirrorTrades, followEvents, type FollowMode } from "./desk/follow.ts";
 import { readEntries } from "./desk/trade-memory.ts";
 import { liveOn, canStartLive } from "./desk/mirror.ts";
@@ -457,11 +457,20 @@ function livePayload(): Record<string, unknown> {
   }
 }
 
-/** The wallet a request proves through its bearer, or null after a 401. */
+/**
+ * The wallet a request proves through its bearer, or null after a 401; and still at the door, or null after a 403.
+ * The door is asked on every signed-in call from what it already knows (the list, or a cached holder read), so a
+ * wallet taken off the list loses the console at once rather than at the end of its seven-day bearer (2026-09-08).
+ */
 function requireWallet(req: IncomingMessage, res: ServerResponse): string | null {
   const address = verifySession(bearerOf(req.headers.authorization));
   if (!address) {
     json(res, 401, { ok: false, error: "sign in with your wallet first" });
+    return null;
+  }
+  const door = doorNow(address);
+  if (door && !door.ok) {
+    json(res, 403, { ok: false, code: "not_holder", error: door.reason ?? "this wallet is not at the door any more; sign in again" });
     return null;
   }
   return address;
@@ -554,6 +563,17 @@ const DASHBOARD = join(ROOT_DIR, "..", "dashboard", "index.html");
 const STREAM_POLL_MS = 2000;
 /** How often the stream re-prices the positions from the live watch's tape. */
 const PNL_EVERY_MS = 4000;
+/** The re-priced book every stream shares: refreshed at most once per tick, by whichever stream asks first. */
+const sharedPnl: { at: number; inFlight: boolean; value: unknown; fingerprint: string } = { at: 0, inFlight: false, value: null, fingerprint: "" };
+function refreshSharedPnl(): void {
+  if (Date.now() - sharedPnl.at < PNL_EVERY_MS || sharedPnl.inFlight) return;
+  sharedPnl.inFlight = true;
+  sharedPnl.at = Date.now();
+  pnlPayload(24, Date.now(), false)
+    .then((p) => { sharedPnl.value = p; sharedPnl.fingerprint = pnlFingerprint(p as never); })
+    .catch(() => undefined)
+    .finally(() => { sharedPnl.inFlight = false; });
+}
 const STREAM_PING_MS = 25_000;
 
 /** PURE: a sliding-window request budget per client. Exported for tests. */
@@ -617,9 +637,7 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
   const firstWatch = readWatch();
   let lastWatchAt = firstWatch ? Date.now() : 0;
   let lastWatchTrigger = firstWatch?.trigger ?? null;
-  let lastPnlAt = 0;
   let lastPnlFingerprint = "";
-  let pnlInFlight = false;
   const researchHistory = readResearch(40).reverse();
   let lastResearchAt = researchHistory.length ? researchHistory[researchHistory.length - 1].at : 0;
   let researchSize = sizeOf("obs-research.jsonl");
@@ -643,14 +661,10 @@ function stream(req: IncomingMessage, res: ServerResponse, limit: number): void 
       res.write(sseFrame("watch", w));
     }
     // The positions, in real time: the book re-priced from the live watch's tape every few seconds, pushed when it moved.
-    if (Date.now() - lastPnlAt >= PNL_EVERY_MS && !pnlInFlight) {
-      lastPnlAt = Date.now();
-      pnlInFlight = true;
-      pnlPayload(24, Date.now(), false)
-        .then((p) => { const f = pnlFingerprint(p as never); if (f !== lastPnlFingerprint) { lastPnlFingerprint = f; res.write(sseFrame("pnl", p)); } })
-        .catch(() => undefined)
-        .finally(() => { pnlInFlight = false; });
-    }
+    // One book for every stream: computed once per tick and shared, where each stream once re-read every ledger
+    // for itself every four seconds (2026-09-08).
+    refreshSharedPnl();
+    if (sharedPnl.value != null && sharedPnl.fingerprint !== lastPnlFingerprint) { lastPnlFingerprint = sharedPnl.fingerprint; res.write(sseFrame("pnl", sharedPnl.value)); }
     const ts = sizeOf("obs-thoughts.jsonl");
     if (ts !== thoughtsSize) {
       thoughtsSize = ts;
@@ -929,6 +943,10 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   }
   if (path === "/api/obs/console/swap") {
     res.setHeader("Cache-Control", "no-store");
+    // The wallet the swap is counted for is the one that signed in, never one named in the body; and only a signed-in
+    // wallet may ask, where anyone once could and each ask held a receipt wait (2026-09-08).
+    const signedAddress = requireWallet(req, res);
+    if (!signedAddress) return;
     readBody(req, 4096)
       .then((text) => {
         let b: Record<string, unknown>;
@@ -938,7 +956,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           json(res, 400, { error: "the body must be JSON: {address, txHash, from, to, amountIn}" });
           return;
         }
-        return verifySwap(String(b.txHash ?? ""), String(b.address ?? ""), String(b.from ?? ""), String(b.to ?? ""), Number(b.amountIn)).then((r) =>
+        return verifySwap(String(b.txHash ?? ""), signedAddress, String(b.from ?? ""), String(b.to ?? ""), Number(b.amountIn)).then((r) =>
           r.ok ? (forgetHolder(r.swap.address), json(res, 200, { ok: true, already: r.already, swap: r.swap, standing: consoleStanding(r.swap.address) })) : json(res, 409, { ok: false, reason: r.reason }),
         );
       })
@@ -981,7 +999,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   if (path === "/api/obs/console/cli") {
     res.setHeader("Cache-Control", "no-store");
     // A guest may read the desk, take the tour, open the app's pages and quote; shaping an agent and chat need the wallet.
-    const address = verifySession(bearerOf(req.headers.authorization));
+    // A signed-in wallet is also asked at the door again: off the list, it is a guest here from that moment.
+    const signed = verifySession(bearerOf(req.headers.authorization));
+    const address = signed && doorNow(signed)?.ok === false ? null : signed;
     readBody(req, 4096).then(async (text) => {
       let b: Record<string, unknown> = {};
       try { b = JSON.parse(text) as Record<string, unknown>; } catch { /* empty body */ }
@@ -1121,7 +1141,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
             return;
           }
           if (act === "withdraw") {
-            const r = await withdrawEth(a, routed.effect.all ? "all" : (routed.effect.amount ?? 0), now);
+            // While the agent holds a token live, "all" leaves the gas reserve behind so the desk can still sell it.
+            const holdsLive = Object.values(liveHoldings(readFollowTrades(), a)).some((q) => q > 0);
+            const r = await withdrawEth(a, routed.effect.all ? "all" : (routed.effect.amount ?? 0), now, routed.effect.all && holdsLive ? railsFromEnv().gasReserveEth : 0);
             if (!r.ok) { json(res, 200, { ok: false, effect: "none", lines: [r.reason], suggest: ["/wallet", "/withdraw all"] }); return; }
             const left = await agentBalanceEth(a).catch(() => null);
             void refreshPersona(a);
@@ -1230,11 +1252,17 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
     const address = requireWallet(req, res);
     if (!address) return;
     if (req.method === "GET") { json(res, 200, { ok: true, settings: getSettings(address), name: agentDisplayName(address) }); return; }
-    readBody(req, 4096).then((text) => {
+    readBody(req, 4096).then(async (text) => {
       let b: unknown = {};
       try { b = JSON.parse(text); } catch { /* empty body */ }
       const cleaned = sanitizeSettings(b);
       if ("error" in cleaned) { json(res, 400, { ok: false, error: cleaned.error }); return; }
+      // A model set here is held to the catalog the same way /model is: an id the catalog does not list was
+      // accepted on shape alone and then charged nothing per turn (2026-09-08).
+      if (cleaned.settings.model) {
+        const cat = await catalog();
+        if (!cat.some((m) => m.id === cleaned.settings.model)) { json(res, 400, { ok: false, error: `no model called ${cleaned.settings.model} in the catalog; /models <search> lists what there is` }); return; }
+      }
       const settings = updateSettings(address, cleaned.settings);
       void refreshPersona(address);
       if ("model" in cleaned.settings) void refreshModel(address).catch((e) => console.error(`[my-agent] model for ${address}: ${e instanceof Error ? e.message : String(e)}`));
@@ -1328,7 +1356,9 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
       // The turn's price: the wallet's model at OpenRouter's rates plus the margin. Out of credits is a refusal only
       // where credits can be bought; without a treasury the desk meters and lets the turn through.
       const modelId = modelFor(address);
-      const model = await modelInfo(modelId);
+      // A model the catalog cannot price (an id that slipped in, or the catalog down) is metered as the default
+      // model rather than as free: an unpriced turn was charged zero (2026-09-08).
+      const model = (await modelInfo(modelId)) ?? (await modelInfo(DEFAULT_MODEL));
       const paid = model ? !model.free : true;
       if (paid && creditsOn() && balanceUsd(address, readCredits()) <= 0) { endTurn(address); json(res, 402, { ok: false, error: "You're out of credits. /credits shows how to add some (a thousand credits are $10 of USDG), and /models free lists models that cost nothing." }); return; }
       let replyText = "";

@@ -25,9 +25,14 @@ export const liveOn = (env: NodeJS.ProcessEnv = process.env): boolean => (env.OB
 export function entryAmountEth(sizeUsd: number, ethUsd: number, balanceEth: number, gasReserveEth: number): { amount: number } | { reason: string } {
   if (!(ethUsd > 0)) return { reason: "ETH is unpriced right now" };
   const want = sizeUsd / ethUsd;
-  const room = balanceEth - gasReserveEth;
-  if (!(room > 0) || room < want * 0.5) return { reason: `the agent's wallet holds ${balanceEth.toFixed(4)} ETH; $${sizeUsd} at $${ethUsd.toFixed(0)} an ETH needs ${want.toFixed(4)} ETH plus the ${gasReserveEth} ETH gas reserve` };
-  return { amount: Number(Math.min(want, room).toPrecision(8)) };
+  // The reserve is kept twice over: once for this entry's gas and once for the exit's, since the exit rail refuses a
+  // wallet under the reserve, and an entry sized to the reserve exactly left the wallet just under it (2026-09-08).
+  const room = balanceEth - gasReserveEth * 2;
+  if (!(room > 0) || room < want * 0.5) return { reason: `the agent's wallet holds ${balanceEth.toFixed(4)} ETH; $${sizeUsd} at $${ethUsd.toFixed(0)} an ETH needs ${want.toFixed(4)} ETH plus ${(gasReserveEth * 2).toFixed(4)} ETH of gas reserve for the round trip` };
+  // Eight significant digits, never rounded up past the room: a round-up of a wei past the reserve was refused by the rails.
+  const amt = Math.min(want, room);
+  const r8 = Number(amt.toPrecision(8));
+  return { amount: r8 > amt ? amt : r8 };
 }
 
 /**
@@ -41,8 +46,8 @@ export function canStartLive(sizeUsd: number, ethUsd: number | null, balanceEth:
   if (!(ethUsd != null && ethUsd > 0)) return { ok: false, reason: "ETH is unpriced right now; try again in a moment" };
   const r = entryAmountEth(sizeUsd, ethUsd, balanceEth, gasReserveEth);
   if ("amount" in r) return { ok: true };
-  const least = (sizeUsd / ethUsd) * 0.5 + gasReserveEth;
-  return { ok: false, reason: `Your agent's wallet holds ${balanceEth.toFixed(4)} ETH; $${sizeUsd} a trade needs at least ${least.toFixed(4)} ETH (half the size above the ${gasReserveEth} ETH gas reserve). /fund it first, or /start paper.` };
+  const least = (sizeUsd / ethUsd) * 0.5 + gasReserveEth * 2;
+  return { ok: false, reason: `Your agent's wallet holds ${balanceEth.toFixed(4)} ETH; $${sizeUsd} a trade needs at least ${least.toFixed(4)} ETH (half the size above ${(gasReserveEth * 2).toFixed(4)} ETH of gas reserve for the round trip). /fund it first, or /start paper.` };
 }
 
 /** PURE: the share of its own holding an agent sells when the desk sold `sold` of the `heldBefore` it had. */

@@ -159,7 +159,7 @@ export async function agentBalanceEth(address: string): Promise<number> {
  * Send ETH from the agent's wallet back to the wallet that signed in, and nowhere else: the destination is the
  * signed-in address by construction. "all" keeps back the gas of the transfer itself. Waits for the receipt.
  */
-export async function withdrawEth(address: string, amount: number | "all", now = Date.now()): Promise<{ ok: true; hash: `0x${string}`; amount: number; explorerUrl: string } | { ok: false; reason: string }> {
+export async function withdrawEth(address: string, amount: number | "all", now = Date.now(), keepEth = 0): Promise<{ ok: true; hash: `0x${string}`; amount: number; explorerUrl: string } | { ok: false; reason: string }> {
   if (!walletsOn()) return { ok: false, reason: "Agent wallets aren't switched on here yet." };
   if (!isAddress(address)) return { ok: false, reason: "no wallet to send to" };
   // A dust amount is a typo, and sending it would only spend gas (a 0.0000001 ETH withdrawal went out on 2026-09-08).
@@ -187,8 +187,11 @@ export async function withdrawEth(address: string, amount: number | "all", now =
   const gasCost = (gasUnits * maxFeePerGas * 5n) / 4n;
   let value: bigint;
   if (amount === "all") {
-    value = balance - gasCost;
-    if (value <= 0n) return { ok: false, reason: `Your agent's wallet holds ${formatEther(balance)} ETH, not enough to cover the transfer's gas.` };
+    // "All" keeps back what the caller asks: the exit's gas while the agent still holds a token, so a drained wallet
+    // never leaves a position it cannot sell (2026-09-08).
+    const keep = keepEth > 0 ? parseEther(keepEth.toFixed(8)) : 0n;
+    value = balance - gasCost - keep;
+    if (value <= 0n) return { ok: false, reason: keep > 0n ? `Your agent's wallet holds ${formatEther(balance)} ETH and still holds a token; ${keepEth} ETH stays for the sale's gas, which leaves nothing to send.` : `Your agent's wallet holds ${formatEther(balance)} ETH, not enough to cover the transfer's gas.` };
   } else {
     if (!(amount > 0)) return { ok: false, reason: "Say how much: /withdraw 0.02 or /withdraw all." };
     value = parseEther(amount.toFixed(8));

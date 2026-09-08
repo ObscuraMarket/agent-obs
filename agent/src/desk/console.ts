@@ -173,9 +173,11 @@ export async function verifySwap(hash: string, address: string, fromSpec: string
   const seen = readSwaps().find((s) => s.txHash.toLowerCase() === hash.toLowerCase());
   if (seen) return seen.address === address.toLowerCase() ? { ok: true, swap: seen, already: true } : { ok: false, reason: "that transaction is already counted for the address that sent it" };
   const pub = createPublicClient({ chain: viemChain(pair.from), transport: transport(pair.from) });
-  let receipt: Awaited<ReturnType<typeof pub.waitForTransactionReceipt>>;
+  // Read the receipt as it stands; never wait for one. A ninety-second wait here held a socket and an RPC round trip
+  // per request on a route anyone could call (2026-09-08). The console asks again in a moment when it has not landed.
+  let receipt: Awaited<ReturnType<typeof pub.getTransactionReceipt>>;
   try {
-    receipt = await pub.waitForTransactionReceipt({ hash, timeout: 90_000 });
+    receipt = await pub.getTransactionReceipt({ hash });
   } catch {
     return { ok: false, reason: "the transaction has not landed yet; ask for status again in a minute" };
   }

@@ -21,7 +21,14 @@ fi
 # deposited, every trade and its status, every public thought and every
 # equity mark: losing them costs the track record. The X ledgers cost a
 # duplicate reply if lost. Copy whatever exists; a missing file is fine.
-for f in "$DATA"/*-journal.jsonl "$DATA"/obs-decisions.jsonl "$DATA"/obs-thoughts.jsonl "$DATA"/obs-trades.jsonl "$DATA"/obs-capital.jsonl "$DATA"/obs-book.jsonl "$DATA"/obs-market.jsonl "$DATA"/x-posts.jsonl "$DATA"/x-replies.jsonl "$DATA"/obs-engage-state.json; do
+# Every ledger and state file, not a named few: the named list missed the credits, the agent wallets and their
+# funding, the follower trades, the accounts and the trade memory, every one of them someone's money or the
+# desk's own record (2026-09-08). Caches rebuilt from the chain (the tapes, the holder scans, the token catalogue)
+# and the live heartbeat stay out.
+for f in "$DATA"/*.jsonl "$DATA"/*.json; do
+  case "$(basename "$f")" in
+    obs-live.json|obs-known-tokens.json|obs-explorer.json|obs-launchpull.json|obs-wallet-trades.jsonl|obs-token-samples.jsonl) continue ;;
+  esac
   [ -f "$f" ] && cp -f "$f" "$MEM/"
 done
 cd "$MEM" || exit 1

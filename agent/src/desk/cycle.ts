@@ -98,7 +98,7 @@ if (!DRY) {
 // back to ETH here, and the reason is public. Only when armed.
 // What the rails sold at the top of this cycle: the wallet read below is cached and may still show it, and a token
 // sold seconds ago must not be described as held in the same breath.
-const soldThisCycle = new Set<string>();
+const soldThisCycle = new Map<string, number>();
 /** The launch tokens held right now, from the chain read the exits used; a fast tick asks the rails with it before it thinks. */
 let heldNow: string[] = [];
 if (ARMED && readTokens().length) {
@@ -114,7 +114,9 @@ if (ARMED && readTokens().length) {
       // Every real exit of the desk's is mirrored for the agents that hold the token, the same share each.
       const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0 }, undefined, now, undefined, undefined, (i, row, held) => mirrorForFollowers(i, row, held, now));
       for (const t of exits) console.log(`[desk] forced exit ${t.id} ${t.status}: ${t.note}`);
-      for (const t of exits) if (t.status === "settled" || t.status === "pending") soldThisCycle.add(t.from.asset);
+      // What was sold, by amount: a scale-out leaves the rest held, and the rest must still read as held for the
+      // remainder of this cycle. Zeroing the token on any exit told the model it held nothing after a 60% scale-out (2026-09-08).
+      for (const t of exits) if (t.status === "settled" || t.status === "pending") soldThisCycle.set(t.from.asset, (soldThisCycle.get(t.from.asset) ?? 0) + t.from.amount);
     }
   }
 }
@@ -216,7 +218,12 @@ const real = reads.wallet ? walletBalances(reads.wallet) : null;
 const paperTrades = PAPER ? readPaper() : [];
 // In a paper session the book he sees is the real wallet with the paper trades applied.
 const chain = real && PAPER ? { ...real, bySymbol: paperBalances(real.bySymbol, paperTrades), byKey: paperByKey(real.byKey, paperBalances(real.bySymbol, paperTrades)) } : real;
-if (chain) for (const sym of soldThisCycle) { chain.bySymbol[sym] = 0; chain.byKey[`${sym}@robinhood`] = 0; }
+if (chain) for (const [sym, sold] of soldThisCycle) {
+  const left = Math.max(0, (chain.bySymbol[sym] ?? 0) - sold);
+  const rest = isHolding(left) ? left : 0;
+  chain.bySymbol[sym] = rest;
+  chain.byKey[`${sym}@robinhood`] = rest;
+}
 const bookTrades = PAPER ? [...book.trades, ...paperTrades] : book.trades;
 const symbols = chain ? Object.keys(chain.bySymbol) : Object.keys(snapshot(book.flows, bookTrades, {}, now).holdings);
 // ETH and NVDA are priced every cycle whether or not they are held: the basis and the samples need them.

@@ -345,14 +345,19 @@ export function resolveObsApiUrl(): string {
     if (host === 'obscura.market' || host === 'obscura.markets') { url = 'https://obs-api.obscura.markets'; }
   } catch { /* no window: keep the environment value */ }
   try {
+    // A saved override must be one of our own API hosts, or local. Before this check any link with ?api=<host>
+    // pointed every later request, bearer included, at that host, and the setting survived reloads (2026-09-08).
+    const ours = (v: string): boolean => {
+      try { const u = new URL(v); return u.protocol === 'https:' && /(^|\.)obscura\.markets?$/.test(u.hostname) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(v); } catch { return false; }
+    };
     const q = new URLSearchParams(window.location.search).get('api');
-    if (q === 'reset') {
+    if (q === 'reset' || (q !== null && !ours(q.trim()))) {
       localStorage.removeItem(KEY);
     } else if (q !== null) {
       localStorage.setItem(KEY, q.trim());
     }
     const saved = localStorage.getItem(KEY);
-    if (saved !== null) { url = saved; }
+    if (saved !== null && ours(saved)) { url = saved; } else if (saved !== null) { localStorage.removeItem(KEY); }
   } catch { /* no window/localStorage (tests, SSR): keep the environment value */ }
   resolved = url.replace(/\/+$/, '');
   return resolved;
@@ -560,8 +565,8 @@ export class ObsDeskService {
   }
 
   /** Report a swap the person sent; the desk reads it off the chain before it counts. */
-  consoleSwap(body: { address: string; txHash: string; from: string; to: string; amountIn: number }): Observable<ObsConsoleSwapReply> {
-    return this.http.post<ObsConsoleSwapReply>(`${this.base}/api/obs/console/swap`, body);
+  consoleSwap(body: { address: string; txHash: string; from: string; to: string; amountIn: number }, token: string): Observable<ObsConsoleSwapReply> {
+    return this.http.post<ObsConsoleSwapReply>(`${this.base}/api/obs/console/swap`, body, this.bearer(token));
   }
 
   /** URL of the SSE terminal stream (hello/thought/trade events), for EventSource. */

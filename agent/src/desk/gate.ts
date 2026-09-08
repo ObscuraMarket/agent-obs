@@ -52,6 +52,24 @@ const cache = new Map<string, { at: number; verdict: HolderVerdict }>();
 const CACHE_MS = 10 * 60 * 1000;
 
 /**
+ * The door as it stands right now, without waiting on the chain: decided at once when the gate is off or list-only,
+ * from the cache when a holder read is fresh, and unknown (null) otherwise, with a read started in the background so
+ * the next call knows. Every signed-in request asks this, so a wallet taken off the list loses the console at once
+ * rather than at the end of its seven-day bearer (2026-09-08).
+ */
+export function doorNow(address: string, now = Date.now(), env: NodeJS.ProcessEnv = process.env): HolderVerdict | null {
+  const mode = gateMode(env);
+  if (mode === "off") return { ok: true, obs: 0, aobs: 0, minObs: 0, minAobs: 0 };
+  const a = address.toLowerCase();
+  if (allowlisted(a, env)) return { ok: true, obs: 0, aobs: 0, minObs: minObs(env), minAobs: minAobs(env), invited: true };
+  if (mode === "allowlist") return { ok: false, obs: 0, aobs: 0, minObs: minObs(env), minAobs: minAobs(env), reason: NOT_INVITED };
+  const hit = cache.get(a);
+  if (hit && now - hit.at < CACHE_MS) return hit.verdict;
+  void holderGate(a, now, env).catch(() => undefined);
+  return null;
+}
+
+/**
  * The wallet's standing at the door: open when the gate is off, in when on the operator's list, else read on chain
  * and cached ten minutes; list-only while the gate is set to allowlist. The server answers a closed door with the
  * code not_holder in every case, which the page already knows; the reason says which door it was.

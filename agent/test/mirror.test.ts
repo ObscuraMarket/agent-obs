@@ -34,8 +34,10 @@ const T0 = 1_788_800_000_000;
 
 test("an agent puts its size into an entry within what its wallet holds above the gas reserve, or says why not", () => {
   assert.deepEqual(entryAmountEth(100, 2500, 0.1, 0.002), { amount: 0.04 });
-  assert.deepEqual(entryAmountEth(100, 2500, 0.03, 0.002), { amount: 0.028 }, "less than the size but more than half: the room it has");
-  assert.match((entryAmountEth(100, 2500, 0.01, 0.002) as { reason: string }).reason, /holds 0\.0100 ETH; \$100 at \$2500 an ETH needs 0\.0400 ETH plus the 0\.002 ETH gas reserve/);
+  // The reserve is kept twice: the entry's gas and the exit's. 0.03 above 0.004 is 0.026, more than half the size.
+  assert.deepEqual(entryAmountEth(100, 2500, 0.03, 0.002), { amount: 0.026 }, "less than the size but more than half: the room it has above a round trip of gas");
+  assert.match((entryAmountEth(100, 2500, 0.01, 0.002) as { reason: string }).reason, /holds 0\.0100 ETH; \$100 at \$2500 an ETH needs 0\.0400 ETH plus 0\.0040 ETH of gas reserve for the round trip/);
+  assert.match((entryAmountEth(100, 2500, 0.023, 0.002) as { reason: string }).reason, /round trip/, "0.023 leaves 0.019 above the round trip, under half the size: an entry that would strand the exit is refused");
   assert.match((entryAmountEth(100, 0, 1, 0.002) as { reason: string }).reason, /unpriced/);
   assert.equal(exitShare(600, 1000), 0.6);
   assert.equal(exitShare(1000, 1000), 1);
@@ -51,11 +53,11 @@ test("agents are mirrored a few at a time: four unless the operator sets it, nev
 });
 
 test("an agent may start live by the mirror's own bar, and one holding live tokens stays live whatever its ETH", () => {
-  assert.deepEqual(canStartLive(10, 2500, 0.006, 0.002, false), { ok: true }, "the full size above the reserve");
-  assert.deepEqual(canStartLive(10, 2500, 0.0046, 0.002, false), { ok: true }, "more than half the size above the reserve: what the entry itself would take");
-  const short = canStartLive(10, 2500, 0.0035, 0.002, false);
-  assert.equal(short.ok, false);
-  assert.match((short as { reason: string }).reason, /holds 0\.0035 ETH; \$10 a trade needs at least 0\.0040 ETH \(half the size above the 0\.002 ETH gas reserve\)\. \/fund it first, or \/start paper\./);
+  assert.deepEqual(canStartLive(10, 2500, 0.008, 0.002, false), { ok: true }, "the full size above a round trip of gas");
+  assert.deepEqual(canStartLive(10, 2500, 0.0065, 0.002, false), { ok: true }, "more than half the size above the round trip: what the entry itself would take");
+  const short = canStartLive(10, 2500, 0.0055, 0.002, false);
+  assert.equal(short.ok, false, "0.0055 leaves 0.0015 above the round trip, under half of the 0.004 the size needs");
+  assert.match((short as { reason: string }).reason, /holds 0\.0055 ETH; \$10 a trade needs at least 0\.0060 ETH \(half the size above 0\.0040 ETH of gas reserve for the round trip\)\. \/fund it first, or \/start paper\./);
   assert.deepEqual(canStartLive(10, 2500, 0.0001, 0.002, true), { ok: true }, "holding RWA and LENNY live after a /stop: back on live, not a paper start that hides them");
   assert.match((canStartLive(10, null, 1, 0.002, false) as { reason: string }).reason, /unpriced/);
 });

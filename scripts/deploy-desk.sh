@@ -20,6 +20,10 @@ changed() { [ -z "$LAST" ] || [ -n "$(git -C "$ROOT" diff --name-only "$LAST" "$
 cd "$ROOT/ops/railway" || exit 1
 echo "=== main ${HEAD:0:7}, $(date) ==="
 ok=1
-if changed agent; then echo "desk: deploying"; railway up -s desk --path-as-root ../../agent --ci 2>&1 | grep -E "Deploy complete|Error|error" | head -2 || ok=0; else echo "desk: unchanged"; fi
-if changed ops/railway-gateway; then echo "gateway: deploying"; railway up -s gateway --path-as-root ../railway-gateway --ci 2>&1 | grep -E "Deploy complete|Error|error" | head -2 || ok=0; else echo "gateway: unchanged"; fi
+# Success is railway's own exit code, never grep's: a deploy that printed "Error" matched the grep and advanced the
+# stamp, so the job then reported "unchanged" while the old image kept running (2026-09-08).
+up() { local out; out="$(railway up -s "$1" --path-as-root "$2" --ci 2>&1)"; local rc=$?; echo "$out" | grep -E "Deploy complete|Error|error" | head -2; [ "$rc" = 0 ] && echo "$out" | grep -q "Deploy complete"; }
+if changed agent; then echo "desk: deploying"; up desk ../../agent || ok=0; else echo "desk: unchanged"; fi
+if changed ops/railway-gateway; then echo "gateway: deploying"; up gateway ../railway-gateway || ok=0; else echo "gateway: unchanged"; fi
 [ "$ok" = 1 ] && echo "$HEAD" > "$STAMP"
+[ "$ok" = 1 ] || { echo "deploy failed; the stamp was not advanced"; exit 1; }

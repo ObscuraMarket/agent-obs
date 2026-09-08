@@ -20,7 +20,7 @@ import { recordTrade, readBook, latestTrades, boughtSymbols, type Trade } from "
 import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet } from "./signer.ts";
 import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
 import { raiseAlert } from "./alerts.ts";
-import { dynamicAssets, dynamicPoolSpec, readFeed, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
+import { dynamicAssets, dynamicPoolSpec, readFeed, resolveAny, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
 import { readPrices } from "./analysis.ts";
 import { readTape, tapeStats } from "./tape.ts";
 import { readEntries, recordClose, positionSpans, openSpanStart, closeFromSpan, entryForSpan, closeRow, ethUsdAt, type TradeClose } from "./trade-memory.ts";
@@ -31,6 +31,9 @@ export const NATIVE = "0x0000000000000000000000000000000000000000" as const;
 const Q96 = 2n ** 96n;
 const ACTIONS = "0x070b0e" as const; // SWAP_EXACT_IN, SETTLE, TAKE
 const V4_SWAP = "0x10" as const;
+/** Trade ids are unique within a process: a cycle that sold one token and bought another stamped both with its one `now`, and the later row erased the earlier in every ledger keyed by id (2026-09-08). */
+let tradeSeq = 0;
+export function nextTradeId(now: number): string { tradeSeq += 1; return tradeSeq === 1 ? `pool-${now}` : `pool-${now}-${tradeSeq}`; }
 const ROUTER_ABI = parseAbi(["function execute(bytes commands, bytes[] inputs, uint256 deadline) payable"]);
 const SLIPPAGE_PCT = Number(process.env.OBS_SLIPPAGE_PCT ?? 1);
 
@@ -340,7 +343,7 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   const before = await balanceOf(i.to, address);
   const base: Trade = {
     at: now,
-    id: `pool-${now}`,
+    id: nextTradeId(now),
     status: "pending",
     venue: "pool",
     ...(i.exit ? { exit: true } : {}),
@@ -465,7 +468,9 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
       // The desk's real exit is every follower's exit too: what was sold, of what was held, so each sells the same share.
       if (exec === executeOnChain && after) await after(exitIntent, row, held).catch((e) => console.error(`[follow] exit mirror of ${a.symbol}: ${e instanceof Error ? e.message : String(e)}`));
       out.push(row);
-      if (v.share >= 1) rememberClose(a.symbol, a.contract ?? "", [...allTrades, row], ethUsdAt(readPrices(), prices.ETH ?? null), peakPnlPct, v.kind, exec !== executeOnChain, now);
+      // A close is remembered from a settled sell only: a receipt still pending has no ETH leg yet, and the close it
+      // produced read as a full loss in the desk's memory (2026-09-08). settleOnChain's reconcile writes it once it lands.
+      if (v.share >= 1 && row.status === "settled") rememberClose(a.symbol, a.contract ?? "", [...allTrades, row], ethUsdAt(readPrices(), prices.ETH ?? null), peakPnlPct, v.kind, exec !== executeOnChain, now);
     } else if ("trade" in r && r.trade) out.push(r.trade);
     else {
       // A position the rails wanted out of and could not sell: the one failure a person must hear about at once.
@@ -479,8 +484,11 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
 /** Rows the lane sent but could not wait for: settle them by their receipt. */
 export async function settleOnChain(now = Date.now()): Promise<Trade[]> {
   const updated: Trade[] = [];
+  const feed = readFeed();
   for (const t of latestTrades(readBook().trades).filter((x) => x.status === "pending" && x.venue === "pool" && x.settlementTx)) {
-    const from = ASSETS[`${t.from.asset}@${t.from.network ?? "robinhood"}`];
+    // A launch token is a dynamic asset: the static registry alone left every pending sell of one pending forever (2026-09-08).
+    const key = `${t.from.asset}@${t.from.network ?? "robinhood"}`;
+    const from = ASSETS[key] ?? resolveAny(key, feed);
     if (!from) continue;
     const r = await waitReceipt(from, t.settlementTx as `0x${string}`, 5_000);
     if (!r) continue;

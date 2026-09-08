@@ -800,7 +800,10 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     }
     if (!swapHash) { return; }
     this.print([{ kind: 'output', text: 'Swap landed: ' + ConsoleComponent.EXPLORER + '/tx/' + swapHash }]);
-    const reply: any = await this.get<any>(this.obs.consoleSwap({ address: this.wallet, txHash: swapHash, from: q.from, to: q.to, amountIn: q.amountIn })).catch((e) => e?.error ?? e);
+    // The desk counts a swap for the wallet that signed in, so the report carries the session; without one it is
+    // still a real swap, just not on the console's tally.
+    if (!this.token) { this.print([{ kind: 'system', text: 'Sign in with /connect and the desk will count your swaps here.', suggest: ['/connect'] }]); return; }
+    const reply: any = await this.get<any>(this.obs.consoleSwap({ address: this.wallet, txHash: swapHash, from: q.from, to: q.to, amountIn: q.amountIn }, this.token)).catch((e) => e?.error ?? e);
     if (reply?.ok) {
       this.standing = reply.standing ?? this.standing;
       const got = reply.swap?.amountOut != null ? ', and ' + reply.swap.amountOut + ' ' + q.to + ' arrived' : '';
