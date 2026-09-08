@@ -59,47 +59,72 @@ test("a row with a hash settles from its receipt with what arrived, and fails on
   assert.equal(followerSettle(t, null, T + min(5), token), null, "a hash with no receipt yet is left for the next pass");
 });
 
-test(`a row without a hash is failed after ${INTENT_STALE_MIN} minutes and left alone before that`, () => {
+test(`a row without a hash is judged after ${INTENT_STALE_MIN} minutes and left alone before that: the wallet's balance settles an entry, nothing fails it`, () => {
   const t = pending();
   assert.equal(followerSettle(t, null, T + min(INTENT_STALE_MIN) - 1, token), null, "under the allowance the send may still be in flight");
+  assert.equal(followerSettle(t, null, T + min(INTENT_STALE_MIN) - 1, token, 990), null, "a balance changes nothing under the allowance");
   const failed = followerSettle(t, null, T + min(INTENT_STALE_MIN), token)!;
   assert.equal(failed.status, "failed");
   assert.match(failed.note ?? "", new RegExp(`no hash was recorded within ${INTENT_STALE_MIN} min of the send`));
   assert.match(failed.note ?? "", /the agent's wallet says whether PORT arrived/);
+  assert.equal(followerSettle(t, null, T + min(INTENT_STALE_MIN), token, 0)!.status, "failed", "the wallet holds none: the send never went out");
+  assert.equal(followerSettle(t, null, T + min(INTENT_STALE_MIN), token, 1e-9)!.status, "failed", "dust is not a holding");
+  // The redeploy case (review, 2026-09-08): the send went out, the process died in the receipt wait, no hash was
+  // written, and the token is in the wallet. Settled at what the wallet holds, never above the estimate.
+  const landed = followerSettle(t, null, T + min(INTENT_STALE_MIN), token, 990)!;
+  assert.deepEqual([landed.status, landed.to.amount, landed.to.usd, landed.settlementTx], ["settled", 990, 99, undefined]);
+  assert.match(landed.note ?? "", /landed by the wallet's balance \(990 PORT\), no hash recorded$/);
+  assert.equal(followerSettle(t, null, T + min(INTENT_STALE_MIN), token, 1500)!.to.amount, 1000, "more than the estimate in the wallet is not this row's");
+  const exit = pending({ exit: true, from: { asset: "PORT", amount: 500, usd: 50 }, to: { asset: "ETH", amount: 0.02, usd: 50 } });
+  assert.equal(followerSettle(exit, null, T + min(INTENT_STALE_MIN), null, 0.5)!.status, "failed", "a hashless exit is failed whatever the balance; the sweep judges the token from there");
   assert.equal(followerSettle(pending({ updatedAt: T + min(10) }), null, T + min(20), token), null, "the allowance runs from the row's last writing");
   assert.equal(followerSettle(pending({ status: "settled" }), receipt("success"), T + min(60), token), null, "a settled row is never touched");
   assert.equal(followerSettle(pending({ venue: "obscura" }), null, T + min(60), token), null, "an Obscura order is pending with no hash by design");
 });
 
-test("the pass judges each agent's latest rows, writes each agent's own ledger, and notes the row that never got its hash", async () => {
+test("the pass judges each agent's latest rows, writes each agent's own ledger, reads the wallet for a hashless entry, and alerts on one the wallet does not explain", async () => {
+  const C = "0x3333333333333333333333333333333333333333";
   const rows: FollowTradeRow[] = [
     // A: the entry's pending row, then its hash; the receipt has landed since.
     { address: A, deskId: "d1", ...pending() },
     { address: A, deskId: "d1", ...pending({ settlementTx: HASH, updatedAt: T + min(1) }) },
-    // B: the same id in another wallet's ledger (the desk's clock, another process), never given a hash.
+    // B: the same id in another wallet's ledger (the desk's clock, another process), never given a hash, and the wallet holds none.
     { address: B, deskId: "d1", ...pending() },
     // B: an exit that already settled, not touched.
     { address: B, deskId: "d2", ...pending({ id: "pool-2", status: "settled", settlementTx: HASH, exit: true }) },
+    // C: already holds 200 PORT from an earlier landed entry; the hashless second entry is judged by what is above that.
+    { address: C, deskId: "d0", ...pending({ id: "pool-0", status: "settled", settlementTx: HASH, at: T - min(60), to: { asset: "PORT", network: "robinhood", amount: 200, usd: 20 } }) },
+    { address: C, deskId: "d1", ...pending() },
   ];
   const written: Array<[string, string, Trade]> = [];
   const notes: Array<[string, string, string]> = [];
+  const alerts: Array<[string, string]> = [];
   const asked: string[] = [];
+  const balances: Array<[string, string]> = [];
   const deps: FollowerSettleDeps = {
     rows: () => rows,
     receipt: async (hash) => { asked.push(hash); return receipt("success", [transfer(TOKEN, POOL, AGENT, 990n * 10n ** 18n)]); },
     tokenOf: (s) => (s === "PORT" ? token : null),
+    balance: async (address, t) => { balances.push([address, t.contract]); return address === C ? 1180 : 0; },
     write: (address, deskId, t) => { written.push([address, deskId, t]); return true; },
     note: (address, deskId, note) => { notes.push([address, deskId, note]); },
+    alert: async (text, _now, key) => { alerts.push([key, text]); },
   };
   const out = await settleFollowers(T + min(20), deps);
   assert.deepEqual(asked, [HASH], "one receipt read, for the row that has a hash");
-  assert.deepEqual(written.map(([a, d, t]) => [a, d, t.status, t.to.amount]), [[A, "d1", "settled", 990], [B, "d1", "failed", 1000]]);
-  assert.deepEqual(notes.map(([a, d]) => [a, d]), [[B, "d1"]], "only the row that never got its hash is a note");
+  assert.deepEqual(balances, [[B, TOKEN], [C, TOKEN]], "one balance read per hashless entry past the allowance, none for a row with a hash");
+  assert.deepEqual(written.map(([a, d, t]) => [a, d, t.status, t.to.amount]), [[A, "d1", "settled", 990], [B, "d1", "failed", 1000], [C, "d1", "settled", 980]], "C's 1180 less the 200 its ledger already held is this entry's 980");
+  assert.deepEqual(notes.map(([a, d]) => [a, d]), [[B, "d1"], [C, "d1"]], "the rows that never got their hash are notes, settled or failed");
   assert.match(notes[0][2], /entry of PORT never got its hash within 15 min and is failed on the book/);
-  assert.deepEqual(out.map((t) => [t.address, t.id, t.status]), [[A, "pool-1", "settled"], [B, "pool-1", "failed"]]);
-  // A receipt read that throws leaves the row for the next pass and never stops the others.
+  assert.match(notes[1][2], /never got its hash within 15 min, but the wallet holds 980 PORT: settled from the balance/);
+  assert.deepEqual(alerts.map(([k]) => k), [`${B} PORT`], "the operator hears of the one failed with nothing in the wallet, keyed by wallet and token, as the desk's own settle alerts");
+  assert.match(alerts[0][1], /never got its hash and the wallet holds none of it/);
+  assert.deepEqual(out.map((t) => [t.address, t.id, t.status]), [[A, "pool-1", "settled"], [B, "pool-1", "failed"], [C, "pool-1", "settled"]]);
+  // A receipt read that throws leaves the row for the next pass and never stops the others; so does a balance read.
   const out2 = await settleFollowers(T + min(20), { ...deps, receipt: async () => { throw new Error("rpc down"); } });
-  assert.deepEqual(out2.map((t) => [t.address, t.status]), [[B, "failed"]]);
+  assert.deepEqual(out2.map((t) => [t.address, t.status]), [[B, "failed"], [C, "settled"]]);
+  const out3 = await settleFollowers(T + min(20), { ...deps, balance: async () => { throw new Error("rpc down"); } });
+  assert.deepEqual(out3.map((t) => [t.address, t.status]), [[A, "settled"]], "a hashless entry whose balance could not be read waits, still pending and still visible to the exit");
 });
 
 // OBS_TRADING=off is the operator's brake on the house book. Until 2026-09-08 it also refused every follower

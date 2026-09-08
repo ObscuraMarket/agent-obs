@@ -2,8 +2,8 @@
 // equity and no last entry, so a $5 desk probe bought a full follower size and nothing capped a follower's day.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { followLossLimits, followerRails, entryFraction, scaledEntryUsd, followerEntryHalt, MIN_ENTRY_USD } from "../src/desk/mirror.ts";
-import { utcDay, dayStartMark, markOrNew, capitalSinceUsd, followerEquityUsd, latestPrices, liveTrades, liveHoldings, type FollowMarkRow, type FollowTradeRow } from "../src/desk/follow.ts";
+import { followLossLimits, followerRails, entryFraction, scaledEntryUsd, deskFullTicketUsd, followerEquity, followerEntryHalt, MIN_ENTRY_USD } from "../src/desk/mirror.ts";
+import { utcDay, dayStartMark, markOrNew, capitalSinceUsd, followerEquityUsd, followersToMark, latestPrices, liveTrades, liveHoldings, type FollowMarkRow, type FollowTradeRow, type FollowRow } from "../src/desk/follow.ts";
 import { railsFromEnv, lastEntryAt, spacingHalt, checkRails, type Intent, type RailContext } from "../src/desk/rails.ts";
 import { positions } from "../src/desk/book.ts";
 import { ASSETS } from "../src/desk/assets.ts";
@@ -52,6 +52,12 @@ test("a /fund after the mark is not a gain and a /withdraw is not a loss: the ma
   assert.equal(capitalSinceUsd(flows, A, T, min(60)), 275, "500 in, 200 and 25 out; the unpriced row and the other wallet's row move nothing; the deposit before the mark is in the mark");
   assert.equal(capitalSinceUsd(flows, A, T, min(60)), capitalSinceUsd(flows, A.toUpperCase(), T, min(60)));
   assert.equal(capitalSinceUsd(flows, A, min(60), min(60)), 0);
+  // A funding that landed before the mark and was verified after it is already in the mark (review, 2026-09-08):
+  // the row is placed by when its ETH landed, not by when the desk verified it; the $500 verified at +20 landed at -10.
+  const landedEarlier = flows.map((r) => (r.txHash === tx(2) ? { ...r, landedAt: min(-10) } : r));
+  assert.equal(capitalSinceUsd(landedEarlier, A, T, min(60)), -225, "200 and 25 out, nothing in since the mark");
+  const landedLater = flows.map((r) => (r.txHash === tx(1) ? { ...r, landedAt: min(5) } : r));
+  assert.equal(capitalSinceUsd(landedLater, A, T, min(60)), 1275, "and one recorded before the mark that landed after it moves the mark");
   // A withdrawal of a fifth of the wallet is not a 20% drawdown: the mark comes down with it and the brake stays off.
   const r = followerRails(railsFromEnv(env()), {} as NodeJS.ProcessEnv);
   const dayStart = 1000 + capitalSinceUsd([{ address: A, at: min(20), kind: "withdraw", asset: "ETH", amount: 0.08, usd: 200, txHash: tx(8) }], A, T, min(30));
@@ -73,13 +79,41 @@ test("a follower's equity is its ETH in dollars plus its tokens marked the way i
   const prices = latestPrices(samples, T);
   assert.deepEqual(prices, { PENGUIN: 0.15, DOHJ: 0.04 }, "the latest sample within three hours, upper-cased; the sample from the future and the stale one are not marks");
   const pos = positions([], liveTrades(rows, A), liveHoldings(rows, A), prices);
-  assert.equal(followerEquityUsd(0.1, 2500, pos), 250 + 75 + 50, "0.1 ETH at $2500, 500 PENGUIN at $0.15, and the $50 of ETH still in flight to DOHJ, which is not a position until its receipt");
+  assert.deepEqual(followerEquityUsd(0.1, 2500, pos), { usd: 250 + 75 + 50, unpriced: [] }, "0.1 ETH at $2500, 500 PENGUIN at $0.15, and the $50 of ETH still in flight to DOHJ, which is not a position until its receipt");
   assert.equal(followerEquityUsd(null, 2500, pos), null, "no wallet read, no equity");
   assert.equal(followerEquityUsd(0.1, null, pos), null, "ETH unpriced, no equity");
-  assert.equal(followerEquityUsd(0.1, 2500, positions([], liveTrades(rows, A), liveHoldings(rows, A), { DOHJ: 0.04 })), null, "a token with no price leaves the equity unknown rather than understated");
+  // A token with no price is valued at its cost and named, so the brake still reads the rest (review, 2026-09-08:
+  // one unpriced token made the equity unknown and switched the brake off entirely).
+  assert.deepEqual(followerEquityUsd(0.1, 2500, positions([], liveTrades(rows, A), liveHoldings(rows, A), { DOHJ: 0.04 })), { usd: 250 + 100 + 50, unpriced: ["PENGUIN"] }, "PENGUIN at its $100 cost");
   const blind: FollowTradeRow[] = [{ ...rows[1], from: { ...rows[1].from, usd: null } }];
-  assert.equal(followerEquityUsd(0.1, 2500, positions([], liveTrades(blind, A), liveHoldings(blind, A), prices)), null, "an in-flight swap with no dollars leaves it unknown too");
-  assert.equal(followerEquityUsd(0.1, 2500, positions([], [], {}, {})), 250, "nothing held: the ETH alone");
+  assert.deepEqual(followerEquityUsd(0.1, 2500, positions([], liveTrades(blind, A), liveHoldings(blind, A), prices)), { usd: 250, unpriced: ["DOHJ"] }, "an in-flight swap with no dollars counts nothing and is named; the ETH alone is left");
+  assert.deepEqual(followerEquityUsd(0.1, 2500, positions([], [], {}, {})), { usd: 250, unpriced: [] }, "nothing held: the ETH alone");
+  // The whole reading, as the mirror and the mark pass ask it: the freshest sample of any age marks a token, and a
+  // token marked from a sample older than the window is named as stale. RUG unpriced plus PORT down 90% is a brake, not a null.
+  const crash: FollowTradeRow[] = [
+    { address: A, deskId: "d1", at: min(-600), id: "c1", status: "settled", from: { asset: "ETH", amount: 0.2, usd: 500 }, to: { asset: "PORT", amount: 1000, usd: 500 }, partner: "pool", venue: "pool" },
+    { address: A, deskId: "d2", at: min(-600), id: "c2", status: "settled", from: { asset: "ETH", amount: 0.04, usd: 100 }, to: { asset: "RUG", amount: 10, usd: 100 }, partner: "pool", venue: "pool" },
+  ];
+  const eq = followerEquity(0.1, 2500, liveTrades(crash, A), liveHoldings(crash, A), [{ at: min(-500), symbol: "PORT", priceUsd: 0.5 }, { at: min(-5), symbol: "PORT", priceUsd: 0.05 }], T)!;
+  assert.deepEqual(eq, { usd: 250 + 50 + 100, unpriced: ["RUG"], stale: [] }, "PORT at its fresh sample, RUG at cost");
+  const staleEq = followerEquity(0.1, 2500, liveTrades(crash, A), liveHoldings(crash, A), [{ at: min(-500), symbol: "PORT", priceUsd: 0.05 }], T)!;
+  assert.deepEqual(staleEq, { usd: 250 + 50 + 100, unpriced: ["RUG"], stale: ["PORT"] }, "PORT at its last sample, eight hours old, and named as stale");
+  assert.match(followerEntryHalt({ rails: followerRails(railsFromEnv(env()), {} as NodeJS.ProcessEnv), dayStartEquityUsd: 850, equityUsd: eq.usd, lastEntryAt: null, addOn: false, now: T })!, /daily loss brake: down 52\.9%/);
+  assert.equal(followerEquity(null, 2500, [], {}, [], T), null);
+});
+
+test("the followers due a mark are the live ones on with no mark for the UTC day", () => {
+  const rows: FollowRow[] = [
+    { address: A, at: min(-60), action: "start", mode: "live", sizeUsd: 100 },
+    { address: B, at: min(-60), action: "start", mode: "paper", sizeUsd: 100 },
+    { address: "0x3333333333333333333333333333333333333333", at: min(-60), action: "start", mode: "live", sizeUsd: 100 },
+    { address: "0x3333333333333333333333333333333333333333", at: min(-30), action: "stop" },
+    { address: "0x4444444444444444444444444444444444444444", at: min(-60), action: "start", mode: "live", sizeUsd: 100 },
+  ];
+  const marks: FollowMarkRow[] = [{ address: "0x4444444444444444444444444444444444444444", day: "2026-09-08", equityUsd: 500, at: min(-20) }];
+  assert.deepEqual(followersToMark(rows, marks, T), [A], "B is on paper, 0x3333 is off, 0x4444 has today's mark");
+  assert.deepEqual(followersToMark(rows, marks, Date.UTC(2026, 8, 9, 0, 0, 1)), [A, "0x4444444444444444444444444444444444444444"], "a new UTC day: yesterday's mark is not today's");
+  assert.deepEqual(followersToMark([], marks, T), []);
 });
 
 test("the follower's brake at the boundary: its own limits, the desk's numbers left aside, exits never braked", () => {
@@ -138,13 +172,21 @@ test("spacing runs from the follower's own rows, not the desk's; an add-on of a 
   assert.match(followerEntryHalt({ rails: r, dayStartEquityUsd: 1000, equityUsd: 800, lastEntryAt: min(-20), addOn: false, now: T })!, /daily loss brake/);
 });
 
-test("an entry the desk sized under its cap is the same fraction of the follower's size, never above the size, never dust", () => {
+test("an entry the desk sized under its full ticket is the same fraction of the follower's size, never above the size, never dust", () => {
+  // The full ticket is the smaller of the swap cap and the grade A cap (review, 2026-09-08: the swap cap alone made a
+  // grade B entry a quarter of a follower's size once the live rails set it above the grade caps).
+  assert.equal(deskFullTicketUsd({ maxSwapUsd: 25 }, {} as NodeJS.ProcessEnv), 25, "the default rails: the $25 swap cap under the $75 A cap");
+  assert.equal(deskFullTicketUsd({ maxSwapUsd: 100 }, {} as NodeJS.ProcessEnv), 75, "a $100 swap cap: the $75 A cap is the desk's biggest normal ticket");
+  assert.equal(deskFullTicketUsd({ maxSwapUsd: 100 }, { OBS_CANDIDATE_MAX_USD_A: "150" } as NodeJS.ProcessEnv), 100);
+  assert.equal(deskFullTicketUsd({ maxSwapUsd: Number.NaN }, { OBS_CANDIDATE_MAX_USD_A: "60" } as NodeJS.ProcessEnv), 60, "an unreadable swap cap is left out");
   assert.equal(entryFraction(200, 200), 1, "a full-size desk entry");
-  assert.equal(entryFraction(5, 200), 0.025, "a $5 probe against a $200 cap");
+  assert.equal(entryFraction(5, 200), 0.025, "a $5 probe against a $200 ticket");
+  assert.equal(entryFraction(5, deskFullTicketUsd({ maxSwapUsd: 25 }, {} as NodeJS.ProcessEnv)), 0.2, "a $5 probe on the default rails is a fifth");
+  assert.equal(entryFraction(25, deskFullTicketUsd({ maxSwapUsd: 100 }, {} as NodeJS.ProcessEnv)), 1 / 3, "a grade B entry against the A cap");
   assert.equal(entryFraction(50, 200), 0.25, "an add-on of a quarter");
-  assert.equal(entryFraction(210, 200), 1, "the price moved a hair over the cap: still the full size, never more");
+  assert.equal(entryFraction(210, 200), 1, "the price moved a hair over the ticket: still the full size, never more");
   assert.equal(entryFraction(null, 200), 1, "unpriced desk entry: the full size, as before");
-  assert.equal(entryFraction(50, 0), 1, "no cap set: the full size");
+  assert.equal(entryFraction(50, 0), 1, "no ticket set: the full size");
   assert.equal(scaledEntryUsd(100, 5, 200), 2.5, "a $100 follower puts $2.50 into the desk's $5 probe");
   assert.equal(scaledEntryUsd(100, 50, 200), 25);
   assert.equal(scaledEntryUsd(100, 200, 200), 100);

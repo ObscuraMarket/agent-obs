@@ -9,10 +9,16 @@
 // only when the desk sells: an operator close that skipped the mirror left every follower in the token after the
 // desk was out (audit, 2026-09-08). So after the desk's own sale this calls mirrorForFollowers the way cycle.ts
 // does after a desk trade, the same share for each agent, each failure that agent's note and the operator's alert.
+// The mirror runs only where the agent wallet seed is (OBS_AGENT_WALLET_SEED, and OBS_FOLLOW_LIVE not off): from a
+// shell without it the desk would sell and every follower would stay in the token with no line printed (review,
+// 2026-09-08), so a follower held by the ledger and no mirror here stops the script before anything is sent, unless
+// --no-followers says the operator will sweep them another way.
+//   npx tsx scripts/closePosition.ts <SYMBOL> "<reason>" [--dry] [--no-followers]
 import { resolveAny, readFeed, isHolding } from "../src/desk/candidates.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 import { executeOnChain, rememberClose, quoteOnChain, latestEthUsd } from "../src/desk/onchain.ts";
-import { mirrorForFollowers } from "../src/desk/mirror.ts";
+import { mirrorForFollowers, liveOn } from "../src/desk/mirror.ts";
+import { readFollow, readFollowTrades, liveHoldings } from "../src/desk/follow.ts";
 import { ethUsdAt } from "../src/desk/trade-memory.ts";
 import { readPrices } from "../src/desk/analysis.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
@@ -21,9 +27,21 @@ import { readBook, recordTrade, positions, boughtSymbols } from "../src/desk/boo
 
 const [symbolArg, reasonArg = "closed by the operator", ...flags] = process.argv.slice(2);
 const dry = flags.includes("--dry");
-if (!symbolArg) { console.error('usage: closePosition.ts <SYMBOL> "<reason>" [--dry]'); process.exit(1); }
+const noFollowers = flags.includes("--no-followers");
+if (!symbolArg) { console.error('usage: closePosition.ts <SYMBOL> "<reason>" [--dry] [--no-followers]'); process.exit(1); }
 const symbol = symbolArg.toUpperCase();
 const now = Date.now();
+// The followers first, before a single read of the chain: a follower the ledger says holds the token must leave
+// with the desk, and only a shell with the seed can make that happen (see the header).
+const followRows = readFollowTrades();
+const holders = [...new Set(readFollow().map((r) => r.address))].filter((a) => (liveHoldings(followRows, a)[symbol] ?? 0) > 0);
+if (holders.length && !liveOn()) {
+  console.error(`[follow] mirror off here (no agent wallet seed, or OBS_FOLLOW_LIVE=off): ${holders.length} follower${holders.length === 1 ? "" : "s"} hold${holders.length === 1 ? "s" : ""} ${symbol} by the ledger and will not be sold`);
+  if (!noFollowers) { console.error("nothing sent; run this inside the desk, or pass --no-followers to close the desk's own position alone and sweep the followers another way"); process.exit(1); }
+  console.error("--no-followers: closing the desk's own position alone");
+} else if (holders.length) {
+  console.log(`[follow] ${holders.length} follower${holders.length === 1 ? "" : "s"} hold${holders.length === 1 ? "s" : ""} ${symbol} by the ledger; each is mirrored after the desk's sale`);
+}
 const feed = readFeed(now);
 const from = resolveAny(`${symbol}@robinhood`, feed);
 const eth = resolveAsset("ETH@robinhood");

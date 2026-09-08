@@ -7,10 +7,8 @@
 // Pure where it matters: the state is a replay of the wallet's rows, the mirrored book is a pure function of the
 // desk's trades, so both are tested offline. One ledger row per command, appended, never rewritten.
 import { appendLedger, readLedger } from "../ledger.ts";
-import { latestTrades, positions, intentTimedOut, INTENT_STALE_MIN, type Trade, type Prices, type Positions } from "./book.ts";
-import { readReceipt, type ReceiptRead } from "./signer.ts";
-import { ASSETS } from "./assets.ts";
-import { resolveAny, readFeed } from "./candidates.ts";
+import { latestTrades, positions, intentTimedOut, isHolding, INTENT_STALE_MIN, type Trade, type Prices, type Positions } from "./book.ts";
+import type { ReceiptRead } from "./signer.ts";
 import type { AgentCapitalRow } from "./agentWallet.ts";
 
 const FILE = "obs-follow.jsonl";
@@ -211,13 +209,23 @@ export function receivedFromLogs(logs: ReceiptRead["logs"], token: string, recip
 /**
  * PURE: the row an agent's pending row becomes, or null to leave it. With a hash and a receipt: settled with what
  * the logs say arrived (the estimate when they say nothing), or failed on a revert. With a hash and no receipt
- * yet: left for the next pass. With no hash: failed once it is older than the lane's allowance, since the send
- * never came back; younger, left alone, the send may still be in flight in another process.
+ * yet: left for the next pass. With no hash: judged once it is older than the lane's allowance, since the send
+ * never came back; younger, left alone, the send may still be in flight in another process. A hashless entry is
+ * judged by the wallet: `landed` is what the wallet holds of the token above what the ledger's other rows say,
+ * and a holding above dust means the send went out and the token arrived, so the row settles at that amount
+ * (never above the estimate). The lane writes the hash only after its receipt wait, so a redeploy in that window
+ * left a landed token that a failed row took off the ledger, after which no exit and no sweep would ever sell it
+ * (review, 2026-09-08). With no holding, or no read, the row fails as the desk's own does.
  */
-export function followerSettle(t: Trade, receipt: ReceiptRead | null, now: number, token: { contract: string; decimals: number } | null): Trade | null {
+export function followerSettle(t: Trade, receipt: ReceiptRead | null, now: number, token: { contract: string; decimals: number } | null, landed: number | null = null): Trade | null {
   if (t.status !== "pending" || t.venue !== "pool") return null;
   if (!t.settlementTx) {
     if (!intentTimedOut(t, now)) return null;
+    if (!t.exit && landed != null && isHolding(landed)) {
+      const got = Math.min(landed, t.to.amount);
+      const px = t.to.usd != null && t.to.amount > 0 ? t.to.usd / t.to.amount : null;
+      return { ...t, status: "settled", updatedAt: now, to: { ...t.to, amount: got, usd: px != null ? got * px : t.to.usd }, note: `${t.note ?? ""}; landed by the wallet's balance (${got} ${t.to.asset}), no hash recorded` };
+    }
     return { ...t, status: "failed", updatedAt: now, note: `${t.note ?? ""}; no hash was recorded within ${INTENT_STALE_MIN} min of the send: failed on the book; the agent's wallet says whether ${t.to.asset} arrived` };
   }
   if (!receipt) return null;
@@ -228,50 +236,56 @@ export function followerSettle(t: Trade, receipt: ReceiptRead | null, now: numbe
   return { ...t, status: "settled", updatedAt: now, to: { ...t.to, amount: got, usd: px != null ? got * px : t.to.usd }, note: `${t.note ?? ""}; landed, received ${got} ${t.to.asset}` };
 }
 
-/** What the settle pass reaches for, injectable so the pass is tested without a chain or a ledger. */
+/**
+ * What the settle pass reaches for, injectable so the pass is tested without a chain or a ledger. The live set is
+ * built in mirror.ts (followerSettleDeps), which already reaches the agent wallets, the chain and the alerts; built
+ * here it would import agentWallet.ts, which imports this file (2026-09-08).
+ */
 export interface FollowerSettleDeps {
   rows: () => FollowTradeRow[];
   receipt: (hash: `0x${string}`) => Promise<ReceiptRead | null>;
   /** The contract behind a to-leg symbol on Robinhood Chain, for its Transfer logs; null for ETH or an unknown token. */
   tokenOf: (symbol: string) => { contract: string; decimals: number } | null;
+  /** The agent wallet's balance of a token, in whole units; throws when the chain did not answer, and the row waits. */
+  balance: (address: string, token: { contract: string; decimals: number }) => Promise<number>;
   write: (address: string, deskId: string, t: Trade) => boolean | void;
   note: (address: string, deskId: string, note: string, now: number) => void;
+  /** The operator's alert, keyed by wallet and token, for a hashless entry the wallet does not explain. */
+  alert: (text: string, now: number, key: string) => Promise<unknown>;
 }
 
-const liveSettleDeps = (): FollowerSettleDeps => {
-  const eth = ASSETS["ETH@robinhood"];
-  const feed = readFeed();
-  return {
-    rows: readFollowTrades,
-    receipt: (hash) => readReceipt(eth, hash),
-    tokenOf: (symbol) => {
-      const key = `${symbol}@robinhood`;
-      const a = ASSETS[key] ?? resolveAny(key, feed);
-      return a && a.kind === "erc20" && a.contract ? { contract: a.contract, decimals: a.decimals } : null;
-    },
-    write: recordFollowTrade,
-    note: recordFollowNote,
-  };
-};
-
 /**
- * Every agent's pending pool row, settled by its receipt or failed past the allowance, each written to the agent's
- * own ledger; a row without a hash that is failed gets a note the person reads with /agent. Rows are judged per
- * agent, since ids are unique per process and two agents in one cycle share the desk's clock. Never throws for one
- * row's sake: a receipt that cannot be read leaves the row for the next pass.
+ * Every agent's pending pool row, settled by its receipt, by the wallet's balance for a hashless entry past the
+ * allowance, or failed, each written to the agent's own ledger; a row without a hash gets a note the person reads
+ * with /agent, and one failed with nothing in the wallet is the operator's alert too, as the desk's own is. Rows
+ * are judged per agent, since ids are unique per process and two agents in one cycle share the desk's clock.
+ * Never throws for one row's sake: a receipt or a balance that cannot be read leaves the row for the next pass.
  */
-export async function settleFollowers(now = Date.now(), deps: FollowerSettleDeps = liveSettleDeps()): Promise<FollowTradeRow[]> {
+export async function settleFollowers(now: number, deps: FollowerSettleDeps): Promise<FollowTradeRow[]> {
   const all = deps.rows();
   const out: FollowTradeRow[] = [];
   for (const address of [...new Set(all.map((r) => r.address))]) {
     for (const t of latestTrades(all.filter((r) => r && r.address === address)).filter((x) => x.status === "pending" && x.venue === "pool")) {
       const deskId = (t as FollowTradeRow).deskId;
+      const symbol = (t.exit ? t.from.asset : t.to.asset).toUpperCase();
       try {
         const receipt = t.settlementTx ? await deps.receipt(t.settlementTx as `0x${string}`) : null;
-        const row = followerSettle(t, receipt, now, deps.tokenOf(t.to.asset));
+        const token = deps.tokenOf(t.to.asset);
+        let landed: number | null = null;
+        if (!t.settlementTx && !t.exit && token && intentTimedOut(t, now)) {
+          // What the ledger's other rows already say this wallet holds of the token is not this row's; only the
+          // balance above it is what this entry brought in.
+          const others = liveHoldings(all.filter((r) => r && r.address === address && r.id !== t.id), address)[symbol] ?? 0;
+          landed = (await deps.balance(address, token)) - others;
+        }
+        const row = followerSettle(t, receipt, now, token, landed);
         if (!row) continue;
         deps.write(address, deskId, row);
-        if (row.status === "failed" && !row.settlementTx) deps.note(address, deskId, `${t.exit ? "exit" : "entry"} of ${t.exit ? t.from.asset : t.to.asset} never got its hash within ${INTENT_STALE_MIN} min and is failed on the book; /wallet shows what the wallet holds`, now);
+        if (row.status === "settled" && !row.settlementTx) deps.note(address, deskId, `entry of ${symbol} never got its hash within ${INTENT_STALE_MIN} min, but the wallet holds ${row.to.amount} ${symbol}: settled from the balance`, now);
+        if (row.status === "failed" && !row.settlementTx) {
+          deps.note(address, deskId, `${t.exit ? "exit" : "entry"} of ${symbol} never got its hash within ${INTENT_STALE_MIN} min and is failed on the book; /wallet shows what the wallet holds`, now);
+          if (!t.exit) await deps.alert(`an agent's entry of ${symbol} (wallet ${address.slice(0, 8)}, ${t.from.amount} ETH sent ${new Date(t.at).toISOString().slice(11, 16)} UTC) never got its hash and the wallet holds none of it; failed on its ledger, check the wallet and the trade ledger`, now, `${address.toLowerCase()} ${symbol}`);
+        }
         out.push({ ...row, address, deskId });
       } catch (e) {
         console.error(`[follow] settle of ${t.id} for ${address.slice(0, 8)} failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -321,38 +335,64 @@ export function markOrNew(marks: FollowMarkRow[], address: string, equityUsd: nu
 
 /**
  * PURE: what the person put in or took out after the mark, in dollars: a /fund after the mark is not a gain and a
- * /withdraw is not a loss, so the mark moves with them. A row the ledger could not price moves nothing.
+ * /withdraw is not a loss, so the mark moves with them. A row the ledger could not price moves nothing. A row is
+ * placed by when its ETH landed on the chain (landedAt), not by when the desk verified it: a funding that landed
+ * before the mark and was verified after it was added to the mark twice, and the follower read as down by its own
+ * deposit for the rest of the day (review, 2026-09-08). Rows from before landedAt was recorded are placed by `at`.
  */
 export function capitalSinceUsd(rows: AgentCapitalRow[], address: string, sinceAt: number, now: number): number {
   const a = address.toLowerCase();
   let net = 0;
   for (const r of rows) {
-    if (!r || r.address !== a || !(r.at > sinceAt) || r.at > now || r.usd == null) continue;
+    if (!r || r.address !== a || r.usd == null) continue;
+    const at = r.landedAt ?? r.at;
+    if (!(at > sinceAt) || at > now) continue;
     if (r.kind === "deposit") net += r.usd;
     else net -= r.usd;
   }
   return net;
 }
 
+export interface FollowerEquity {
+  usd: number;
+  /** The tokens that had no mark and were valued at their cost basis (or nothing): the brake's reading is a guess on these. */
+  unpriced: string[];
+}
+
 /**
  * PURE: a follower's equity: its wallet's ETH in dollars, its positions marked the way its book marks them, and
  * a swap still in flight at its from-leg dollars, the way the desk's own snapshot carries one (the ETH has left the
- * wallet and the token is not a position until its receipt). Null when the ETH is unread or unpriced, or when a
- * position or an in-flight leg has no price: the brake stays off on a guess, and no mark is written from one, the
- * same rule the desk's own rails keep.
+ * wallet and the token is not a position until its receipt). Null only when the ETH is unread or unpriced. A
+ * position or an in-flight leg with no price is valued at its cost basis, else at nothing, and named in `unpriced`:
+ * until 2026-09-08 one unpriced token made the whole equity unknown and switched the follower's brake off
+ * entirely, however far its other tokens fell (review). The caller is expected to have marked every token it can,
+ * at the last sample it has of any age, before this is asked.
  */
-export function followerEquityUsd(walletEth: number | null, ethUsd: number | null, pos: Positions): number | null {
+export function followerEquityUsd(walletEth: number | null, ethUsd: number | null, pos: Positions): FollowerEquity | null {
   if (walletEth == null || !(ethUsd != null && ethUsd > 0)) return null;
   let total = walletEth * ethUsd;
+  const unpriced: string[] = [];
   for (const p of pos.positions) {
-    if (p.valueUsd == null) return null;
-    total += p.valueUsd;
+    if (p.valueUsd != null) { total += p.valueUsd; continue; }
+    unpriced.push(p.asset.toUpperCase());
+    total += p.costUsd ?? 0;
   }
   for (const f of pos.inFlight) {
-    if (f.usd == null) return null;
-    total += f.usd;
+    if (f.usd != null) { total += f.usd; continue; }
+    unpriced.push(f.to.asset.toUpperCase());
+    total += f.costUsd ?? 0;
   }
-  return total;
+  return { usd: total, unpriced: [...new Set(unpriced)].sort() };
+}
+
+/**
+ * PURE: the followers whose day has no mark yet, on and live: the ones the brake will be asked about. The mark is
+ * written from a pass at the top of each cycle, so it is the equity at the first cycle of the UTC day, not at the
+ * first desk entry: a follower down 30% overnight was marked at the depressed equity and bought the next entry at
+ * full size (review, 2026-09-08).
+ */
+export function followersToMark(rows: FollowRow[], marks: FollowMarkRow[], now: number): string[] {
+  return [...new Set(rows.map((r) => r.address))].filter((a) => { const s = followState(rows, a); return s.on && s.mode === "live" && !dayStartMark(marks, a, now); });
 }
 
 /** PURE: the latest price per symbol from the desk's own samples within the window, keyed upper-case, for marking a follower's tokens. */
