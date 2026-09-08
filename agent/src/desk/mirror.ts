@@ -11,6 +11,7 @@ import { railsFromEnv, type Intent, type RailContext } from "./rails.ts";
 import { executeOnChain, latestEthUsd } from "./onchain.ts";
 import { readNativeBalance, readTokenBalance } from "./signer.ts";
 import { agentWallet, walletsOn } from "./agentWallet.ts";
+import { acquire } from "./walletLock.ts";
 import { readFollow, followState, readFollowTrades, recordFollowTrade, recordFollowNote, liveHoldings, type FollowRow, type FollowTradeRow } from "./follow.ts";
 import type { Trade } from "./book.ts";
 import { raiseAlert } from "./alerts.ts";
@@ -91,7 +92,19 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
   const who = followersFor(isExit ? "exit" : "entry", rows, (a) => liveHoldings(tradeRows, a)[symbol] ?? 0);
   const one = async (address: string): Promise<void> => {
     const st = followState(rows, address);
+    // The wallet's lock for the whole leg: a /withdraw from the console signs from this same wallet in another
+    // process, and the two would collide on the nonce or the balance (2026-09-08). A held lock is this agent's
+    // skip, noted the way any other skip is; the leg never waits on a withdrawal and never pulls the lock from it.
+    let release: (() => void) | null = null;
     try {
+      release = acquire(address, `${isExit ? "exit" : "entry"} ${symbol}`);
+      if (!release) {
+        const busy = "the agent's wallet is busy with a withdrawal or another trade";
+        recordFollowNote(address, deskTrade.id, `${isExit ? "exit" : "entry"} of ${symbol} skipped: ${busy}`, now);
+        // A skipped exit is someone else's money still in the token, the same as a refused one: the operator hears.
+        if (isExit) await raiseAlert("exit", `an agent's exit of ${symbol} was skipped (wallet ${address.slice(0, 8)}): ${busy}`, now);
+        return;
+      }
       const w = agentWallet(address);
       const ethBal = Number(await readNativeBalance(eth, w.address)) / 1e18;
       if (!isExit) {
@@ -124,6 +137,8 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
       const why = e instanceof Error ? e.message : String(e);
       recordFollowNote(address, deskTrade.id, `mirror failed: ${why.slice(0, 160)}`, now);
       console.error(`[follow] mirror for ${address.slice(0, 8)} failed: ${why}`);
+    } finally {
+      release?.();
     }
   };
   // Agents in parallel batches: each signs from its own wallet with its own nonce, so they never collide; the batch
