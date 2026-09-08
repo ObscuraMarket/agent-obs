@@ -709,11 +709,15 @@ const streams = new Map<string, number>();
 let streamCount = 0;
 
 /**
- * PURE: whether a peer address is loopback or private: 127/8, ::1, 10/8, 172.16/12, 192.168/16 and fc00::/7, which
- * is what Railway's edge and a proxy on the same host present. An IPv4 address mapped into IPv6 (::ffff:10.0.0.1,
- * how node reports an IPv4 peer on a dual-stack socket) is read as the IPv4. Anything unparseable is not private.
+ * PURE: whether a peer address is loopback, private or the shared address space a cloud edge sits in: 127/8, ::1,
+ * 10/8, 172.16/12, 192.168/16, 100.64/10 and fc00::/7. Railway's edge reached the container from 100.64.0.2 on
+ * 2026-09-08, the carrier-grade range, and for the hour it was not on this list every visitor was budgeted as that
+ * one peer. OBS_TRUSTED_PROXY=any trusts the forwarded headers from every peer, for an edge this list does not
+ * know. An IPv4 address mapped into IPv6 (::ffff:10.0.0.1, how node reports an IPv4 peer on a dual-stack socket) is
+ * read as the IPv4. Anything unparseable is not private.
  */
-export function isPrivatePeer(address: string | null | undefined): boolean {
+export function isPrivatePeer(address: string | null | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  if ((env.OBS_TRUSTED_PROXY ?? "").trim().toLowerCase() === "any") return true;
   if (!address) return false;
   let a = address.trim().toLowerCase();
   const zone = a.indexOf("%");
@@ -725,7 +729,7 @@ export function isPrivatePeer(address: string | null | undefined): boolean {
     const octets = v4.slice(1).map(Number);
     if (octets.some((o) => o > 255)) return false;
     const [o1, o2] = octets;
-    return o1 === 127 || o1 === 10 || (o1 === 172 && o2 >= 16 && o2 <= 31) || (o1 === 192 && o2 === 168);
+    return o1 === 127 || o1 === 10 || (o1 === 172 && o2 >= 16 && o2 <= 31) || (o1 === 192 && o2 === 168) || (o1 === 100 && o2 >= 64 && o2 <= 127);
   }
   if (a === "::1") return true;
   if (!a.includes(":")) return false;

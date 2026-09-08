@@ -87,13 +87,15 @@ test("the request budget forgets the client seen longest ago past its cap, and q
   assert.equal(RATE_CLIENTS_MAX, 20_000);
 });
 
-test("a peer is private on loopback, the RFC 1918 ranges and fc00::/7, mapped IPv4 included, and nothing else", () => {
-  for (const a of ["127.0.0.1", "127.255.255.255", "::1", "10.0.0.1", "10.255.255.255", "172.16.0.1", "172.31.255.255", "192.168.0.1", "192.168.255.255", "fc00::1", "fd12:3456::1", "FD00::AB", "::ffff:10.0.0.1", "::ffff:127.0.0.1", "::ffff:192.168.1.9", "[::1]", "fd00::1%eth0", " 127.0.0.1 "]) {
+test("a peer is private on loopback, the RFC 1918 ranges, the shared 100.64/10 range and fc00::/7, mapped IPv4 included, and nothing else", () => {
+  // 100.64.0.2 is what Railway's edge presented on 2026-09-08; the range is the carrier-grade shared space cloud proxies sit in.
+  for (const a of ["100.64.0.2", "::ffff:100.64.0.2", "100.127.255.255", "127.0.0.1", "127.255.255.255", "::1", "10.0.0.1", "10.255.255.255", "172.16.0.1", "172.31.255.255", "192.168.0.1", "192.168.255.255", "fc00::1", "fd12:3456::1", "FD00::AB", "::ffff:10.0.0.1", "::ffff:127.0.0.1", "::ffff:192.168.1.9", "[::1]", "fd00::1%eth0", " 127.0.0.1 "]) {
     assert.equal(isPrivatePeer(a), true, `${a} is private`);
   }
-  for (const a of ["8.8.8.8", "1.2.3.4", "172.15.255.255", "172.32.0.1", "192.169.0.1", "11.0.0.1", "128.0.0.1", "2001:db8::1", "fe80::1", "fb00::1", "fe00::1", "::ffff:8.8.8.8", "::", "999.1.1.1", "10.0.0", "not an address", "", null, undefined]) {
+  for (const a of ["8.8.8.8", "1.2.3.4", "100.63.255.255", "100.128.0.1", "172.15.255.255", "172.32.0.1", "192.169.0.1", "11.0.0.1", "128.0.0.1", "2001:db8::1", "fe80::1", "fb00::1", "fe00::1", "::ffff:8.8.8.8", "::", "999.1.1.1", "10.0.0", "not an address", "", null, undefined]) {
     assert.equal(isPrivatePeer(a), false, `${a} is not private`);
   }
+  assert.equal(isPrivatePeer("8.8.8.8", { OBS_TRUSTED_PROXY: "any" } as NodeJS.ProcessEnv), true, "the operator may trust every peer for an edge the list does not know");
 });
 
 test("the forwarded address is the client only when the socket's peer is the edge", () => {
