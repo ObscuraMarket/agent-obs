@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter, tapePrices, pnlFingerprint } from "../src/server.ts";
-import { originAllowed } from "../src/server.ts";
+import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX } from "../src/server.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
 const posts = [
@@ -63,6 +63,51 @@ test("the request budget is per client and slides", () => {
   assert.deepEqual([l.allow("a", 0), l.allow("a", 100), l.allow("a", 200), l.allow("a", 300)], [true, true, true, false]);
   assert.equal(l.allow("b", 300), true, "another client has its own budget");
   assert.equal(l.allow("a", 1101), true, "the oldest hit slid out of the window");
+});
+
+test("the request budget forgets the client seen longest ago past its cap, and quiet clients on the sweep", () => {
+  const small = new RateLimiter(1, 1000, 2);
+  assert.deepEqual([small.allow("a", 0), small.allow("a", 1)], [true, false], "one a window");
+  assert.equal(small.allow("b", 2), true);
+  assert.equal(small.allow("a", 3), false, "a is still known, and still over");
+  assert.equal(small.allow("c", 4), true, "a third client pushes out the one seen longest ago, which is b");
+  assert.equal(small.clients, 2);
+  assert.equal(small.allow("a", 5), false, "a was touched after b and is kept");
+  assert.equal(small.allow("b", 6), true, "forgotten means a fresh budget, never a stuck refusal");
+  assert.equal(small.allow("c", 7), true, "c went when b came back, and is fresh too");
+  assert.equal(small.clients, 2);
+  const l = new RateLimiter(5, 1000);
+  l.allow("a", 0);
+  l.allow("b", 500);
+  assert.equal(l.sweep(1200), 1, "a's only hit is out of the window");
+  assert.equal(l.clients, 1);
+  assert.equal(l.sweep(1600), 1);
+  assert.equal(l.clients, 0);
+  assert.equal(new RateLimiter(1).allow("x", 0), true, "the default cap is generous");
+  assert.equal(RATE_CLIENTS_MAX, 20_000);
+});
+
+test("a peer is private on loopback, the RFC 1918 ranges and fc00::/7, mapped IPv4 included, and nothing else", () => {
+  for (const a of ["127.0.0.1", "127.255.255.255", "::1", "10.0.0.1", "10.255.255.255", "172.16.0.1", "172.31.255.255", "192.168.0.1", "192.168.255.255", "fc00::1", "fd12:3456::1", "FD00::AB", "::ffff:10.0.0.1", "::ffff:127.0.0.1", "::ffff:192.168.1.9", "[::1]", "fd00::1%eth0", " 127.0.0.1 "]) {
+    assert.equal(isPrivatePeer(a), true, `${a} is private`);
+  }
+  for (const a of ["8.8.8.8", "1.2.3.4", "172.15.255.255", "172.32.0.1", "192.169.0.1", "11.0.0.1", "128.0.0.1", "2001:db8::1", "fe80::1", "fb00::1", "fe00::1", "::ffff:8.8.8.8", "::", "999.1.1.1", "10.0.0", "not an address", "", null, undefined]) {
+    assert.equal(isPrivatePeer(a), false, `${a} is not private`);
+  }
+});
+
+test("the forwarded address is the client only when the socket's peer is the edge", () => {
+  assert.equal(clientFrom("10.0.0.5", { "x-forwarded-for": "203.0.113.7, 10.0.0.5" }), "203.0.113.7", "behind the edge, the first hop is the client");
+  assert.equal(clientFrom("::ffff:127.0.0.1", { "cf-connecting-ip": "203.0.113.8" }), "203.0.113.8");
+  assert.equal(clientFrom("fd12::1", { "x-forwarded-for": ["203.0.113.9", "1.1.1.1"] }), "203.0.113.9", "a repeated header reads its first value");
+  assert.equal(clientFrom("10.0.0.5", {}), "10.0.0.5", "the edge with nothing forwarded is the client itself");
+  assert.equal(clientFrom("10.0.0.5", { "x-forwarded-for": " , " }), "10.0.0.5", "an empty forward is no forward");
+  assert.equal(clientFrom("198.51.100.4", { "x-forwarded-for": "203.0.113.7" }), "198.51.100.4", "from a public peer the header is whatever it typed and is ignored");
+  assert.equal(clientFrom("198.51.100.4", { "cf-connecting-ip": "203.0.113.7" }), "198.51.100.4");
+  assert.equal(clientFrom(undefined, { "x-forwarded-for": "203.0.113.7" }), "unknown", "no socket address, no trust");
+  const rotated = new RateLimiter(2, 1000);
+  const hits = ["a", "b", "c"].map((fake) => rotated.allow(clientFrom("198.51.100.4", { "x-forwarded-for": fake }), 0));
+  assert.deepEqual(hits, [true, true, false], "rotating the header from a public peer spends one budget");
 });
 
 test("the origin allowlist matches exactly, or one wildcard subdomain label", () => {
