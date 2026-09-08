@@ -254,11 +254,6 @@
         <div class="sub">{{ b.mode === 'paper' ? 'on paper' : 'wallet and positions' }}</div>
       </div>
       <div class="box">
-        <div class="lbl">Realized</div>
-        <div class="val num" [ngClass]="dir(b.realizedUsd)">{{ usd(b.realizedUsd, true) }}</div>
-        <div class="sub num">{{ b.wins }} won, {{ b.losses }} lost</div>
-      </div>
-      <div class="box">
         <div class="lbl">Unrealized</div>
         <div class="val num" [ngClass]="b.unrealizedUsd == null ? 'mutedtx' : dir(b.unrealizedUsd)">{{ b.unrealizedUsd == null ? (b.positions.length ? 'unpriced' : '$0.00') : usd(b.unrealizedUsd, true) }}</div>
         <div class="sub num">{{ b.positions.length }} open</div>
