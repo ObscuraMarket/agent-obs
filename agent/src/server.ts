@@ -536,11 +536,21 @@ export interface PublicAgent {
   trades: number;
   exits: number;
 }
-let agentsCache: { at: number; value: { ok: true; agents: PublicAgent[]; on: number; live: number; at: number } } | null = null;
+/**
+ * The operator's own test followers, kept off the public board (OBS_AGENTS_HIDDEN, their signing addresses): the
+ * Scout canary and a test agent sat in the Agents table beside real users' agents until the operator asked for them
+ * to go (2026-09-08). A hidden agent still trades, still reads its own book signed in, and its public book is 404.
+ */
+function hiddenAgents(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  return new Set((env.OBS_AGENTS_HIDDEN ?? "").split(/[\s,;]+/).map((s) => s.trim().toLowerCase()).filter((s) => /^0x[0-9a-f]{40}$/.test(s)));
+}
+let agentsCache: { at: number; hidden: string; value: { ok: true; agents: PublicAgent[]; on: number; live: number; at: number } } | null = null;
 async function agentsPayload(now: number): Promise<{ ok: true; agents: PublicAgent[]; on: number; live: number; at: number }> {
-  if (agentsCache && now - agentsCache.at < 30_000) return agentsCache.value;
+  const hidden = hiddenAgents();
+  const hiddenKey = [...hidden].sort().join(",");
+  if (agentsCache && agentsCache.hidden === hiddenKey && now - agentsCache.at < 30_000) return agentsCache.value;
   const rows = readFollow();
-  const addresses = [...new Set(rows.map((r) => r.address))];
+  const addresses = [...new Set(rows.map((r) => r.address))].filter((a) => !hidden.has(a.toLowerCase()));
   const p = await pnlPayload(1, now, false);
   const prices = pricesNow(p, now);
   const deskTrades = deskFromDisk().book.trades;
@@ -564,7 +574,7 @@ async function agentsPayload(now: number): Promise<{ ok: true; agents: PublicAge
   }
   agents.sort((x, y) => Number(y.on) - Number(x.on) || y.realizedUsd - x.realizedUsd);
   const value = { ok: true as const, agents: agents.slice(0, 50), on: agents.filter((x) => x.on).length, live: agents.filter((x) => x.on && x.mode === "live").length, at: now };
-  agentsCache = { at: now, value };
+  agentsCache = { at: now, hidden: hiddenKey, value };
   return value;
 }
 
@@ -761,7 +771,9 @@ function followerOfWallet(wallet: string, now: number): string | null {
     }
     agentByWallet = { at: now, seeded, map };
   }
-  return agentByWallet.map.get(wallet.toLowerCase()) ?? null;
+  const owner = agentByWallet.map.get(wallet.toLowerCase()) ?? null;
+  // A hidden agent's public book is no agent at all: the same 404 an unknown wallet gets, nothing to tell them apart.
+  return owner && !hiddenAgents().has(owner.toLowerCase()) ? owner : null;
 }
 const publicAgentCache = new TtlCache<PublicAgentDetail>(10_000);
 function publicAgentDetail(address: string, wallet: string, now: number): Promise<PublicAgentDetail> {

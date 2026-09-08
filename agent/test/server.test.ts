@@ -428,3 +428,30 @@ test("anyone reads a paper agent's book by the agent's own wallet: the owner's s
     process.env.OBS_AGENT_WALLET_SEED = seed;
   }
 });
+
+test("a hidden follower (OBS_AGENTS_HIDDEN) is off the public board and its public book is a 404, while the list still answers", async () => {
+  const address = "0x1111111111111111111111111111111111111111";
+  const now = Date.UTC(2026, 8, 8, 14, 0, 0);
+  recordFollow(address, "start", 25, now, "paper");
+  const seed = process.env.OBS_AGENT_WALLET_SEED;
+  const hiddenBefore = process.env.OBS_AGENTS_HIDDEN;
+  process.env.OBS_AGENT_WALLET_SEED = "server-test-seed-0123456789abcdef0123456789abcdef";
+  try {
+    const wallet = agentWalletAddressOrNull(address);
+    assert.ok(wallet, "the seed derives a wallet");
+    await withServer(async (api) => {
+      const shown = await read(api, "/api/obs/agents");
+      assert.ok((shown.j.agents as Array<Record<string, unknown>>).some((a) => a.walletAddress === wallet), "listed before it is hidden");
+      process.env.OBS_AGENTS_HIDDEN = ` ${address.toUpperCase()} ,`;
+      const list = await read(api, "/api/obs/agents");
+      assert.equal(list.status, 200);
+      assert.ok(!(list.j.agents as Array<Record<string, unknown>>).some((a) => a.walletAddress === wallet), "hidden from the public list, whatever the case of the address");
+      const r = await read(api, `/api/obs/agents/${wallet}`);
+      assert.equal(r.status, 404, "its public book is no agent at all");
+      assert.deepEqual(r.j, { ok: false, error: "no agent with that wallet is following the desk" });
+    });
+  } finally {
+    process.env.OBS_AGENT_WALLET_SEED = seed;
+    if (hiddenBefore === undefined) delete process.env.OBS_AGENTS_HIDDEN; else process.env.OBS_AGENTS_HIDDEN = hiddenBefore;
+  }
+});
