@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { entryAmountEth, exitShare, followersFor, liveOn, canStartLive } from "../src/desk/mirror.ts";
+import { entryAmountEth, exitShare, followersFor, liveOn, canStartLive, mirrorWidth } from "../src/desk/mirror.ts";
 import { followState, liveHoldings, liveTrades, liveBook, followLines, followEvents, deskReason, type FollowRow, type FollowTradeRow } from "../src/desk/follow.ts";
 
 test("the agent tells the console what it did, in the first person, with the desk's reason beside it", () => {
@@ -41,6 +41,13 @@ test("an agent puts its size into an entry within what its wallet holds above th
   assert.equal(exitShare(1000, 1000), 1);
   assert.equal(exitShare(5, null), 1, "no idea what the desk held: sell it all, never leave a bag");
   assert.equal(exitShare(1200, 1000), 1);
+});
+
+test("agents are mirrored a few at a time: four unless the operator sets it, never under one", () => {
+  assert.equal(mirrorWidth({} as NodeJS.ProcessEnv), 4);
+  assert.equal(mirrorWidth({ OBS_FOLLOW_PARALLEL: "8" } as NodeJS.ProcessEnv), 8);
+  assert.equal(mirrorWidth({ OBS_FOLLOW_PARALLEL: "0" } as NodeJS.ProcessEnv), 4);
+  assert.equal(mirrorWidth({ OBS_FOLLOW_PARALLEL: "many" } as NodeJS.ProcessEnv), 4);
 });
 
 test("an agent may start live by the mirror's own bar, and one holding live tokens stays live whatever its ETH", () => {

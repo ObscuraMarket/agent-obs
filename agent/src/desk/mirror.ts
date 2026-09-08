@@ -66,8 +66,8 @@ export function ethUsdOf(intent: Intent, fallback: number | null): number | null
 }
 
 /**
- * The desk's trade, mirrored for every agent it concerns. Sequential, one agent at a time, each inside its own
- * try; a failure is that agent's note and never the next agent's problem, and never the desk's.
+ * The desk's trade, mirrored for every agent it concerns, a few agents at a time, each inside its own try; a
+ * failure is that agent's note and never another agent's problem, and never the desk's.
  */
 export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskHeldBefore: number | null, now = Date.now()): Promise<void> {
   if (!liveOn()) return;
@@ -81,14 +81,14 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
   const ethUsd = ethUsdOf(intent, latestEthUsd(now));
   const symbol = (isExit ? intent.from : intent.to).symbol.toUpperCase();
   const who = followersFor(isExit ? "exit" : "entry", rows, (a) => liveHoldings(tradeRows, a)[symbol] ?? 0);
-  for (const address of who) {
+  const one = async (address: string): Promise<void> => {
     const st = followState(rows, address);
     try {
       const w = agentWallet(address);
       const ethBal = Number(await readNativeBalance(eth, w.address)) / 1e18;
       if (!isExit) {
         const a = entryAmountEth(st.sizeUsd, ethUsd ?? 0, ethBal, rails.gasReserveEth);
-        if ("reason" in a) { recordFollowNote(address, deskTrade.id, `entry of ${intent.to.symbol} skipped: ${a.reason}`, now); continue; }
+        if ("reason" in a) { recordFollowNote(address, deskTrade.id, `entry of ${intent.to.symbol} skipped: ${a.reason}`, now); return; }
         const i2: Intent = { from: eth, to: intent.to, amount: a.amount, usd: a.amount * (ethUsd as number), capUsd: st.sizeUsd };
         const c2: RailContext = { rails, balances: { "ETH@robinhood": ethBal }, nativeOnFromChain: ethBal, openOrders: 0, lastEntryAt: null, now };
         const r = await executeOnChain(i2, c2, now, { wallet: w, record: (t) => recordFollowTrade(address, deskTrade.id, t) });
@@ -98,7 +98,7 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
         const token = intent.from;
         const raw = await readTokenBalance(token, token.contract as `0x${string}`, w.address);
         const tokenBal = Number(raw) / 10 ** token.decimals;
-        if (!(tokenBal > 0)) continue;
+        if (!(tokenBal > 0)) return;
         const share = exitShare(intent.amount, deskHeldBefore);
         const amount = share >= 0.999 ? tokenBal : Number((tokenBal * share).toPrecision(8));
         const px = intent.usd != null && intent.amount > 0 ? intent.usd / intent.amount : null;
@@ -117,5 +117,15 @@ export async function mirrorForFollowers(intent: Intent, deskTrade: Trade, deskH
       recordFollowNote(address, deskTrade.id, `mirror failed: ${why.slice(0, 160)}`, now);
       console.error(`[follow] mirror for ${address.slice(0, 8)} failed: ${why}`);
     }
-  }
+  };
+  // Agents in parallel batches: each signs from its own wallet with its own nonce, so they never collide; the batch
+  // width bounds the RPC load. One at a time, ten agents would have held the desk's cycle for minutes after each trade.
+  const width = mirrorWidth();
+  for (let i = 0; i < who.length; i += width) await Promise.all(who.slice(i, i + width).map(one));
+}
+
+/** PURE: how many agents are mirrored at once (OBS_FOLLOW_PARALLEL), four unless set; never under one. */
+export function mirrorWidth(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.OBS_FOLLOW_PARALLEL);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 4;
 }
