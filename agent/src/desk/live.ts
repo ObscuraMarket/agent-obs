@@ -20,6 +20,7 @@ import { readPaper, paperBalances } from "./paper.ts";
 import { readBook, boughtSymbols } from "./book.ts";
 import { readScout } from "./scout.ts";
 import { triggersFor, watchRulesFromEnv, heartbeatLine, holdingNote, type WatchState, type Role, type Trigger } from "./watch.ts";
+import { xConfigured } from "../social/xClient.ts";
 
 const POLL_MS = Number(process.env.OBS_LIVE_POLL_MS ?? 3000);
 const BALANCES_MS = Number(process.env.OBS_LIVE_BALANCES_MS ?? 60_000);
@@ -34,6 +35,36 @@ const wantIgnition = (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off";
 let prev: Record<string, WatchState> = {};
 const lastThinkAt: Record<string, number> = {};
 let running: ChildProcess | null = null;
+
+// Agent OBS on X. Once the account's keys are set, the posting job runs every OBS_X_EVERY_MIN minutes from this
+// loop (the job keeps its own post gap and decides whether to speak; without X_LIVE=true it drafts to the ledger,
+// which the Agent page shows). The engagement pass, replies to mentions, runs only with OBS_X_ENGAGE=on. One social
+// job at a time, never in the way of a desk cycle.
+const X_EVERY_MS = Math.max(5, Number(process.env.OBS_X_EVERY_MIN ?? 20)) * 60_000;
+const X_ENGAGE_MS = Math.max(5, Number(process.env.OBS_X_ENGAGE_EVERY_MIN ?? 15)) * 60_000;
+const X_ENGAGE = (process.env.OBS_X_ENGAGE ?? "off").toLowerCase() === "on";
+let socialAt = 0;
+let engageAt = 0;
+let social: ChildProcess | null = null;
+function runSocial(script: string, tag: string): void {
+  if (social) return;
+  const child = spawn(join(ROOT_DIR, "node_modules", ".bin", "tsx"), [script], { cwd: ROOT_DIR, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+  social = child;
+  const relay = (chunk: Buffer) => {
+    for (const line of chunk.toString("utf8").split("\n")) if (line.trim()) console.log(`[${tag}] ${line.slice(0, 300)}`);
+  };
+  child.stdout?.on("data", relay);
+  child.stderr?.on("data", relay);
+  child.on("exit", (code) => {
+    console.log(`[${tag}] done (exit ${code ?? "?"})`);
+    social = null;
+  });
+}
+function maybeSocial(now: number): void {
+  if (!xConfigured()) return;
+  if (now - socialAt >= X_EVERY_MS) { socialAt = now; runSocial("src/autopilot.ts", "x"); return; }
+  if (X_ENGAGE && now - engageAt >= X_ENGAGE_MS) { engageAt = now; runSocial("src/engage.ts", "x-engage"); }
+}
 /** An exit trigger that fired while a cycle was running: held until that cycle ends, then run, since the break on the tape does not wait. */
 let pendingExit: Trigger | null = null;
 let lastTrigger: string | null = null;
@@ -235,6 +266,7 @@ for (;;) {
   const now = Date.now();
   try {
     await step(now);
+    maybeSocial(now);
   } catch (e) {
     console.log(`[live] step failed: ${e instanceof Error ? e.message : String(e)}`);
   }

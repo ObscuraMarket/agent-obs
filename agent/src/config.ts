@@ -34,6 +34,8 @@ export const dataPath = (file: string): string => join(DATA_DIR, file);
 export const AGENT_ID = process.env.OBS_AGENT_ID || "obs";
 export const X_AGENT_ID = process.env.OBS_X_AGENT_ID || "obs-copywriter";
 export const X_HANDLE = (process.env.X_HANDLE || "ObscuraCEX").replace(/^@/, "");
+/** Whose voice the X jobs speak in: "trader" is Agent OBS about its own trading (the default); "copywriter" is Obscura's company voice. */
+export const X_VOICE: "trader" | "copywriter" = (process.env.OBS_X_VOICE || "trader").toLowerCase() === "copywriter" ? "copywriter" : "trader";
 export const DRY = process.env.DRY_RUN === "1";
 export const MIN_POST_GAP_MIN = Number(process.env.OBS_MIN_POST_GAP_MIN ?? 90);
 export const ENGAGE_CAP = Number(process.env.OBS_ENGAGE_CAP ?? 3);

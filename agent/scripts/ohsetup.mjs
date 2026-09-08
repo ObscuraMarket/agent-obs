@@ -34,7 +34,8 @@ const gw = new GatewayClient({ baseUrl, token });
 
 const personas = {
   [process.env.OBS_AGENT_ID || "obs"]: { dir: "obs", name: "OBS" },
-  [process.env.OBS_X_AGENT_ID || "obs-copywriter"]: { dir: "copywriter", name: "OBS copywriter" },
+  // The X agent speaks in one of two voices: Agent OBS about its own trading (the default), or Obscura's copywriter.
+  [process.env.OBS_X_AGENT_ID || "obs-copywriter"]: (process.env.OBS_X_VOICE || "trader").toLowerCase() === "copywriter" ? { dir: "copywriter", name: "OBS copywriter" } : { dir: "xtrader", name: "Agent OBS on X" },
 };
 const load = (dir, key) => readFileSync(join(ROOT, "personality", dir, `${key}.md`), "utf8").replace(/^#\s+\w+\s*\n/, "").trim();
 

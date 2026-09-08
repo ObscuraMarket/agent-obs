@@ -5,7 +5,8 @@
 import { GatewayClient } from "@openhermit/sdk";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DRY, MIN_POST_GAP_MIN, SIMILARITY_MAX, X_AGENT_ID, X_HANDLE, MAX_TWEET_CHARS, ROOT_DIR } from "./config.ts";
+import { DRY, MIN_POST_GAP_MIN, SIMILARITY_MAX, X_AGENT_ID, X_HANDLE, X_VOICE, MAX_TWEET_CHARS, ROOT_DIR } from "./config.ts";
+import { traderBlock, traderData, traderPrompt, TRADER_FORMS } from "./social/traderVoice.ts";
 import { postTweet, getMyPostMetrics } from "./social/xClient.ts";
 import { cleanReply, forbiddenReason, tooSimilar } from "./social/postGuards.ts";
 import { recallForPrompt, remember, splitNote } from "./journal.ts";
@@ -81,9 +82,10 @@ const FORMS: string[] = [
   `WHAT YOU ARE WATCHING AND NOT TOUCHING. Name the thing and the one condition that would change your mind. The discipline is the content.`,
   `AN ADMISSION about the MARKET, not yourself. A read you hold loosely, a number you do not trust yet. Never uncertainty about your own competence.`,
 ];
-const form = FORMS[postedRows.length % FORMS.length];
+const forms = X_VOICE === "trader" ? TRADER_FORMS : FORMS;
+const form = forms[postedRows.length % forms.length];
 
-const prompt = `You are Obscura's copywriter, running @${X_HANDLE} on X. Your voice guide, in full:
+const copywriterPrompt = `You are Obscura's copywriter, running @${X_HANDLE} on X. Your voice guide, in full:
 
 ${voice}
 
@@ -109,6 +111,11 @@ ${form}
 HARD LIMIT: ${MAX_TWEET_CHARS} characters, a wall, not a guideline. Aim well under it. No em dashes, no hashtags, no quotation marks, no reciting your own values.
 
 If nothing is genuinely worth saying right now: reply with PASS on the first line, then your NOTE.`;
+
+// Agent OBS's own account: the desk speaks about its own trading from its own ledgers; the copywriter's prompt is Obscura's voice.
+const prompt = X_VOICE === "trader"
+  ? traderPrompt({ handle: X_HANDLE, block: traderBlock(traderData()), journal, recent, performance, form, maxChars: MAX_TWEET_CHARS })
+  : copywriterPrompt;
 
 const sessionId = "x-autopilot";
 await gw.agent(X_AGENT_ID).openSession({ sessionId, source: { kind: "api", interactive: true, type: "direct" } }).catch(() => {});
