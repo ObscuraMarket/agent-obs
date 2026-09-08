@@ -232,6 +232,9 @@ if [ -f "$HEADER_SPEC" ] && ! cmp -s "$ROOT/dashboard/relay/header.component.spe
   cp "$ROOT/dashboard/relay/header.component.spec.ts" "$HEADER_SPEC"
 fi
 cp "$ROOT/dashboard/angular/src/app/service/obs-desk.service.ts" "$APP/service/obs-desk.service.ts"
+# Every service file of ours the pages import, not one by name: send-guard.ts was imported by the console and not
+# copied, and the site's build broke on the missing module the moment the relay merged (2026-09-08).
+for svc in "$ROOT"/dashboard/angular/src/app/service/*.ts; do cp "$svc" "$APP/service/$(basename "$svc")"; done
 cp "$ROOT/dashboard/INTEGRATION.md" "$DOCS/INTEGRATION.md"
 cp "$ROOT/dashboard/index.html" "$DOCS/reference.html"
 # The assets the Agent page references, added beside the site's own (never deleted).
