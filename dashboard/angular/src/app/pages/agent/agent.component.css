@@ -1903,11 +1903,42 @@ table.tbl.mine-tbl {
   background: rgba(184, 255, 61, 0.06);
 }
 
-/* The name is a real button: reachable on the keyboard, announced as open or closed, and the row's own click does the same. */
-.agent-open {
+/* Six columns since 2026-09-08 (Mode and Wallet moved into the panel): a phone scrolls it less than the house tables' eight. */
+table.tbl.agents-tbl {
+  min-width: 600px;
+}
+
+/* One row of the Agent cell: dot, name, a tag or two, the chevron last, evenly spaced. */
+.agent-cell {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.agent-cell .dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.agent-cell .dot.on {
+  background: var(--lime);
+  box-shadow: 0 0 6px rgba(184, 255, 61, 0.5);
+}
+
+/* "paper" or "off" after the name: small and quiet, since live and running are the norm. */
+.agent-cell .tag {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--white);
+  opacity: 0.7;
+}
+
+/* The name is a real button: reachable on the keyboard, announced as open or closed, and the row's own click does the same. */
+.agent-open {
+  display: inline-block;
   background: none;
   border: 0;
   border-bottom: 1px solid transparent;
@@ -1934,14 +1965,23 @@ table.tbl.mine-tbl {
   border-radius: 4px;
 }
 
-.agent-open .chev {
+/* The chevron closes the cell and turns with the row's panel, lime whenever the name is. */
+.agent-cell .chev {
   width: 14px;
   height: 14px;
   flex: 0 0 14px;
-  transition: transform 0.2s ease;
+  color: var(--white);
+  opacity: 0.7;
+  transition: transform 0.2s ease, color 0.2s ease, opacity 0.2s ease;
 }
 
-.agent-open[aria-expanded="true"] .chev {
+.tbl tr.pick:hover .agent-cell .chev,
+.tbl tr.open .agent-cell .chev {
+  color: var(--lime);
+  opacity: 1;
+}
+
+.tbl tr.open .agent-cell .chev {
   transform: rotate(90deg);
 }
 
@@ -2050,6 +2090,27 @@ table.tbl.mine-tbl {
 }
 
 @media (max-width: 760px) {
+  table.tbl.agents-tbl {
+    min-width: 540px;
+    font-size: 13px;
+  }
+
+  .agents-tbl th,
+  .agents-tbl td {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .agent-cell {
+    gap: 6px;
+  }
+
+  .agent-cell .chev {
+    width: 12px;
+    height: 12px;
+    flex-basis: 12px;
+  }
+
   .agent-panel {
     padding: 14px;
   }

@@ -4,6 +4,7 @@ import { Meta, Title } from '@angular/platform-browser';
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import { timeout } from 'rxjs';
 import { REFRESH_MS, nextRefreshMs, tickStatus } from './refresh';
+import { agentsSummary, shortPct, sinceText, sinceTitle, visibleAgents, wholeUsd } from './agents';
 import { SPARK_H, SPARK_W, Spark, sparkline } from './sparkline';
 import {
   CgMarket, ObsDashboard, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
@@ -62,11 +63,17 @@ const MY_BOOK_TIMEOUT_MS = 20_000;
 export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   status: ObsStatus | null = null;
   pnl: ObsPnl | null = null;
-  /** The agents following the desk, as anyone may see them. */
+  /**
+   * The agents following the desk, as anyone may see them: the API's list less the switched-off blanks (off, no
+   * trades, nothing held), which the table hid from 2026-09-08 so a "test" agent stopped sitting in it. The summary
+   * counts these rows, not the API's totals.
+   */
   agents: ObsPublicAgent[] = [];
-  agentsOn = 0;
-  agentsLive = 0;
-  get agentsSummary(): string { return this.agents.length ? `${this.agentsOn} on, ${this.agentsLive} live, ${this.agents.length} all time` : 'none yet'; }
+  get agentsSummary(): string { return agentsSummary(this.agents); }
+  sinceText(ts: number): string { return sinceText(ts); }
+  sinceTitle(ts: number): string { return sinceTitle(ts); }
+  wholeUsd(v: number): string { return wholeUsd(v); }
+  shortPct(v: number): string { return shortPct(v); }
   // ---- Your agent: the wallet that signed in on the console, its own book, from its own signed read ----
   /** The connected wallet: the site's own connection when the module hands one over, else the browser's provider asked once, silently. */
   myWallet: string | null = null;
@@ -529,7 +536,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (d.agentToken) { this.agentToken = d.agentToken; }
     if (d.reads) { this.reads = d.reads; this.buildWallet(d.reads); }
     if (d.pnl) { this.pnl = d.pnl; this.buildPortfolio(d.pnl); this.buildPositions(d.pnl); }
-    if (d.agents) { this.agents = d.agents.agents ?? []; this.agentsOn = d.agents.on ?? 0; this.agentsLive = d.agents.live ?? 0; }
+    if (d.agents) { this.agents = visibleAgents(d.agents.agents ?? []); }
     if (d.market) { this.obsMarket = d.market; }
     if (d.trades) { this.buildTicker(d.trades.items); }
     if (d.feed) { this.feed = d.feed.items.slice(0, 6); }
