@@ -15,6 +15,7 @@ import { appendLedger, readLedger } from "../ledger.ts";
 import { ASSETS } from "./assets.ts";
 import { viemChain, transport, readNativeBalance, type Wallet } from "./signer.ts";
 import { resolvePayToken, valueUsd } from "./credits.ts";
+import { acquire } from "./walletLock.ts";
 import { EXPLORER_URL } from "../config.ts";
 
 export const WALLETS_LEDGER = "obs-agent-wallets.jsonl";
@@ -155,15 +156,31 @@ export async function agentBalanceEth(address: string): Promise<number> {
   return Number(await readNativeBalance(ASSETS["ETH@robinhood"], agentWalletAddress(address))) / 1e18;
 }
 
+export type WithdrawResult = { ok: true; hash: `0x${string}`; amount: number; explorerUrl: string } | { ok: false; reason: string };
+
 /**
  * Send ETH from the agent's wallet back to the wallet that signed in, and nowhere else: the destination is the
  * signed-in address by construction. "all" keeps back the gas of the transfer itself. Waits for the receipt.
  */
-export async function withdrawEth(address: string, amount: number | "all", now = Date.now(), keepEth = 0): Promise<{ ok: true; hash: `0x${string}`; amount: number; explorerUrl: string } | { ok: false; reason: string }> {
+export async function withdrawEth(address: string, amount: number | "all", now = Date.now(), keepEth = 0): Promise<WithdrawResult> {
   if (!walletsOn()) return { ok: false, reason: "Agent wallets aren't switched on here yet." };
   if (!isAddress(address)) return { ok: false, reason: "no wallet to send to" };
   // A dust amount is a typo, and sending it would only spend gas (a 0.0000001 ETH withdrawal went out on 2026-09-08).
   if (amount !== "all" && !(amount >= MIN_WITHDRAW_ETH)) return { ok: false, reason: `The smallest withdrawal is ${MIN_WITHDRAW_ETH} ETH; /withdraw all sends everything it can.` };
+  // The wallet's lock, from the balance read to the receipt: the cycle's mirror signs from this same wallet in
+  // another process, and a withdrawal priced against a balance an entry was spending would collide on the nonce
+  // or sweep the entry's ETH (2026-09-08). A trade in flight is a short wait, never a fight for the wallet.
+  const release = acquire(address, "withdraw");
+  if (!release) return { ok: false, reason: "your agent is in the middle of a trade; try again in a moment" };
+  try {
+    return await sendWithdrawal(address, amount, now, keepEth);
+  } finally {
+    release();
+  }
+}
+
+/** The withdrawal itself, under the wallet's lock: read the balance, price the transfer, send it, wait for the receipt, record it. */
+async function sendWithdrawal(address: `0x${string}`, amount: number | "all", now: number, keepEth: number): Promise<WithdrawResult> {
   const eth = ASSETS["ETH@robinhood"];
   const chain = viemChain(eth);
   const pub = createPublicClient({ chain, transport: transport(eth) });
