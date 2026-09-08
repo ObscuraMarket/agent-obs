@@ -24,7 +24,7 @@ import { exitVerdict, type HourlyStat } from "./candidates.ts";
 import { railsFromEnv } from "./rails.ts";
 import { readPrices } from "./analysis.ts";
 import { railInput, quoteUsd, tapeLastUsd } from "./railInput.ts";
-import { readTapePeaks, writeTapePeaks, rememberPeak, keepHeldPeaks, type TapePeak } from "./tapePeaks.ts";
+import { readTapePeaks, writeTapePeaks, rememberPeak, peaksAfterWalletRead, type TapePeak } from "./tapePeaks.ts";
 import { xConfigured } from "../social/xClient.ts";
 import { raiseAlert, cycleVerdict } from "./alerts.ts";
 
@@ -114,11 +114,14 @@ function railRead(symbol: string, st: WatchState, rows: SwapRow[], poolId: strin
   // Unpriced (no swap in the window, or a quote with no dollar read), the rails that need no price still read.
   const quotePriceUsd = st.quote ? quoteUsd(st.quote, {}, samples, now) : null;
   const priceUsd = tapeLastUsd(rows, quotePriceUsd, now, tapeWindowMin());
-  const input = railInput({ symbol, qty, priceUsd, trades, flows, samples, tapeRows: rows, quotePriceUsd, tapePeaks, hourly: feedHourly[poolId.toLowerCase()] ?? [], tapeTrend: st.trend, tapeBuyPressurePct: st.buyPressurePct ?? null, now });
+  const input = railInput({ symbol, qty, priceUsd, trades, flows, samples, tapeRows: rows, quote: st.quote, quotePriceUsd, tapePeaks, hourly: feedHourly[poolId.toLowerCase()] ?? [], tapeTrend: st.trend, tapeBuyPressurePct: st.buyPressurePct ?? null, now });
   // The position's high, kept on disk the look it is raised: the tape's window rolls and a redeploy empties this
-  // process, and the trail read from cycle-time samples alone gave back 22 to 31% instead of 15% (2026-09-08).
-  const kept = rememberPeak(tapePeaks, symbol, input.firstBuy, input.peakPx, now);
-  if (kept.changed) { tapePeaks = kept.rows; savePeaks(); }
+  // process, and the trail read from cycle-time samples alone gave back 22 to 31% instead of 15% (2026-09-08). It
+  // is the tape's own peak in the pool's quote units, so the cycle prices it at its own quote price (tapePeaks.ts).
+  if (st.quote) {
+    const kept = rememberPeak(tapePeaks, symbol, input.firstBuy, st.quote, input.tapePeakQuote, now);
+    if (kept.changed) { tapePeaks = kept.rows; savePeaks(); }
+  }
   const v = exitVerdict(input, railsFromEnv());
   return v ? { rail: v.reason, railKind: v.kind } : none;
 }
@@ -166,10 +169,11 @@ function refreshHeld(now: number): void {
       const bought = boughtSymbols([...readBook().trades, ...(PAPER ? readPaper() : [])]);
       held = Object.values(dynamicAssets()).filter((a) => bought.has(a.symbol) && isHolding(by[a.symbol])).map((a) => a.symbol);
       heldBalances = Object.fromEntries(held.map((s) => [s, by[s] ?? 0]));
-      // A position the wallet no longer holds is closed: its peak is dropped so a re-entry starts its own. Only
-      // here, after a real wallet read; an empty list before the first read is not a close.
+      // A position the wallet read says is no longer held is closed: its peak is dropped so a re-entry starts its
+      // own. Only here, after a real wallet read, and only for a token the read answered for: a balance the chain
+      // did not answer is unread, not zero (tapePeaks.ts, review of 2026-09-08).
       if (!PAPER) {
-        const kept = keepHeldPeaks(tapePeaks, held);
+        const kept = peaksAfterWalletRead(tapePeaks, chain.bySymbol);
         if (kept.changed) { tapePeaks = kept.rows; savePeaks(); }
       }
     })

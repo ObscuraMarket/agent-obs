@@ -505,12 +505,13 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
     // tripped is the rail this pass sees; the price feed stands in only when the pool has not traded in the window.
     // Priced from the feed alone, this pass dismissed a floor the watch had tripped at the tape's price, and the
     // watch had raised it once (2026-09-08).
-    const quotePriceUsd = quoteUsd(dynamicPoolSpec(a)?.quote ?? "USDG", prices, samples, now);
+    const quote = dynamicPoolSpec(a)?.quote ?? "USDG";
+    const quotePriceUsd = quoteUsd(quote, prices, samples, now);
     const priceUsd = tapeLastUsd(rows, quotePriceUsd, now, tapeWindowMin()) ?? prices[a.symbol] ?? null;
     // The position held now, not a round trip closed earlier today: its peak, its age and its take-profit memory
     // start at this span's first buy, or at the candidate's first sighting when the ledger has no buy (railInput.ts).
     // The peak reads the tape and the watch's persisted high too, not the cycle-time samples alone (2026-09-08).
-    const input = railInput({ symbol: a.symbol, qty: held, priceUsd, trades: allTrades, flows: book.flows, samples, tapeRows: rows, quotePriceUsd, tapePeaks, hourly, tapeTrend: tape.trend, tapeBuyPressurePct: tape.buyPressurePct, now, seenAt: a.candidate.seenAt });
+    const input = railInput({ symbol: a.symbol, qty: held, priceUsd, trades: allTrades, flows: book.flows, samples, tapeRows: rows, quote, quotePriceUsd, tapePeaks, hourly, tapeTrend: tape.trend, tapeBuyPressurePct: tape.buyPressurePct, now, seenAt: a.candidate.seenAt });
     const v = exitVerdict(input, ctx.rails);
     if (!v) continue;
     const amount = v.share >= 1 ? held : Number((held * v.share).toPrecision(8));
