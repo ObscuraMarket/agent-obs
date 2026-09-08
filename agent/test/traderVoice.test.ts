@@ -46,6 +46,8 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   assert.match(p, /ONE IDEA PER POST/);
   assert.match(p, /Token symbols stay in capitals/);
   assert.match(p, /operator's hand is the operator's move/);
+  assert.match(p, /HOW IT SHOULD SOUND: like you telling a friend at dinner/);
+  assert.ok(TRADER_FORMS.every((f) => /^[A-Z][A-Z ,-]+\. /.test(f) && f.length < 320));
   assert.ok(!p.includes("Anchors for the register"));
   const withAnchors = traderPrompt({ handle: "AgentOBS", block, journal: "", recent: [], performance: "", form: TRADER_FORMS[0], maxChars: 280, examples: "- i left LENNY at 12:52 UTC, the trail took it." });
   assert.match(withAnchors, /Anchors for the register only: never repeat one[\s\S]*- i left LENNY at 12:52 UTC/);
