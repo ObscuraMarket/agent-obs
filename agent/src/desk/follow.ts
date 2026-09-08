@@ -55,12 +55,22 @@ export function followState(rows: FollowRow[], address: string): FollowState {
   return s;
 }
 
-/** PURE: a size the console will accept: whole dollars from the floor up to what the desk itself trades, or the reason. */
-export function checkSize(raw: unknown, deskMaxUsd: number): { sizeUsd: number } | { error: string } {
+/**
+ * PURE: the most an agent may put into one entry: OBS_FOLLOW_MAX_USD when the operator set one, else what the desk
+ * itself trades. Its own switch because a person's size is theirs to choose, and the desk's ticket is a rail on the
+ * house book, not on theirs; the pools are still the pools, so the operator raises it with the depth in mind.
+ */
+export function followMaxUsd(deskMaxUsd: number, env: NodeJS.ProcessEnv = process.env): number {
+  const v = Number(env.OBS_FOLLOW_MAX_USD);
+  return Number.isFinite(v) && v >= MIN_SIZE_USD ? Math.round(v) : deskMaxUsd;
+}
+
+/** PURE: a size the console will accept: whole dollars from the floor up to the cap, or the reason. */
+export function checkSize(raw: unknown, maxUsd: number): { sizeUsd: number } | { error: string } {
   const n = typeof raw === "number" ? raw : Number(String(raw ?? "").replace(/[$,]/g, ""));
-  if (!Number.isFinite(n)) return { error: `Say a size in dollars: /size 100 (from $${MIN_SIZE_USD} up to $${deskMaxUsd}, what the desk itself trades).` };
+  if (!Number.isFinite(n)) return { error: `Say a size in dollars: /size 100 (from $${MIN_SIZE_USD} up to $${maxUsd} a trade).` };
   if (n < MIN_SIZE_USD) return { error: `The smallest size is $${MIN_SIZE_USD} a trade.` };
-  if (n > deskMaxUsd) return { error: `The largest size is $${deskMaxUsd} a trade, what the desk itself trades.` };
+  if (n > maxUsd) return { error: `The largest size here is $${maxUsd} a trade.` };
   return { sizeUsd: Math.round(n) };
 }
 

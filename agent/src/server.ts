@@ -55,7 +55,7 @@ import { routeConsole } from "./cli/router.ts";
 import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines, agentsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 import { holderGate, forgetHolder, gateMode } from "./desk/gate.ts";
-import { followState, readFollow, recordFollow, checkSize, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, liveHoldings, mirrorTrades, followEvents, type FollowMode } from "./desk/follow.ts";
+import { followState, readFollow, recordFollow, checkSize, followMaxUsd, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, liveHoldings, mirrorTrades, followEvents, type FollowMode } from "./desk/follow.ts";
 import { readEntries } from "./desk/trade-memory.ts";
 import { liveOn, canStartLive } from "./desk/mirror.ts";
 import { latestEthUsd } from "./desk/onchain.ts";
@@ -1138,7 +1138,7 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
           // funded, on paper until then. One row per command; the book is the desk's own accounting on the agent's
           // trades, marked at the desk's prices.
           const a = address as string;
-          const deskMax = railsFromEnv().maxSwapUsd;
+          const deskMax = followMaxUsd(railsFromEnv().maxSwapUsd);
           let state = followState(readFollow(), a);
           const act = routed.effect.action;
           const wasOn = state.on;

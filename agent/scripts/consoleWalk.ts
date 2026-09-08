@@ -184,7 +184,7 @@ async function walk(): Promise<void> {
     ["/withdraw 99 ETH", /more than that|smallest withdrawal|holds/],
     ["/size", /^Say what your agent puts into each entry/],
     ["/size 5", /^The smallest size is \$10 a trade/],
-    ["/size 100000", /^The largest size is \$\d+ a trade, what the desk itself trades\.$/],
+    ["/size 100000", /^The largest size here is \$\d+ a trade\.$/],
     ["/size abc", /^Say what your agent puts into each entry/],
     ["/start 5", /^The smallest size is/],
     ["/start live paper", /^Say a size in dollars/],

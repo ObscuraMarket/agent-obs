@@ -90,6 +90,7 @@ export function helpLines(door: Door = {}): string[] {
     "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
     `  /connect           ${connectLine(door.gate)}`,
     "  /start [size]      Turn your trading agent on: it follows every trade Agent OBS makes, at your size, live from its own wallet once you fund it. /stop, /agent",
+    "  /size 150          What it puts into each entry, in dollars; change it any time",
     "  /wallet            Your agent's own wallet: /fund 0.05 ETH puts ETH in from your wallet, /withdraw all takes it back",
     ...(door.apps === false ? [] : ["  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent"]),
     "  /model             Pick the model your agent runs on, any of them",

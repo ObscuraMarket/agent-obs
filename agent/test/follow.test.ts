@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { followState, mirrorTrades, mirrorHoldings, followBook, followLines, checkSize, DEFAULT_SIZE_USD } from "../src/desk/follow.ts";
+import { followState, mirrorTrades, mirrorHoldings, followBook, followLines, checkSize, followMaxUsd, DEFAULT_SIZE_USD } from "../src/desk/follow.ts";
 import type { Trade } from "../src/desk/book.ts";
 
 const A = "0x1111111111111111111111111111111111111111";
@@ -37,7 +37,13 @@ test("a size is whole dollars between the floor and what the desk trades", () =>
   assert.deepEqual(checkSize("$1,000", 1000), { sizeUsd: 1000 });
   assert.match((checkSize("abc", 200) as { error: string }).error, /Say a size in dollars/);
   assert.match((checkSize(5, 200) as { error: string }).error, /smallest size is \$10/);
-  assert.match((checkSize(250, 200) as { error: string }).error, /largest size is \$200/);
+  assert.match((checkSize(250, 200) as { error: string }).error, /largest size here is \$200/);
+  // The cap is the operator's own switch when set, else the desk's ticket; below the floor or unreadable, the desk's.
+  assert.equal(followMaxUsd(200, {} as NodeJS.ProcessEnv), 200);
+  assert.equal(followMaxUsd(200, { OBS_FOLLOW_MAX_USD: "1000" } as NodeJS.ProcessEnv), 1000);
+  assert.equal(followMaxUsd(200, { OBS_FOLLOW_MAX_USD: "5" } as NodeJS.ProcessEnv), 200);
+  assert.equal(followMaxUsd(200, { OBS_FOLLOW_MAX_USD: "lots" } as NodeJS.ProcessEnv), 200);
+  assert.deepEqual(checkSize(500, followMaxUsd(200, { OBS_FOLLOW_MAX_USD: "1000" } as NodeJS.ProcessEnv)), { sizeUsd: 500 });
 });
 
 test("the agent mirrors the desk's entries at its size and the desk's exits by share, from the moment it was turned on", () => {
