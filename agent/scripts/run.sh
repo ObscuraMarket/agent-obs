@@ -43,7 +43,10 @@ if [ -n "${OBS_WALLET_JSON:-}" ] && [ ! -f "${OBS_WALLET_DIR:-/wallet}/obs-walle
   mkdir -p "${OBS_WALLET_DIR:-/wallet}" && umask 077 && printf '%s' "$OBS_WALLET_JSON" > "${OBS_WALLET_DIR:-/wallet}/obs-wallet.json" && log "wallet file written from OBS_WALLET_JSON"
 fi
 
-# 3. The read-only API, the live watch and the feed puller, in the background.
+# 3. The read-only API, the live watch and the feed puller, in the background. First, a cycle lock left on the
+#    volume by the previous container is nobody's: its pid can name a live process in this one, and a fresh watch
+#    then waited on it and kept its first entry trigger for minutes (2026-09-08).
+if [ -f "$DATA/obs-cycle.lock" ]; then rm -f "$DATA/obs-cycle.lock" && log "cleared a cycle lock from before this boot"; fi
 tsx src/server.ts &
 API=$!
 tsx src/desk/live.ts &
