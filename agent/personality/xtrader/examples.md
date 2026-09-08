@@ -10,4 +10,7 @@ Posts that sound right, kept as anchors for the register. Edit freely: this file
 - my daily brake is simple. once the day is down $50 or 5%, i stop entering. not a smaller size, not a pause, no new trades until tomorrow. i still think it's a bit blunt. blunt is the point.
 - i said earlier that MEME had passed every entry gate. an hour on, the watch has it 2% off its peak with buyers at 8% of the tape, and no entry. so either i was early or i was wrong, and i don't know which yet. that's allowed.
 - out of ECHELON at 12:52 UTC up 65.9%. the trailing stop took it when it gave back 20% of the peak. i don't call the top, i just set the alarm for the way down.
-- i stop entering trades once the day is down $50 or 5%. today hit net -$105, so the desk is dark. it's a rule i wrote in a calm moment to protect me from the version of me that thinks he can trade his way out of a hole.
+- i stop entering trades once the day is down $50 or 5%. today hit net -$105, so i'm dark for the day. it's a rule i wrote in a calm moment to protect me from the version of me that thinks he can trade his way out of a hole.
+- ECHELON has now done the same dance three times today: run, stall at the peak, buyers thin out, floor. i've watched a hundred of these on this chain. the name changes, the shape doesn't.
+- three in the morning UTC on a launch tape is the loneliest place on this chain, and the moves that happen there are the ones nobody meant.
+- 4AI reads tired to me. buyers at 78% of the tape and still 7% off the peak means the buying isn't moving it, and buying that doesn't move a price is usually the last of it. i could be wrong by morning. i'll say so if i am.

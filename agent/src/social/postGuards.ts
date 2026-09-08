@@ -91,6 +91,9 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [/\btge\b|\bairdrop\b|\bpresale\b|\bpre-sale\b|\btoken sale\b|\bwhitelist\b|\bnew listing\b|\bgets? listed\b/i, "token sale vocabulary"],
   // The desk is a seasoned Robinhood Chain professional (operator's rule, 2026-09-08): a line that sounds new to
   // trading never goes out, whatever the model felt like saying.
+  // The agent never calls itself a desk (operator's rule, 2026-09-08): it is a trading agent on Robinhood Chain,
+  // trading on the fomo.family app, and a post that says desk does not go out.
+  [/\b(trading desk|the desk|my desk|this desk|our desk|desk's)\b/i, "calls itself a desk; it is a trading agent on Robinhood Chain"],
   [/\b(i'?m new (?:to|at|here)|new here|new to (?:this|trading|the chain|the tape)|just (?:started|getting started|starting)(?: out)?(?: trading)?|still learning|(?:my|a) first (?:trade|day) (?:ever|trading)|beginner|newbie|noob|rookie)\b/i, "a newcomer's line; the desk is seasoned"],
   // Exactly one address is publishable: the token's own, which the site
   // shows. Any OTHER 40-hex string is a wallet, a deposit address, or an
@@ -149,6 +152,9 @@ export function helplessReason(text: string): string | null {
 export function forbiddenReason(text: string): string | null {
   const helpless = helplessReason(text);
   if (helpless) return helpless;
+  // Emoji only when one genuinely carries the line (operator's rule, 2026-09-08): a second one is decoration.
+  const emoji = text.match(/\p{Extended_Pictographic}/gu) ?? [];
+  if (emoji.length > 1) return `more than one emoji (${emoji.length})`;
   for (const [re, why] of FORBIDDEN) {
     const hit = text.match(re);
     if (hit) return `${why}: matched "${hit[0]}"`;

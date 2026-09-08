@@ -30,7 +30,7 @@ say("```\n" + block + "\n```\n");
 const examplesPath = join(ROOT_DIR, "personality", "xtrader", "examples.md");
 const examples = existsSync(examplesPath) ? readFileSync(examplesPath, "utf8").replace(/^#\s+\w+\s*\n/, "").trim() : "";
 const recent: string[] = [];
-const labels = ["trade note", "the record", "watching, not touching", "an admission", "a mechanic", "a one-liner", "a callback"];
+const labels = ["trade note", "the record", "watching, not touching", "an admission", "a mechanic", "a one-liner", "a callback", "a take", "a chain note"];
 for (const i of formsArg) {
   const form = TRADER_FORMS[i];
   const prompt = traderPrompt({ handle: X_HANDLE, block, journal: "", recent, performance: "", form, maxChars: MAX_TWEET_CHARS, examples });

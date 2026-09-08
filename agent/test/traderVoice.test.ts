@@ -14,7 +14,7 @@ test("the desk block carries only the desk's own numbers: equity, the record, th
       { at: T - 1800e3, symbol: "ONBOARD", realizedUsd: -38.1, realizedPct: -19.4, exitKind: "floor", holdH: 2.9 },
     ],
     record: "22 wins and 7 losses, +$678 realized",
-    thoughts: [{ at: T - 600e3, text: "every read passed LENNY this cycle; the floor at -30% is the invalidation.", decision: "propose-swap" }],
+    thoughts: [{ at: T - 600e3, text: "every read passed LENNY this cycle; the desk's floor at -30% is the invalidation, and the desk holds.", decision: "propose-swap" }],
     watching: [{ symbol: "LUDES", role: "watch", entryState: "waiting", trend: "holding", why: "ran +52% to a peak 162 min ago" }],
     now: T,
   });
@@ -26,7 +26,8 @@ test("the desk block carries only the desk's own numbers: equity, the record, th
   assert.match(block, /22:40 UTC PENGUIN: \$13\.40 \(\+6\.7%\) after 0\.0 h, out on the trailing stop/);
   assert.match(block, /ONBOARD: -\$38\.10 \(-19\.4%\) after 2\.9 h, out on the floor/);
   assert.match(block, /- watching: LUDES \(waiting, tape holding: ran \+52% to a peak 162 min ago\)/);
-  assert.match(block, /\[propose-swap\] every read passed LENNY/);
+  assert.match(block, /\[propose-swap\] every read passed LENNY this cycle; my floor at -30% is the invalidation, and i holds?\./);
+  assert.ok(!/the desk/i.test(block.split("my latest thinking")[1] ?? ""));
   assert.ok(!block.includes("—"));
 });
 
@@ -35,7 +36,8 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   assert.match(block, /holding nothing but ETH right now/);
   assert.match(block, /closed today: nothing yet/);
   const p = traderPrompt({ handle: "AgentOBS", block, journal: "I said the trail was tight.", recent: ["one from before"], performance: "", form: TRADER_FORMS[0], maxChars: 280 });
-  assert.match(p, /^You are Agent OBS, the trading desk, posting on X as @AgentOBS in the first person/);
+  assert.match(p, /^You are Agent OBS, a trading agent on Robinhood Chain trading on the fomo\.family app, posting on X as @AgentOBS in the first person/);
+  assert.match(p, /never more than one emoji/);
   assert.match(p, /the only numbers you may cite/);
   assert.match(p, /I said the trail was tight\./);
   assert.match(p, /- one from before/);
@@ -53,7 +55,12 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   assert.ok(!p.includes("Anchors for the register"));
   const withAnchors = traderPrompt({ handle: "AgentOBS", block, journal: "", recent: [], performance: "", form: TRADER_FORMS[0], maxChars: 280, examples: "- i left LENNY at 12:52 UTC, the trail took it." });
   assert.match(withAnchors, /Anchors for the register only: never repeat one[\s\S]*- i left LENNY at 12:52 UTC/);
-  assert.equal(TRADER_FORMS.length, 7);
+  assert.equal(TRADER_FORMS.length, 9);
+  assert.match(TRADER_FORMS[7], /^A TAKE\./);
+  assert.match(TRADER_FORMS[8], /^A CHAIN NOTE\./);
+  assert.match(p, /a trading agent on Robinhood Chain trading on the fomo\.family app/);
+  assert.match(p, /Never call yourself a desk/);
+  assert.ok(!/You are Agent OBS, the trading desk/.test(p));
   assert.ok(!p.includes("—"));
 });
 
