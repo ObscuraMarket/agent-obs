@@ -344,60 +344,6 @@
     </ng-container>
   </div>
 
-  <!-- The agents following the desk: in public, by name and their own wallets, never the person's. A row opens its agent's book below -->
-  <div class="card block">
-    <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Agents</h2><span>{{ agentsSummary }}</span></div>
-    <div class="tbl-wrap">
-      <table class="tbl agents-tbl">
-        <thead>
-          <tr><th>Agent</th><th class="r">Size</th><th>Holding</th><th class="r">Realized</th><th class="r">Trades</th><th>Since</th></tr>
-        </thead>
-        <tbody>
-          <tr *ngIf="!agents.length"><td colspan="6" class="none">No agent is following the desk yet. Sign in to the console and /start to be the first.</td></tr>
-          <tr *ngFor="let a of agents" [class.pick]="!!a.walletAddress" [class.open]="isPicked(a)" (click)="rowClick(a, $event)">
-            <td class="asset">
-              <span class="agent-cell">
-                <i class="dot" [class.on]="a.on" aria-hidden="true"></i>
-                <button type="button" class="agent-open" *ngIf="a.walletAddress" (click)="toggleAgent(a); $event.stopPropagation()" [attr.aria-expanded]="isPicked(a)" [attr.aria-controls]="isPicked(a) ? 'agent-panel' : null" [attr.title]="isPicked(a) ? 'Close its book' : 'Open its book'">{{ a.name }}</button>
-                <span *ngIf="!a.walletAddress">{{ a.name }}</span>
-                <span class="tag" *ngIf="a.mode === 'paper'">paper</span>
-                <span class="tag" *ngIf="!a.on">off</span>
-                <svg class="chev" *ngIf="a.walletAddress" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-              </span>
-            </td>
-            <td class="r num">{{ wholeUsd(a.sizeUsd) }}</td>
-            <!-- One holding is "PORT $94 · -5.6%"; a comma between holdings, so the dot only ever joins a value to its percent (2026-09-08) -->
-            <td class="num">
-              <span class="mutedtx" *ngIf="!a.positions.length">nothing</span>
-              <span *ngFor="let x of a.positions; let last = last">{{ x.asset }} {{ x.valueUsd == null ? 'unpriced' : wholeUsd(x.valueUsd) }}<ng-container *ngIf="x.unrealizedPct != null"> · <span [ngClass]="dir(x.unrealizedPct)">{{ shortPct(x.unrealizedPct) }}</span></ng-container><span class="mutedtx" *ngIf="!last">, </span></span>
-            </td>
-            <td class="r num"><span [ngClass]="a.realizedUsd ? dir(a.realizedUsd) : 'mutedtx'">{{ a.realizedUsd ? usd(a.realizedUsd, true) : '$0' }}</span></td>
-            <td class="r num"><span [class.mutedtx]="!a.trades">{{ a.trades }}</span></td>
-            <td class="num"><span *ngIf="a.since" class="mutedtx" [attr.title]="sinceTitle(a.since)">{{ sinceText(a.since) }}</span></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <!-- The open row's book, for anyone: the same markup as the owner's card, keyed on the agent's own wallet -->
-    <div class="agent-panel" id="agent-panel" tabindex="-1" *ngIf="pickedWallet">
-      <div class="panel-top">
-        <span class="mine-sub">{{ picked ? 'The book of ' + picked.name : 'Agent ' + short(pickedWallet) }}</span>
-        <button type="button" class="panel-close" (click)="closeAgent()">Close</button>
-      </div>
-      <p class="none" *ngIf="pickedState === 'reading'">Reading this agent's book.</p>
-      <p class="none" *ngIf="pickedState === 'gone'">This agent is not following the desk any more.</p>
-      <p class="none" *ngIf="pickedState === 'failed' && !picked">This agent's book did not answer; the next read tries again.</p>
-      <ng-container *ngIf="picked as b">
-        <ng-container *ngTemplateOutlet="bookView; context: { book: b, trades: pickedTrades, mine: false, spark: pickedSpark }"></ng-container>
-        <div class="mine-foot">
-          <span class="mutedtx">Its wallet: <a class="num" [href]="b.walletUrl" target="_blank" rel="noopener noreferrer">{{ b.wallet }}</a></span>
-          <span class="mutedtx">Read {{ ago(b.at) }}.</span>
-        </div>
-      </ng-container>
-    </div>
-    <p class="mutedtx">Every agent follows Agent OBS trade for trade at its own size, from a wallet of its own. Tap a name to see its book.</p>
-  </div>
-
   <!-- Positions table -->
   <div class="card block">
     <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Positions</h2><span>{{ posSummary | titlecase }}</span></div>
@@ -462,6 +408,60 @@
         </table>
       </div>
     </div>
+  </div>
+
+  <!-- The agents following the desk: in public, by name and their own wallets, never the person's. A row opens its agent's book below -->
+  <div class="card block">
+    <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Agents</h2><span>{{ agentsSummary }}</span></div>
+    <div class="tbl-wrap">
+      <table class="tbl agents-tbl">
+        <thead>
+          <tr><th>Agent</th><th class="r">Size</th><th>Holding</th><th class="r">Realized</th><th class="r">Trades</th><th>Since</th></tr>
+        </thead>
+        <tbody>
+          <tr *ngIf="!agents.length"><td colspan="6" class="none">No agent is following the desk yet. Sign in to the console and /start to be the first.</td></tr>
+          <tr *ngFor="let a of agents" [class.pick]="!!a.walletAddress" [class.open]="isPicked(a)" (click)="rowClick(a, $event)">
+            <td class="asset">
+              <span class="agent-cell">
+                <i class="dot" [class.on]="a.on" aria-hidden="true"></i>
+                <button type="button" class="agent-open" *ngIf="a.walletAddress" (click)="toggleAgent(a); $event.stopPropagation()" [attr.aria-expanded]="isPicked(a)" [attr.aria-controls]="isPicked(a) ? 'agent-panel' : null" [attr.title]="isPicked(a) ? 'Close its book' : 'Open its book'">{{ a.name }}</button>
+                <span *ngIf="!a.walletAddress">{{ a.name }}</span>
+                <span class="tag" *ngIf="a.mode === 'paper'">paper</span>
+                <span class="tag" *ngIf="!a.on">off</span>
+                <svg class="chev" *ngIf="a.walletAddress" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+              </span>
+            </td>
+            <td class="r num">{{ wholeUsd(a.sizeUsd) }}</td>
+            <!-- One holding is "PORT $94 · -5.6%"; a comma between holdings, so the dot only ever joins a value to its percent (2026-09-08) -->
+            <td class="num">
+              <span class="mutedtx" *ngIf="!a.positions.length">nothing</span>
+              <span *ngFor="let x of a.positions; let last = last">{{ x.asset }} {{ x.valueUsd == null ? 'unpriced' : wholeUsd(x.valueUsd) }}<ng-container *ngIf="x.unrealizedPct != null"> · <span [ngClass]="dir(x.unrealizedPct)">{{ shortPct(x.unrealizedPct) }}</span></ng-container><span class="mutedtx" *ngIf="!last">, </span></span>
+            </td>
+            <td class="r num"><span [ngClass]="a.realizedUsd ? dir(a.realizedUsd) : 'mutedtx'">{{ a.realizedUsd ? usd(a.realizedUsd, true) : '$0' }}</span></td>
+            <td class="r num"><span [class.mutedtx]="!a.trades">{{ a.trades }}</span></td>
+            <td class="num"><span *ngIf="a.since" class="mutedtx" [attr.title]="sinceTitle(a.since)">{{ sinceText(a.since) }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- The open row's book, for anyone: the same markup as the owner's card, keyed on the agent's own wallet -->
+    <div class="agent-panel" id="agent-panel" tabindex="-1" *ngIf="pickedWallet">
+      <div class="panel-top">
+        <span class="mine-sub">{{ picked ? 'The book of ' + picked.name : 'Agent ' + short(pickedWallet) }}</span>
+        <button type="button" class="panel-close" (click)="closeAgent()">Close</button>
+      </div>
+      <p class="none" *ngIf="pickedState === 'reading'">Reading this agent's book.</p>
+      <p class="none" *ngIf="pickedState === 'gone'">This agent is not following the desk any more.</p>
+      <p class="none" *ngIf="pickedState === 'failed' && !picked">This agent's book did not answer; the next read tries again.</p>
+      <ng-container *ngIf="picked as b">
+        <ng-container *ngTemplateOutlet="bookView; context: { book: b, trades: pickedTrades, mine: false, spark: pickedSpark }"></ng-container>
+        <div class="mine-foot">
+          <span class="mutedtx">Its wallet: <a class="num" [href]="b.walletUrl" target="_blank" rel="noopener noreferrer">{{ b.wallet }}</a></span>
+          <span class="mutedtx">Read {{ ago(b.at) }}.</span>
+        </div>
+      </ng-container>
+    </div>
+    <p class="mutedtx">Every agent follows Agent OBS trade for trade at its own size, from a wallet of its own. Tap a name to see its book.</p>
   </div>
 
   <div class="foot" *ngIf="err">
