@@ -29,6 +29,7 @@ import { updateTransfers, holderRead, holdersLine, holderRulesFromEnv, infrastru
 import { walletTrades, recordWalletTrades, readWalletTrades, walletRecords, walletsLine } from "./wallets.ts";
 import { readLaunch, launchLine, launchRulesFromEnv, launchRulesForRecord, type LaunchRead } from "./launch.ts";
 import { autoEntryPick, autoEntryFor, entryVeto } from "./autoentry.ts";
+import { readsGate, holderReadComplete, launchReadComplete } from "./readgate.ts";
 import { recordResearch } from "./research.ts";
 import { digestThought, shortWhy } from "./digest.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry, readEntries, recordClose, reconcileCloses, ethUsdAt } from "./trade-memory.ts";
@@ -325,6 +326,14 @@ const holderRules = holderRulesFromEnv();
 // The launch itself: the dev buy, the declared bundle, the creator tax and its recipient, the deployer's record, the phase.
 const launchReads = new Map<string, LaunchRead>();
 const launchRules = launchRulesFromEnv();
+// Why a read threw, by token and read: the gate below refuses a new entry on a read it does not have, and names it.
+// A read that threw used to leave nothing behind, and nothing behind was taken for a pass (2026-09-08).
+const readFailed = new Map<string, { holders?: string; launch?: string }>();
+/** A read that did not complete, on the research feed: a verdict against a new entry; a plain fact for a token already held. */
+const unreadRow = (kind: "holders" | "launch-read", sym: string, why: string) => {
+  const held = heldDyn.some((h) => h.symbol === sym);
+  recordResearch({ kind, symbol: sym, ok: held ? null : false, note: held ? `not read (${why})` : `not read (${why}); a new entry is refused until it reads` });
+};
 /** Hours of trading after which a token is read on the launch read's hard rules only (OBS_LAUNCH_RECORD_AGE_H). */
 const recordAgeH = Number(process.env.OBS_LAUNCH_RECORD_AGE_H ?? 24);
 const entryRules = entryRulesFromEnv();
@@ -382,7 +391,9 @@ for (const [sym, a] of inPlay) {
       if (transfers.length && !scanFromLaunch(transfers)) hr = withoutWalletCount(hr, "the transfer scan does not reach back to the launch, so the wallets it saw are a floor, not the holder count", holderRules.minWallets);
     }
     holderReads.set(sym, hr);
-    if (hr.transfers > 0) recordResearch({ kind: "holders", symbol: sym, ok: hr.ok, note: hr.ok ? `${hr.wallets} wallets, largest ${hr.top1Pct == null ? "?" : `${Math.round(hr.top1Pct)}%`}, top ten ${hr.top10Pct == null ? "?" : `${Math.round(hr.top10Pct)}%`}` : shortWhy(hr.why) });
+    // A scan that came back empty is no read: the RPC refused it, or nothing moved. The row says so, never a count.
+    if (!holderReadComplete(hr)) unreadRow("holders", sym, "no transfers were read");
+    else recordResearch({ kind: "holders", symbol: sym, ok: hr.ok, note: hr.ok ? `${hr.wallets} wallets, largest ${hr.top1Pct == null ? "?" : `${Math.round(hr.top1Pct)}%`}, top ten ${hr.top10Pct == null ? "?" : `${Math.round(hr.top10Pct)}%`}` : shortWhy(hr.why) });
     tapes.push(holdersLine(hr));
     // The wallets' own records: their trades here priced by the tape, kept across tokens, read against the top wallets.
     if (transfers.length && rows.length) {
@@ -390,7 +401,10 @@ for (const [sym, a] of inPlay) {
       tapes.push(walletsLine(sym, top, walletRecords(readWalletTrades()), (a.contract ?? "").toLowerCase()));
     }
   } catch (e) {
-    tapes.push(`Holders ${sym}: not read (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`);
+    const why = e instanceof Error ? e.message.slice(0, 80) : "error";
+    readFailed.set(sym, { ...readFailed.get(sym), holders: why });
+    tapes.push(`Holders ${sym}: not read (${why}).`);
+    unreadRow("holders", sym, why);
   }
   if (a.contract) {
     try {
@@ -401,10 +415,15 @@ for (const [sym, a] of inPlay) {
       const rulesFor = tokenAgeH >= recordAgeH ? launchRulesForRecord(launchRules) : launchRules;
       const lr = await readLaunch(a.contract as `0x${string}`, sym, launchAt, rulesFor, now);
       launchReads.set(sym, lr);
-      recordResearch({ kind: "launch-read", symbol: sym, ok: lr.exists ? lr.verdict.ok : null, note: !lr.exists ? "not a pons v2 launch, nothing to read" : lr.verdict.ok ? `${lr.devSharePct != null ? `dev buy ${lr.devSharePct.toFixed(1)}%, ` : ""}${lr.exemptions ? (lr.exemptions.length ? `${lr.exemptions.length} exempt wallets, ` : "no exempt wallets, ") : ""}${lr.socials && (lr.socials.twitter || lr.socials.website || lr.socials.telegram) ? "links set, " : ""}score ${lr.score?.total ?? "n/a"}` : shortWhy(lr.verdict.why) });
+      // A factory that did not answer is no read, and was once recorded as "not a launch" (2026-09-08).
+      if (!launchReadComplete(lr)) unreadRow("launch-read", sym, "the factory record could not be read");
+      else recordResearch({ kind: "launch-read", symbol: sym, ok: lr.exists ? lr.verdict.ok : null, note: !lr.exists ? "not a pons v2 launch, nothing to read" : lr.verdict.ok ? `${lr.devSharePct != null ? `dev buy ${lr.devSharePct.toFixed(1)}%, ` : ""}${lr.exemptions ? (lr.exemptions.length ? `${lr.exemptions.length} exempt wallets, ` : "no exempt wallets, ") : ""}${lr.socials && (lr.socials.twitter || lr.socials.website || lr.socials.telegram) ? "links set, " : ""}score ${lr.score?.total ?? "n/a"}` : shortWhy(lr.verdict.why) });
       tapes.push(launchLine(lr));
     } catch (e) {
-      tapes.push(`Launch ${sym}: not read (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`);
+      const why = e instanceof Error ? e.message.slice(0, 80) : "error";
+      readFailed.set(sym, { ...readFailed.get(sym), launch: why });
+      tapes.push(`Launch ${sym}: not read (${why}).`);
+      unreadRow("launch-read", sym, why);
     }
   }
 }
@@ -485,6 +504,7 @@ let proposal: Trade | null = null;
 let executed: Trade | null = null;
 // The reads decide the entry (OBS_AUTO_ENTRY=on): a candidate that passed the entry read, the holder read and the
 // launch read in this same cycle is bought at the rails' size when the model held anyway; its writing stays public.
+// A read the cycle does not have is not a pass: the pick asks whether each read completed (readgate.ts, 2026-09-08).
 if ((process.env.OBS_AUTO_ENTRY ?? "off") === "on" && decision.kind === "hold") {
   const heldSet = new Set(heldDyn.map((a) => a.symbol));
   const board = candidates.filter((c) => c.grade).map((c) => c.symbol).concat(early.filter((e) => e.tradable).map((e) => e.symbol));
@@ -492,7 +512,7 @@ if ((process.env.OBS_AUTO_ENTRY ?? "off") === "on" && decision.kind === "hold") 
     const er = entryReads.get(sym);
     const hr = holderReads.get(sym);
     const lr = launchReads.get(sym);
-    return { symbol: sym, grade: graded.get(sym)?.grade ?? null, entryOk: !!er?.ok, entryWhy: er?.why ?? "", holdersOk: !hr || hr.transfers === 0 || hr.ok, launchOk: lr && lr.exists ? lr.verdict.ok : null, held: heldSet.has(sym) };
+    return { symbol: sym, grade: graded.get(sym)?.grade ?? null, entryOk: !!er?.ok, entryWhy: er?.why ?? "", holdersRead: holderReadComplete(hr), holdersOk: !!hr?.ok, launchRead: launchReadComplete(lr), launchOk: lr && lr.exists ? lr.verdict.ok : null, held: heldSet.has(sym) };
   });
   const pick = autoEntryPick(readsFor);
   const ethUsd = prices.ETH ?? reads.prices.ethUsd ?? null;
@@ -537,15 +557,12 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
     // The lane: a token still inside its launch window gets the launch ticket; one with a record gets the full size.
     const lane: "launch" | "record" = early.some((e) => e.symbol === to.symbol) ? "launch" : "record";
     const railGate = !argued.ok ? argued : checkCandidate({ from, to, amount: decision.amount, usd }, to.contract ? tokenInfo(to.contract) : null, heldCandidates.map((h) => h.symbol), rails, to.candidate ? (graded.get(to.symbol) ?? null) : null, heldPos?.valueUsd ?? 0, lane);
-    // The entry: a launch-token buy also needs the price action to allow it. Volume puts a token on watch; the tape gives the entry.
-    const entry = to.candidate && !from.candidate ? (entryReads.get(to.symbol) ?? null) : null;
-    const gateEntry = railGate.ok && to.candidate && !from.candidate && !entry?.ok ? { ok: false as const, reason: entry ? `the tape gives no entry: ${entry.why}` : `no tape was read for ${to.symbol} this cycle, so there is no entry read` } : railGate;
-    // The holders: a bundled or single-hand token is not bought, whatever the tape says.
-    const holders = to.candidate && !from.candidate ? (holderReads.get(to.symbol) ?? null) : null;
-    const gateHolders = gateEntry.ok && holders && holders.transfers > 0 && !holders.ok ? { ok: false as const, reason: `the holders fail the read: ${holders.why}` } : gateEntry;
-    // The launch: a declared bundle, a heavy dev buy, a serial deployer or a swept curve is not bought, whatever the tape says.
-    const launch = to.candidate && !from.candidate ? (launchReads.get(to.symbol) ?? null) : null;
-    const gate = gateHolders.ok && launch && !launch.verdict.ok ? { ok: false as const, reason: `the launch fails the read: ${launch.verdict.why}` } : gateHolders;
+    // The reads: a launch-token buy also needs the tape's entry read, the holder read and the launch read, each made
+    // this cycle and each passed (readgate.ts). Volume puts a token on watch; the tape gives the entry; a bundled or
+    // single-hand token, a heavy dev buy, a serial deployer or a swept curve is not bought, whatever the tape says;
+    // and a read that did not complete refuses a new entry by name, where it once passed for missing (2026-09-08).
+    const readGate = to.candidate && !from.candidate ? readsGate({ symbol: to.symbol, held: heldDyn.some((h) => h.symbol === to.symbol), entry: entryReads.get(to.symbol) ?? null, holders: holderReads.get(to.symbol) ?? null, launch: launchReads.get(to.symbol) ?? null, failed: readFailed.get(to.symbol) }) : null;
+    const gate = railGate.ok && readGate && !readGate.ok ? readGate : railGate;
     let capUsd: number | undefined;
     let addOn = false;
     if (!gate.ok) {
