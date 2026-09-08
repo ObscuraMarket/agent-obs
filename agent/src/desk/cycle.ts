@@ -41,6 +41,10 @@ import { appendLedger } from "../ledger.ts";
 import { positions } from "./book.ts";
 
 const MIN_GAP_MIN = Number(process.env.OBS_MIN_THOUGHT_GAP_MIN ?? 25);
+// The short floor beside the per-symbol one, for entry triggers: the last thought of any token inside this many
+// minutes holds the cycle, so eight watched tokens flipping in turn cannot spend eight thinks in one cooldown
+// (review 2026-09-08). Zero turns it off.
+const ANY_GAP_MIN = Number(process.env.OBS_MIN_THOUGHT_GAP_ANY_MIN ?? 1);
 const ARMED = tradingArmed() && !DRY;
 // The live watch's trigger, when this cycle is one it spawned: the token that fired and why (trigger.ts). It is read
 // first, preferred by the auto entry, and stamped on the thought; null on a timer cycle or an operator's own run.
@@ -149,6 +153,14 @@ if (ARMED && readTokens().length) {
 // 30-minute desk cycle is unchanged and still reads everything.
 /** True on a fast tick that is about to think because a token gave an entry: the reads made the call, the write-up may be cheap. */
 let fastEntryTick = false;
+/** The token whose tape gave the entry on the fast tick, after the rails; null when the tick found none or the cycle is not a tick. */
+let probed: string | null = null;
+/**
+ * The token this cycle thought about, for the thought's stamp: the tick's entry, then the auto entry's pick. When it
+ * is not the trigger's own token (the trigger failed its read and the scan or the pick found another), the stamp
+ * says so, and that token's own trigger inside the gap is held by the floor (review 2026-09-08).
+ */
+let thoughtAbout: string | null = null;
 if (process.env.OBS_TICK === "fast" && !DRY) {
   if (process.env.OBS_LIVE_TRIGGER) console.log(`[desk] live trigger: ${process.env.OBS_LIVE_TRIGGER}`);
   const feedNow = readFeed(now);
@@ -214,8 +226,11 @@ if (process.env.OBS_TICK === "fast" && !DRY) {
   }
   // A plain held review (the timer, not a break in the tape) has done its job above: the rails' exits ran. The model
   // writes a review of a position every OBS_HELD_THINK_MIN minutes, not every look; a tape that breaks still thinks at once.
+  // An entry trigger whose token gives no entry at the cycle's read (and nothing else does) is a plain review too: it
+  // used to skip this gate and, with the floor per symbol, the global floor as well, and wrote a paid review a minute
+  // after the last one for every stale entry trigger (review 2026-09-08).
   const trigger = process.env.OBS_LIVE_TRIGGER ?? "";
-  const plainReview = trigger === "" || /^held /.test(trigger);
+  const plainReview = trigger === "" || /^held /.test(trigger) || (live?.kind === "entry" && !probeable);
   const heldThinkMin = Number(process.env.OBS_HELD_THINK_MIN ?? 15);
   const lastWrite = readThoughts(1)[0];
   if (!probeable && holding && plainReview && lastWrite && (now - lastWrite.at) / 60000 < heldThinkMin) {
@@ -224,14 +239,20 @@ if (process.env.OBS_TICK === "fast" && !DRY) {
   }
   console.log(`[desk] fast tick: ${probeable ? `${probeable} has an entry (${entryWhy})` : "a launch token is held"}, thinking`);
   fastEntryTick = !!probeable;
+  probed = probeable;
+  thoughtAbout = probeable;
 }
 
 // Cadence floor, before any model call. Per symbol for an entry trigger, the last thought of any symbol otherwise
 // (trigger.ts says why, 2026-09-08): a fresh flip a minute after another token's think was held and then quiet
 // for the watch's fifteen-minute refire. The line keeps its "Holding: last thought" shape; the watch relays it.
-const floor = DRY ? null : thoughtFloor(readThoughts(50), live, now, MIN_GAP_MIN);
+// The per-symbol floor is keyed on the token the tick is about to think about, the trigger's own or the one the scan
+// found in its place; an entry trigger with no entry at the read carries on as a held review and keeps the global
+// floor, or every stale entry trigger of every watched token wrote a review a minute after the last (review 2026-09-08).
+const floorTrigger = probed ? { symbol: probed, kind: "entry" as const } : live?.kind === "entry" ? { ...live, kind: "held" as const } : live;
+const floor = DRY ? null : thoughtFloor(readThoughts(50), floorTrigger, now, MIN_GAP_MIN, ANY_GAP_MIN);
 if (floor) {
-  console.log(`Holding: last thought${floor.about ? ` (about ${floor.about})` : ""} was ${floor.agoMin.toFixed(0)}m ago, floor is ${MIN_GAP_MIN}m.`);
+  console.log(`Holding: last thought${floor.about ? ` (about ${floor.about})` : ""} was ${floor.agoMin.toFixed(0)}m ago, floor is ${MIN_GAP_MIN}m${floorTrigger?.kind === "entry" ? ` (${ANY_GAP_MIN}m for any token)` : ""}.`);
   process.exit(0);
 }
 
@@ -286,7 +307,10 @@ const gradeRules = gradeRulesFromEnv();
 const graded = new Map<string, ReturnType<typeof gradeCandidate>>();
 const candidates = [];
 // The first six, and the trigger's own row when it sits past them, so the token that fired is graded here (2026-09-08).
-for (const cnd of sliceWithTrigger(feed.candidates, 6, live?.symbol ?? null)) {
+// Only an entry trigger's: a held or exit trigger's token is on the board as a position whatever its row, and grading
+// it past the slice was a pool read for nothing (review 2026-09-08).
+const triggerSym = live?.kind === "entry" ? live.symbol : null;
+for (const cnd of sliceWithTrigger(feed.candidates, 6, triggerSym)) {
   const spec = dynamicPoolSpec(candidateAsset(cnd));
   const depth = spec ? await (async () => { try { return (await poolRead(spec))?.depthUsd2pct ?? null; } catch { return null; } })() : null;
   const g = gradeCandidate(cnd, feed.hourly[cnd.poolId.toLowerCase()] ?? [], depth, gradeRules);
@@ -296,7 +320,7 @@ for (const cnd of sliceWithTrigger(feed.candidates, 6, live?.symbol ?? null)) {
 // Early launches: minute one onward. Tradable as a probe once ignited with a hookless side pool; watched otherwise.
 const requireIgnition = (process.env.OBS_EARLY_REQUIRE_IGNITION ?? "on") !== "off";
 const early = [];
-for (const l of sliceWithTrigger(feed.early, 6, live?.symbol ?? null)) {
+for (const l of sliceWithTrigger(feed.early, 6, triggerSym)) {
   // An ignited launch with no side pool trades through its own curve, whose key is read from chain once and kept.
   const wantsCurve = l.gateOk && (l.creatorTaxBps == null || l.creatorTaxBps <= 100) && !l.sidePools.length && (!requireIgnition || l.ignitedAfterMin != null) && !!l.curvePoolId;
   const key = wantsCurve ? await curveKey(l.curvePoolId as `0x${string}`) : null;
@@ -382,7 +406,11 @@ for (const [sym, a] of inPlay) {
   tapes.push(tapeLine(st, quoteUsd, quote));
   tapeReads.set(sym, { buyPressurePct: st.buyPressurePct, trend: st.trend, lastUsd: st.last != null && quoteUsd != null ? st.last * quoteUsd : null });
   const g = graded.get(sym)?.grade;
-  const er = entryRead(rows, sym, now, entryRules, g === "A" || g === "B" || heldDyn.some((h) => h.symbol === sym));
+  // The token the tick probed is read with the flag the tick used: a stable candidate's volume is its hourly trail
+  // (the watch fires on it the same way, live.ts). Read with the A/B rule alone, a C-graded trigger passed the tick,
+  // failed here on "no volume pickup", and the pick fell to the first passing token in feed order (review 2026-09-08).
+  const probedStable = sym === probed && feed.candidates.some((c) => c.symbol === sym && (c.stable?.stable || (c.record && c.record.vol1 > 0)));
+  const er = entryRead(rows, sym, now, entryRules, g === "A" || g === "B" || probedStable || heldDyn.some((h) => h.symbol === sym));
   entryReads.set(sym, er);
   tapes.push(entryLine(er));
   try {
@@ -563,6 +591,7 @@ if ((process.env.OBS_AUTO_ENTRY ?? "off") === "on" && decision.kind === "hold") 
     const rails = railsFromEnv();
     const auto = autoEntryFor(pick, observation, early.some((e) => e.symbol === pick.symbol) ? rails.launchProbeUsd : rails.probeUsd, ethUsd, rails.candidateFloorPct);
     decision = { kind: "propose-swap", amount: auto.amountEth, from: "ETH@robinhood", to: `${pick.symbol}@robinhood`, reason: auto.reason };
+    thoughtAbout = pick.symbol;
     parsed.analysis = auto.analysis;
     thoughts.push(auto.line);
     console.log(`[desk] auto entry: ${auto.amountEth} ETH to ${pick.symbol} (${pick.entryWhy.slice(0, 120)})`);
@@ -670,7 +699,7 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
 }
 
 const decisionLine = decisionLineOf(resp.text ?? "");
-const entry: Thought = { at: now, observation, thoughts, decision, ...(PAPER ? { paper: true } : {}), ...(parsed.analysis ? { analysis: parsed.analysis } : {}), ...(decisionLine ? { decisionLine } : {}), ...(live ? { trigger: live } : {}) };
+const entry: Thought = { at: now, observation, thoughts, decision, ...(PAPER ? { paper: true } : {}), ...(parsed.analysis ? { analysis: parsed.analysis } : {}), ...(decisionLine ? { decisionLine } : {}), ...(live ? { trigger: { ...live, ...(thoughtAbout && thoughtAbout !== live.symbol ? { about: thoughtAbout } : {}) } } : {}) };
 console.log(`[desk] thoughts:\n${thoughts.map((t) => "  " + t).join("\n")}\n[desk] decision: ${decision.kind}${decision.reason ? ` (${decision.reason})` : ""}`);
 if (parsed.analysis) console.log(`[desk] analysis: thesis ${parsed.analysis.thesis || "none"}; evidence ${parsed.analysis.evidence.length} lines; invalidation ${parsed.analysis.invalidation || "none"}; conviction ${parsed.analysis.conviction ?? "none"}`);
 if (parsed.note) console.log(`  note to self: ${parsed.note}`);

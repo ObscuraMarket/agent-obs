@@ -87,29 +87,41 @@ export function boardOrder(i: BoardInput): BoardOrder {
 
 export interface ThoughtStamp {
   at: number;
-  /** The trigger the thought answered; absent on a timer cycle and on rows written before 2026-09-08. */
-  trigger?: { symbol: string; kind: string } | null;
+  /**
+   * The trigger the thought answered; absent on a timer cycle and on rows written before 2026-09-08. `about` is the
+   * token the cycle thought about when it was not the trigger's own: the trigger failed its read and the scan or the
+   * auto entry found another (review 2026-09-08).
+   */
+  trigger?: { symbol: string; kind: string; about?: string | null } | null;
 }
 
 /**
  * PURE: the thought the cadence floor measures from, when it is inside the gap, or null when the cycle may think.
  *
  * For an entry trigger the floor is per symbol: the last thought about the same token, where a thought with no
- * stamp (a timer cycle's, or one from before the stamp) counts for every token. For a held review or an exit, and
- * on a timer cycle, it is the last thought of any token, as before. The choice, 2026-09-08: live.ts stamps the
- * symbol's lastThinkAt before it spawns, and the cycle's floor was the last thought of any symbol, so an entry that
- * flipped inside three minutes of another token's think printed "Holding" and was then quiet for the fifteen-minute
- * refire (16.5% of entry triggers since 2026-09-06). The other way round, un-stamping the symbol in live.ts when the
- * child left on the floor, either re-spawns a cycle every look until the global floor clears (each one settling and
- * reading the wallet first) or, with the stamp kept, still waits the refire. Keeping the floor in the cycle and
- * making it per symbol leaves one cycle at a time to the lock and the watch's single child, and never silences a
- * fresh flip. A second trigger of the same token inside the gap is still held, as it should be.
+ * stamp (a timer cycle's, or one from before the stamp) counts for every token. A thought stamped with another
+ * trigger but `about` this token counts too: the cycle that answered AAA's trigger read BBB instead, and BBB's own
+ * trigger a minute later would otherwise have thought about BBB a second time inside the gap (review 2026-09-08).
+ * Beside it a short global floor, `anyGapMin`, so eight watched tokens flipping in turn cannot spend eight thinks
+ * inside one cooldown (each cycle settling, sweeping followers and reading the wallet first); zero turns it off.
+ * For a held review or an exit, and on a timer cycle, it is the last thought of any token, as before.
+ *
+ * The choice, 2026-09-08: live.ts stamps the symbol's lastThinkAt before it spawns, and the cycle's floor was the
+ * last thought of any symbol, so an entry that flipped inside three minutes of another token's think printed
+ * "Holding" and was then quiet for the fifteen-minute refire (16.5% of entry triggers since 2026-09-06). The other
+ * way round, un-stamping the symbol in live.ts when the child left on the floor, either re-spawns a cycle every
+ * look until the global floor clears (each one settling and reading the wallet first) or, with the stamp kept,
+ * still waits the refire. Keeping the floor in the cycle and making it per symbol leaves one cycle at a time to
+ * the lock and the watch's single child, and never silences a fresh flip. A second trigger of the same token
+ * inside the gap is still held, as it should be.
  */
-export function thoughtFloor(thoughts: ThoughtStamp[], trigger: CycleTrigger | null, now: number, gapMin: number): { agoMin: number; about: string | null } | null {
+export function thoughtFloor(thoughts: ThoughtStamp[], trigger: CycleTrigger | null, now: number, gapMin: number, anyGapMin = 0): { agoMin: number; about: string | null } | null {
   const recent = [...thoughts].sort((a, b) => b.at - a.at);
-  const last = trigger?.kind === "entry" ? recent.find((t) => !t.trigger?.symbol || t.trigger.symbol === trigger.symbol) : recent[0];
+  const aboutOf = (t: ThoughtStamp) => t.trigger?.about ?? t.trigger?.symbol ?? null;
+  if (trigger?.kind === "entry" && recent[0] && (now - recent[0].at) / 60e3 < anyGapMin) return { agoMin: (now - recent[0].at) / 60e3, about: aboutOf(recent[0]) };
+  const last = trigger?.kind === "entry" ? recent.find((t) => !t.trigger?.symbol || t.trigger.symbol === trigger.symbol || t.trigger.about === trigger.symbol) : recent[0];
   if (!last) return null;
   const agoMin = (now - last.at) / 60e3;
   if (agoMin >= gapMin) return null;
-  return { agoMin, about: last.trigger?.symbol ?? null };
+  return { agoMin, about: aboutOf(last) };
 }

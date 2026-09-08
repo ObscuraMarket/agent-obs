@@ -37,8 +37,13 @@ export interface Thought {
   analysis?: Analysis;
   /** The DECISION line exactly as the model wrote it, so a line the parser misread can be replayed in a test. Never the note. */
   decisionLine?: string;
-  /** The live watch's trigger this thought answered, stamped from 2026-09-08 so the cadence floor reads per symbol (trigger.ts); absent on a timer cycle and on older rows. */
-  trigger?: { symbol: string; kind: "exit" | "entry" | "held" };
+  /**
+   * The live watch's trigger this thought answered, stamped from 2026-09-08 so the cadence floor reads per symbol
+   * (trigger.ts); absent on a timer cycle and on older rows. `about` names the token the cycle thought about when it
+   * was not the trigger's own (the trigger failed its read; the scan or the auto entry found another), so that token's
+   * own trigger a minute later is held by the floor too (review 2026-09-08).
+   */
+  trigger?: { symbol: string; kind: "exit" | "entry" | "held"; about?: string };
 }
 
 /** PURE: the DECISION line of a reply as written, or null when there is none. */

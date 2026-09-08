@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { triggerFromEnv, sliceWithTrigger, boardOrder, thoughtFloor, type CycleTrigger } from "../src/desk/trigger.ts";
 
 const now = 1_800_000_000_000;
@@ -77,4 +79,46 @@ test("a thought without a stamp counts for every symbol, and a held review or an
   assert.equal(thoughtFloor([aboutB], null, now, 3)?.about, "BBB", "a timer cycle: the last thought of any symbol");
   assert.equal(thoughtFloor([aboutB], null, now, 1), null, "at the gap it thinks");
   assert.equal(thoughtFloor([{ at: now - 10 * M, trigger: { symbol: "AAA", kind: "entry" } }, aboutB], entryA, now, 3), null, "rows arrive newest first or not; the floor sorts them");
+});
+
+test("a thought stamped with one trigger but about another token holds that token's own entry trigger inside the gap (review 2026-09-08)", () => {
+  // AAA's trigger failed its read and the cycle thought about BBB instead; BBB's own trigger a minute later would
+  // have found no thought about BBB and thought about it a second time inside the gap: a double think and spend.
+  const entryB: CycleTrigger = { symbol: "BBB", kind: "entry" };
+  const aboutB = { at: now - 1 * M, trigger: { symbol: "AAA", kind: "entry", about: "BBB" } };
+  assert.deepEqual(thoughtFloor([aboutB], entryB, now, 3), { agoMin: 1, about: "BBB" }, "held, and the line names the token thought about");
+  assert.deepEqual(thoughtFloor([aboutB], { symbol: "AAA", kind: "entry" }, now, 3), { agoMin: 1, about: "BBB" }, "the trigger's own token is held too: the cycle answered it");
+  assert.equal(thoughtFloor([aboutB], { symbol: "CCC", kind: "entry" }, now, 3), null, "a third token is free to think");
+  assert.equal(thoughtFloor([{ at: now - 4 * M, trigger: { symbol: "AAA", kind: "entry", about: "BBB" } }], entryB, now, 3), null, "past the gap it thinks");
+});
+
+test("a short global floor holds an entry trigger seconds after any think, and lets one through past it (review 2026-09-08)", () => {
+  // Eight watched tokens flipping in turn could spend eight thinks inside one cooldown; the floor of any token is one minute.
+  const entryA: CycleTrigger = { symbol: "AAA", kind: "entry" };
+  const aboutB20s = { at: now - 20e3, trigger: { symbol: "BBB", kind: "entry" } };
+  const aboutB2m = { at: now - 2 * M, trigger: { symbol: "BBB", kind: "entry" } };
+  const held = thoughtFloor([aboutB20s], entryA, now, 3, 1);
+  assert.ok(held && held.agoMin < 1 && held.about === "BBB", "20 s after another token's think: held, and the line names that token");
+  assert.equal(thoughtFloor([aboutB2m], entryA, now, 3, 1), null, "2 min after it: the per-symbol floor alone, and it thinks");
+  assert.equal(thoughtFloor([aboutB20s], entryA, now, 3), null, "no short floor asked (zero): as before");
+  assert.equal(thoughtFloor([aboutB20s], entryA, now, 3, 0), null);
+  assert.equal(thoughtFloor([aboutB2m], { symbol: "HLD", kind: "held" }, now, 3, 1)?.about, "BBB", "a held review keeps the full global floor whatever the short one says");
+});
+
+test("the cycle wires the trigger the way the audit's numbers depend on (source anchors, review 2026-09-08)", () => {
+  // The pure rules above are only worth their tests while cycle.ts calls them in this order; an edit that reorders
+  // the scan, drops the stamp or reads the trigger's tape with another flag would pass the suite otherwise.
+  const src = readFileSync(join(import.meta.dirname, "..", "src", "desk", "cycle.ts"), "utf8");
+  const probeTrigger = src.indexOf("await probe(live.symbol");
+  const scan = src.indexOf("for (const l of feedNow.early.slice(0, 8))");
+  assert.ok(probeTrigger > 0 && scan > 0 && probeTrigger < scan, "the trigger's own token is probed before the feed scan");
+  assert.ok(src.includes("thoughtFloor(readThoughts(50), floorTrigger, now, MIN_GAP_MIN, ANY_GAP_MIN)"), "the floor reads the last fifty thoughts, keyed on the token the tick is about to think about, with the short floor of any token");
+  assert.ok(src.includes('const floorTrigger = probed ? { symbol: probed, kind: "entry" as const } : live?.kind === "entry" ? { ...live, kind: "held" as const } : live;'), "an entry trigger with no entry at the read keeps the global floor");
+  assert.ok(src.includes('(live?.kind === "entry" && !probeable)'), "and is a plain review for the held cadence gate");
+  assert.ok(src.includes("...(live ? { trigger: { ...live, ...(thoughtAbout && thoughtAbout !== live.symbol ? { about: thoughtAbout } : {}) } } : {})"), "the thought is stamped with the trigger, and with the token thought about when that differs");
+  assert.ok(src.includes("thoughtAbout = probeable;") && src.includes("thoughtAbout = pick.symbol;"), "the tick's entry and the auto entry's pick both name the token thought about");
+  assert.ok(src.includes("autoEntryPick(readsFor, live?.symbol ?? null)"), "the pick prefers the trigger's token");
+  assert.ok(src.includes('const triggerSym = live?.kind === "entry" ? live.symbol : null;') && src.split("sliceWithTrigger(feed.").length === 3 && !src.includes("sliceWithTrigger(feed.candidates, 6, live"), "only an entry trigger's row is graded past the slice");
+  assert.ok(src.includes("const probedStable = sym === probed && feed.candidates.some((c) => c.symbol === sym && (c.stable?.stable || (c.record && c.record.vol1 > 0)))"), "the probed token's board read takes its volume as known the way the tick and the watch did");
+  assert.ok(src.includes('g === "A" || g === "B" || probedStable ||'), "and the flag reaches the entry read");
 });
