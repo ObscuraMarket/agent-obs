@@ -1419,7 +1419,8 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
         const r = await ensureUserAgent(address);
         grantFree(address);
         if (appsOn()) void ensureApps(address).catch((e) => console.error(`[apps] attach for ${address}: ${e instanceof Error ? e.message : String(e)}`));
-        json(res, 200, { ok: true, ...r, name: agentDisplayName(address), settings: getSettings(address) });
+        // The agent's own wallet rides along so the page knows it from sign-in: a /fund may go there and nowhere else (2026-09-08).
+        json(res, 200, { ok: true, ...r, name: agentDisplayName(address), settings: getSettings(address), wallet: walletsOn() ? agentWalletAddress(address) : null });
       })
       .catch((err) => { console.error(`[my-agent] ensure failed: ${err instanceof Error ? err.message : String(err)}`); json(res, 502, { ok: false, error: "could not reach your agent; try again shortly" }); });
     return;

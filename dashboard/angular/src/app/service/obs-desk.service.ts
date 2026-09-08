@@ -431,12 +431,20 @@ export interface ObsCliReply {
   pay?: ObsPayment;
   /** Credits after a credits effect. */
   balance?: number;
+  /** An agentWallet effect: the agent's own wallet address; the page keeps it, and a funding may go nowhere else. */
+  wallet?: string;
 }
-export interface ObsPayment { to: string; data: string; value: string; chainId: number; note: string; token: string; amount: number; creditsUsd: number; credits: number; bonusPct: number; /** What the transfer is for: credits (the default) or funding the agent's own wallet. */ purpose?: 'credits' | 'fund'; }
+/**
+ * The one transaction a payment is. The page holds it up against the chain and a short list of destinations before
+ * the wallet sees it (send-guard.ts): `treasury` is where a credits payment must land, whether `to` is the treasury
+ * itself (ETH) or the token's contract (a transfer to the treasury); a funding must go to the agent's wallet the
+ * page already knows.
+ */
+export interface ObsPayment { to: string; data: string; value: string; chainId: number; note: string; token: string; amount: number; creditsUsd: number; credits: number; bonusPct: number; /** What the transfer is for: credits (the default) or funding the agent's own wallet. */ purpose?: 'credits' | 'fund'; treasury?: string; }
 /** Credits, a cent each: a thousand are $10 of USDG. */
 export interface ObsCredits { ok: boolean; balance: number; granted: number; deposited: number; spent: number; turns: number; creditsPerUsd: number; model: string; canBuy: boolean; }
 export interface ObsUserSettings { name?: string; style?: 'concise' | 'balanced' | 'deep'; voice?: string; goal?: string; }
-export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; }
+export interface ObsEnsureReply { ok: boolean; code?: string; error?: string; ready?: boolean; created?: boolean; name?: string; settings?: ObsUserSettings; /** The agent's own wallet, when agent wallets are switched on there; null otherwise. */ wallet?: string | null; }
 export interface ObsHistoryTurn { role: string; content: string; ts: string; }
 
 /**

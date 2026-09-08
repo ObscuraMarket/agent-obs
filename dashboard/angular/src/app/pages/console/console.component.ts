@@ -1,6 +1,7 @@
 import { AfterViewInit, Component, ElementRef, Inject, NgZone, OnDestroy, Type, ViewChild, ViewContainerRef } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
 import { ObsDeskService, ObsConsoleQuote, ObsStanding, ObsCliReply, ObsSession, ObsUserSettings, ObsPayment, ObsCredits, CONSOLE_VIEWS, CONSOLE_WALLET, ConsoleWallet } from '../../service/obs-desk.service';
+import { ROBINHOOD_CHAIN_ID, isAddress, judgePay, judgeStep, sendLine } from '../../service/send-guard';
 
 type LineKind = 'input' | 'command' | 'output' | 'error' | 'agent' | 'system';
 interface Approval { toolCallId: string; tool: string; args?: unknown; decision: 'pending' | 'allowed' | 'denied'; }
@@ -20,6 +21,7 @@ const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'cards', what: 'Open Cards' },
   { cmd: 'yield', what: 'Open Yield (coming soon)' },
   { cmd: 'connect', what: 'Connect your wallet and get your own agent' },
+  { cmd: 'logout', what: 'Sign out of the console here; your wallet stays connected in its own app' },
   { cmd: 'start', what: 'Turn your trading agent on: it follows Agent OBS\'s trades at your size, live from its own wallet once you fund it', usage: '/start 100' },
   { cmd: 'stop', what: 'Turn your trading agent off' },
   { cmd: 'size', what: 'What your agent puts into each entry', usage: '/size 150', args: true },
@@ -60,8 +62,10 @@ const SESSION_KEY = 'obs-console-session';
  * The OBS console: one surface for talking to your agent and for shaping it, beside the desk's read-only commands,
  * the app's pages and your own wallet's swaps. A line is a message to your agent; a slash line is a command the
  * desk routes (src/cli/router.ts there). Signing in with the wallet is the whole account: it gets its own agent
- * straight away, with nothing to earn first. The page signs a challenge to prove the wallet, signs swaps with it,
- * streams the agent's reply token by token, and never holds a key.
+ * straight away, with nothing to earn first. The page signs a challenge to prove the wallet, signs swaps and
+ * payments with it (each judged against the chain and a short list of destinations first, send-guard.ts), streams
+ * the agent's reply token by token, and never holds a key. The bearer lives in localStorage for its week and is
+ * dropped on /logout, when the wallet disconnects or switches, and on any 401 from a signed route.
  */
 @Component({ selector: 'app-console', templateUrl: './console.component.html', styleUrls: ['./console.component.css'] })
 export class ConsoleComponent implements AfterViewInit, OnDestroy {
@@ -86,6 +90,8 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
   view: string | null = null;
   /** The wallet's credits in dollars, once signed in; null until known. */
   credits: number | null = null;
+  /** The agent's own wallet, learned at sign-in (ensure) or from /wallet: a funding may go there and nowhere else. */
+  agentWallet: string | null = null;
   /** False until the first line runs: the welcome card shows in its place. */
   started = false;
   /** The command menu that opens as soon as a line starts with "/". */
@@ -104,7 +110,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
   private histAt = -1;
   private listening = false;
   private greeted = false;
-  private static readonly CHAIN_ID = 4663;
+  private static readonly CHAIN_ID = ROBINHOOD_CHAIN_ID;
   private static readonly CHAIN_HEX = '0x1237';
   private static readonly EXPLORER = 'https://robinhoodchain.blockscout.com';
 
@@ -136,7 +142,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     if (!this.token || this.status !== 'signed-in' || this.eventsBusy || this.agentState === 'thinking') { return; }
     this.eventsBusy = true;
     try {
-      const r = await this.get<{ ok: boolean; events: Array<{ at: number; kind: string; text: string }>; at: number }>(this.obs.myAgentEvents(this.token, this.eventsSince));
+      const r = await this.signed<{ ok: boolean; events: Array<{ at: number; kind: string; text: string }>; at: number }>(this.obs.myAgentEvents(this.token, this.eventsSince));
       if (!r?.ok) { return; }
       const fresh = (r.events || []).filter((e) => e.at > this.eventsSince);
       if (fresh.length) {
@@ -206,8 +212,8 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
   async approve(a: Approval, ok: boolean): Promise<void> {
     if (a.decision !== 'pending' || !this.token) { return; }
     a.decision = ok ? 'allowed' : 'denied';
-    try { await this.get(this.obs.myAgentApprove(this.token, a.toolCallId, ok)); }
-    catch (e: any) { this.print([{ kind: 'error', text: 'Couldn\'t send your answer: ' + this.reason(e) }]); }
+    try { await this.signed(this.obs.myAgentApprove(this.token, a.toolCallId, ok)); }
+    catch (e: any) { if (!this.isExpired(e)) { this.print([{ kind: 'error', text: 'Couldn\'t send your answer: ' + this.reason(e) }]); } }
   }
 
   get viewLabel(): string { return this.view ? this.view.charAt(0).toUpperCase() + this.view.slice(1) : ''; }
@@ -348,6 +354,32 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     return new Promise<T>((res, rej) => o.subscribe({ next: res, error: rej }));
   }
 
+  /**
+   * A call made with the bearer: like get(), and a 401 clears the session in one place before the caller hears of
+   * it. Until 2026-09-08 no 401 was handled anywhere: a bearer the desk no longer took stayed in storage for its
+   * week, and every signed call failed with a line that never said why.
+   */
+  private signed<T>(o: { subscribe: (h: { next: (v: T) => void; error: (e: any) => void }) => unknown }): Promise<T> {
+    return this.get<T>(o).catch((e) => {
+      if (e?.status !== 401) { throw e; }
+      this.sessionExpired();
+      const gone: any = new Error(ConsoleComponent.EXPIRED);
+      gone.expired = true;
+      gone.error = { ok: false, error: ConsoleComponent.EXPIRED };
+      throw gone;
+    });
+  }
+
+  private static readonly EXPIRED = 'your session expired';
+  private isExpired(e: any): boolean { return e?.expired === true; }
+
+  /** The bearer is no good any more (it aged out, the desk's secret turned, or it was dropped elsewhere): one line, one /connect chip, once. */
+  private sessionExpired(): void {
+    if (!this.token) { return; }
+    this.dropSession();
+    this.print([{ kind: 'system', text: 'Your session expired; sign in again.', suggest: ['/connect'] }]);
+  }
+
   // ---- running a line ----------------------------------------------------------
 
   /** One line, from the input or a tapped chip: same routing, same transcript. */
@@ -365,9 +397,12 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
       const head = line.slice(1).split(/\s+/)[0].toLowerCase();
       if (head === 'connect') { await this.signIn(line.slice(1).split(/\s+/).slice(1).join(' ')); return; }
       if (head === 'clear' || head === 'cls') { this.lines = []; return; }
+      if (head === 'logout' || head === 'disconnect') { this.logout(); return; }
       // Only the console's own reply shape is taken from an error body; a rate limit, a read-only refusal or a network
       // failure carries an object too, and printing "Done." for one of those hid the real answer (2026-09-08).
-      const data = await this.get<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (e?.error && typeof e.error === 'object' && (typeof e.error.ok === 'boolean' || Array.isArray(e.error.lines)) ? e.error : { ok: false, lines: [e?.status === 429 ? 'The desk is busy; try again in a moment.' : (typeof e?.error?.error === 'string' ? e.error.error : 'Couldn\'t reach the desk. Try again in a moment.')] }) as ObsCliReply);
+      const data = await this.signed<ObsCliReply>(this.obs.cli(this.token ?? '', line)).catch((e) => (this.isExpired(e) ? null : e?.error && typeof e.error === 'object' && (typeof e.error.ok === 'boolean' || Array.isArray(e.error.lines)) ? e.error : { ok: false, lines: [e?.status === 429 ? 'The desk is busy; try again in a moment.' : (typeof e?.error?.error === 'string' ? e.error.error : 'Couldn\'t reach the desk. Try again in a moment.')] }) as ObsCliReply | null);
+      if (data === null) { return; }
+      if (isAddress(data.wallet)) { this.agentWallet = data.wallet; }
       if (data.effect === 'clear') { this.lines = []; return; }
       if (data.effect === 'chat' && typeof data.text === 'string') { await this.chat(data.text, true); return; }
       if (data.effect === 'wallet' && data.ok) { await this.walletEffect(data); return; }
@@ -400,13 +435,20 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
 
   private async refreshCredits(): Promise<void> {
     if (!this.token) { return; }
-    try { const c = await this.get<ObsCredits>(this.obs.credits(this.token)); this.credits = c.balance; } catch { /* the bar keeps what it had */ }
+    try { const c = await this.signed<ObsCredits>(this.obs.credits(this.token)); this.credits = c.balance; } catch { /* the bar keeps what it had; a 401 has already cleared it */ }
   }
 
   /** Add credits: sign the transfer to the treasury, wait for it to land, then have the desk read it and credit it. */
   private async pay(p: ObsPayment, lines: string[]): Promise<void> {
     const prov = this.provider();
     if (!prov || !this.wallet || !this.token) { this.print([{ kind: 'system', text: 'Connect your wallet first: it signs the payment.', suggest: ['/connect'] }]); return; }
+    this.print(lines.map((t) => ({ kind: 'output' as LineKind, text: t })));
+    // Where it goes and what rides along, printed before the wallet opens; and only to the treasury the reply names
+    // or the agent's wallet the page already knows, on Robinhood Chain. Until 2026-09-08 the page signed whatever
+    // the desk handed back, on whatever chain, to whatever address. Judged before any chain switch is asked for.
+    const verdict = judgePay(p, this.agentWallet);
+    this.print([{ kind: 'system', text: sendLine(p, verdict.ok ? verdict.label : 'not somewhere the console sends') }]);
+    if (verdict.ok === false) { this.print([{ kind: 'error', text: 'Not sent: ' + verdict.reason + '. Nothing was signed.', suggest: p.purpose === 'fund' ? ['/wallet'] : ['/credits'] }]); return; }
     if (this.chainId !== ConsoleComponent.CHAIN_ID) {
       await this.ensureChain(prov);
       if (this.chainId !== ConsoleComponent.CHAIN_ID) {
@@ -418,7 +460,6 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
         return;
       }
     }
-    this.print(lines.map((t) => ({ kind: 'output' as LineKind, text: t })));
     let hash: string;
     try { hash = await prov.request({ method: 'eth_sendTransaction', params: [{ from: this.wallet, to: p.to, data: p.data, value: this.hex(p.value) }] }); }
     catch (e: any) { this.print([{ kind: 'error', text: 'Not sent: ' + this.reason(e), suggest: ['/credits'] }]); return; }
@@ -427,12 +468,12 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     if (!r.ok) { this.print([{ kind: 'error', text: 'The payment didn\'t land (' + r.status + '). Nothing was credited.', suggest: ['/credits'] }]); return; }
     if (p.purpose === 'fund') {
       // A funding of the agent's own wallet: the desk reads it off the chain and records it; the balance comes back with it.
-      const f: any = await this.get<any>(this.obs.fundVerify(this.token, hash)).catch((e) => e?.error ?? e);
+      const f: any = await this.signed<any>(this.obs.fundVerify(this.token, hash)).catch((e) => e?.error ?? e);
       if (f?.ok) { this.print([{ kind: 'output', text: (f.already ? 'Already recorded. ' : '') + 'Your agent\'s wallet received ' + Number(f.amount ?? p.amount).toFixed(5) + ' ETH' + (typeof f.balance === 'number' ? ', and holds ' + f.balance.toFixed(5) + ' ETH now.' : '.'), suggest: ['/wallet', '/start', '/agent'] }]); }
       else { this.print([{ kind: 'error', text: 'The desk couldn\'t record it yet: ' + (f?.reason || f?.error || 'no answer') + '. It landed at ' + ConsoleComponent.EXPLORER + '/tx/' + hash + '; type /wallet in a minute.', suggest: ['/wallet'] }]); }
       return;
     }
-    const v: any = await this.get<any>(this.obs.creditsVerify(this.token, hash)).catch((e) => e?.error ?? e);
+    const v: any = await this.signed<any>(this.obs.creditsVerify(this.token, hash)).catch((e) => e?.error ?? e);
     if (v?.ok) {
       if (typeof v.balance === 'number') { this.credits = v.balance; }
       this.print([{ kind: 'output', text: (v.already ? 'Already credited. ' : '') + this.creditsText(Number(v.credits ?? 0)) + ' added from ' + v.amount + ' ' + v.token + '. Balance: ' + this.creditsText(Number(v.balance ?? 0)) + '.', suggest: ['/model', '/credits'] }]);
@@ -523,8 +564,29 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     }));
   }
 
+  /** The wallet is gone (disconnected, or another took its place): its session goes with it, from storage too. */
   private forgetWallet(): void {
-    this.wallet = null; this.token = null; this.standing = null; this.credits = null; this.status = 'guest'; this.agentState = 'idle'; this.agentName = 'OBS console';
+    this.wallet = null;
+    this.dropSession();
+  }
+
+  /**
+   * Sign out on this device: the bearer leaves memory and localStorage, and the page is back to a wallet that is
+   * connected but not signed in. Until 2026-09-08 a disconnect cleared the page and left the bearer in storage for
+   * its week, where the next visitor to this browser found it.
+   */
+  private dropSession(): void {
+    this.storeSession(null);
+    this.token = null; this.standing = null; this.credits = null; this.settings = {}; this.agentWallet = null;
+    this.agentState = 'idle'; this.agentError = null; this.agentName = 'OBS console';
+    this.status = this.wallet ? 'connected' : 'guest';
+  }
+
+  /** /logout, /disconnect: sign out of the console here. The wallet stays connected in its own app; a page cannot disconnect it. */
+  private logout(): void {
+    const had = !!this.token;
+    this.dropSession();
+    this.print([{ kind: 'system', text: had ? 'Signed out on this device. Your wallet stays connected in its own app; /connect signs in again.' : 'You weren\'t signed in. /connect signs in.', suggest: ['/connect', '/status'] }]);
   }
 
   private async readChain(p: any): Promise<void> {
@@ -548,7 +610,8 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     if (this.listening) { return; }
     this.listening = true;
     p.on?.('accountsChanged', (a: string[]) => this.zone.run(() => {
-      this.wallet = a?.[0] ?? null; this.token = null; this.standing = null; this.status = this.wallet ? 'connected' : 'guest'; this.agentState = 'idle'; this.agentName = 'OBS console';
+      this.forgetWallet();
+      this.wallet = a?.[0] ?? null; this.status = this.wallet ? 'connected' : 'guest';
       this.print([{ kind: 'system', text: this.wallet ? 'Switched to wallet ' + this.short(this.wallet) + '. Sign in again to reach its agent.' : 'Wallet disconnected.', suggest: this.wallet ? ['/connect'] : [] }]);
     }));
     p.on?.('chainChanged', (c: string) => this.zone.run(() => { this.chainId = parseInt(c, 16); }));
@@ -653,12 +716,16 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     this.agentState = 'provisioning';
     this.agentError = null;
     try {
-      const ensured = await this.get<any>(this.obs.myAgentEnsure(this.token)).catch((e) => (e?.error && typeof e.error === 'object' ? e.error : { ok: false, error: this.reason(e) }));
+      // A 401 here has already cleared the session and said so; there is nothing more to set up.
+      const ensured = await this.signed<any>(this.obs.myAgentEnsure(this.token)).catch((e) => (this.isExpired(e) ? null : e?.error && typeof e.error === 'object' ? e.error : { ok: false, error: this.reason(e) }));
+      if (ensured === null) { return; }
       if (ensured?.code === 'not_holder') { this.agentState = 'idle'; this.print([{ kind: 'system', text: ensured.error || 'The console is for OBS and AOBS holders.', suggest: ['/trade', '/status'] }]); return; }
       if (!ensured?.ok) { throw new Error(ensured?.error || 'could not reach your agent'); }
       this.settings = ensured.settings ?? {};
       this.agentName = ensured.name || 'OBS';
-      const hist = await this.get<{ ok: boolean; turns: Array<{ role: string; content: string }> }>(this.obs.myAgentHistory(this.token)).catch(() => ({ ok: true, turns: [] }));
+      this.agentWallet = isAddress(ensured.wallet) ? ensured.wallet : null;
+      const hist = await this.signed<{ ok: boolean; turns: Array<{ role: string; content: string }> }>(this.obs.myAgentHistory(this.token)).catch((e) => (this.isExpired(e) ? null : { ok: true, turns: [] }));
+      if (hist === null) { return; }
       const prior = (hist.turns ?? []).filter((t) => t.role === 'user' || t.role === 'assistant');
       if (!this.greeted) {
         this.greeted = true;
@@ -694,12 +761,12 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     const { url, headers } = this.obs.myAgentStream(this.token);
     let acc = '';
     // Something happened between the agent's words (a tool ran, an approval was asked): its next words start a new bubble.
-    const aside = (line: CliLine) => {
+    const drop = () => {
       if (me && !me.text) { const i = this.lines.indexOf(me); if (i >= 0) { this.lines.splice(i, 1); } }
       if (me) { me.streaming = false; }
       me = null; acc = '';
-      this.print([line]);
     };
+    const aside = (line: CliLine) => { drop(); this.print([line]); };
     const say = (text: string) => {
       if (!me) { me = { kind: 'agent', text: '', streaming: true }; this.print([me]); }
       this.patch(me, { text, streaming: true });
@@ -708,6 +775,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
       const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ text }) });
       if (!res.ok || !res.body) {
         const j = await res.json().catch(() => null);
+        if (res.status === 401) { drop(); this.sessionExpired(); return; }
         if (res.status === 402) { aside({ kind: 'system', text: j?.error || 'You\'re out of credits.', suggest: ['/credits', '/models free'] }); this.credits = 0; return; }
         if (res.status === 403 && j?.code === 'not_holder') { aside({ kind: 'system', text: j.error || 'The console is for OBS and AOBS holders.', suggest: ['/trade', '/status'] }); this.agentState = 'idle'; return; }
         throw new Error(j?.error || 'your agent could not respond');
@@ -793,9 +861,16 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     const q = await this.fetchQuote(amount, from, to);
     this.showQuote(q);
     let swapHash: string | null = null;
+    let sent = 0;
     for (const st of q.steps) {
+      // Each step is judged before the wallet sees it: the swap to the router, the approvals to Permit2 or to the
+      // token being approved for Permit2, all on Robinhood Chain, and where it goes is printed first (2026-09-08).
+      const verdict = judgeStep(st);
+      this.print([{ kind: 'system', text: sendLine(st, verdict.ok ? verdict.label : 'not somewhere the console sends') }]);
+      if (verdict.ok === false) { this.print([{ kind: 'error', text: 'Not sent: ' + verdict.reason + '. ' + (sent ? 'Nothing else was sent.' : 'Nothing was signed.') }]); return; }
       this.print([{ kind: 'system', text: 'Sign in your wallet: ' + st.note }]);
       const hash: string = await p.request({ method: 'eth_sendTransaction', params: [{ from: this.wallet, to: st.to, data: st.data, value: this.hex(st.value) }] });
+      sent++;
       this.print([{ kind: 'system', text: 'Sent ' + hash.slice(0, 12) + '…, waiting for the chain.' }]);
       const r = await this.waitReceipt(p, hash);
       if (!r.ok) { this.print([{ kind: 'error', text: (st.id === 'swap' ? 'The swap' : 'The approval') + ' didn\'t succeed (' + r.status + '). Nothing else was sent.' }]); return; }
@@ -806,7 +881,7 @@ export class ConsoleComponent implements AfterViewInit, OnDestroy {
     // The desk counts a swap for the wallet that signed in, so the report carries the session; without one it is
     // still a real swap, just not on the console's tally.
     if (!this.token) { this.print([{ kind: 'system', text: 'Sign in with /connect and the desk will count your swaps here.', suggest: ['/connect'] }]); return; }
-    const reply: any = await this.get<any>(this.obs.consoleSwap({ address: this.wallet, txHash: swapHash, from: q.from, to: q.to, amountIn: q.amountIn }, this.token)).catch((e) => e?.error ?? e);
+    const reply: any = await this.signed<any>(this.obs.consoleSwap({ address: this.wallet, txHash: swapHash, from: q.from, to: q.to, amountIn: q.amountIn }, this.token)).catch((e) => e?.error ?? e);
     if (reply?.ok) {
       this.standing = reply.standing ?? this.standing;
       const got = reply.swap?.amountOut != null ? ', and ' + reply.swap.amountOut + ' ' + q.to + ' arrived' : '';

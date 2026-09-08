@@ -248,6 +248,11 @@ export interface PaymentTx {
   creditsUsd: number;
   credits: number;
   bonusPct: number;
+  /**
+   * Where the payment must land: `to` itself for ETH, the recipient inside the transfer for a token. The page
+   * refuses to sign a payment that reaches anywhere else (2026-09-08, dashboard send-guard.ts).
+   */
+  treasury: string;
 }
 
 const toRaw = (amount: number, decimals: number): bigint => BigInt(Math.round(amount * 10 ** Math.min(decimals, 8))) * BigInt(10) ** BigInt(Math.max(0, decimals - 8));
@@ -263,8 +268,8 @@ export async function paymentTx(t: PayToken, amount: number): Promise<PaymentTx 
   const creditsUsd = Math.round(usd * (1 + bonus / 100) * 100) / 100;
   const raw = toRaw(amount, t.decimals);
   const chainId = ASSETS["ETH@robinhood"] ? 4663 : 4663;
-  if (t.kind === "native") return { to, data: "0x", value: raw.toString(), chainId, note: `send ${amount} ETH to the credits treasury`, token: t.symbol, amount, creditsUsd, credits: toCredits(creditsUsd), bonusPct: bonus };
-  return { to: t.contract as string, data: encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [to as `0x${string}`, raw] }), value: "0", chainId, note: `send ${amount} ${t.symbol} to the credits treasury`, token: t.symbol, amount, creditsUsd, credits: toCredits(creditsUsd), bonusPct: bonus };
+  if (t.kind === "native") return { to, data: "0x", value: raw.toString(), chainId, note: `send ${amount} ETH to the credits treasury`, token: t.symbol, amount, creditsUsd, credits: toCredits(creditsUsd), bonusPct: bonus, treasury: to };
+  return { to: t.contract as string, data: encodeFunctionData({ abi: ERC20, functionName: "transfer", args: [to as `0x${string}`, raw] }), value: "0", chainId, note: `send ${amount} ${t.symbol} to the credits treasury`, token: t.symbol, amount, creditsUsd, credits: toCredits(creditsUsd), bonusPct: bonus, treasury: to };
 }
 
 /**
