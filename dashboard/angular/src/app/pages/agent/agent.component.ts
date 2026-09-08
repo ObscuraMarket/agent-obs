@@ -4,6 +4,7 @@ import { Meta, Title } from '@angular/platform-browser';
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import { timeout } from 'rxjs';
 import { REFRESH_MS, nextRefreshMs, tickStatus } from './refresh';
+import { MONTHS, agentsSummary, shortPct, sinceText, sinceTitle, visibleAgents, wholeUsd } from './agents';
 import { SPARK_H, SPARK_W, Spark, sparkline } from './sparkline';
 import {
   CgMarket, ObsDashboard, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
@@ -34,7 +35,6 @@ interface KvRow { k: string; v: string; icon?: 'eth' | 'usdg' | 'obs'; }
 interface TermItem { row: HTMLElement; tx: HTMLElement; text: string; animate: boolean; node?: HTMLElement; }
 
 const STABLE: { [asset: string]: 1 } = { USDG: 1, USDC: 1, USDT: 1, DAI: 1 };
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const TERM_LINE_CAP = 700;
 /**
  * A thought or a trade on the stream refreshes the panels a moment later, once the ledger write behind it has landed.
@@ -62,11 +62,20 @@ const MY_BOOK_TIMEOUT_MS = 20_000;
 export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   status: ObsStatus | null = null;
   pnl: ObsPnl | null = null;
-  /** The agents following the desk, as anyone may see them. */
+  /**
+   * The agents following the desk, as anyone may see them: the API's list less the switched-off blanks (off, no
+   * trades, nothing held), which the table hid from 2026-09-08 so a "test" agent stopped sitting in it. The summary
+   * counts these rows, not the API's totals. A blank that a deep link (?agent=0x...) opened keeps its row while its
+   * panel is open, so the panel always has a row marked open above it; closing leaves the row until the next read.
+   */
   agents: ObsPublicAgent[] = [];
-  agentsOn = 0;
-  agentsLive = 0;
-  get agentsSummary(): string { return this.agents.length ? `${this.agentsOn} on, ${this.agentsLive} live, ${this.agents.length} all time` : 'none yet'; }
+  /** The API's list as it came, so opening a hidden agent can put its row back without another read. */
+  private allAgents: ObsPublicAgent[] = [];
+  get agentsSummary(): string { return agentsSummary(this.agents); }
+  sinceText(ts: number): string { return sinceText(ts); }
+  sinceTitle(ts: number): string { return sinceTitle(ts); }
+  wholeUsd(v: number): string { return wholeUsd(v); }
+  shortPct(v: number): string { return shortPct(v); }
   // ---- Your agent: the wallet that signed in on the console, its own book, from its own signed read ----
   /** The connected wallet: the site's own connection when the module hands one over, else the browser's provider asked once, silently. */
   myWallet: string | null = null;
@@ -356,7 +365,11 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     return !!a.walletAddress && !!this.pickedWallet && a.walletAddress.toLowerCase() === this.pickedWallet.toLowerCase();
   }
 
-  /** A click anywhere on a row opens its agent, except on the wallet link, which stays a link; the name is a button too, for the keyboard. */
+  /**
+   * A click anywhere on a row opens its agent; the name button handles its own click (it stops propagation), so the
+   * guard keeps a button, or any future link in the row, from toggling twice (the wallet link moved into the panel
+   * 2026-09-08; the name is a button too, for the keyboard).
+   */
   rowClick(a: ObsPublicAgent, ev: Event): void {
     const t = ev.target as HTMLElement | null;
     if (t?.closest?.('a, button')) { return; }
@@ -388,6 +401,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
    */
   private pickAgent(wallet: string, writeUrl: boolean, focus = false): void {
     this.pickedWallet = wallet;
+    this.agents = visibleAgents(this.allAgents, wallet);
     this.picked = null;
     this.pickedTrades = [];
     this.pickedSpark = null;
@@ -529,7 +543,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     if (d.agentToken) { this.agentToken = d.agentToken; }
     if (d.reads) { this.reads = d.reads; this.buildWallet(d.reads); }
     if (d.pnl) { this.pnl = d.pnl; this.buildPortfolio(d.pnl); this.buildPositions(d.pnl); }
-    if (d.agents) { this.agents = d.agents.agents ?? []; this.agentsOn = d.agents.on ?? 0; this.agentsLive = d.agents.live ?? 0; }
+    if (d.agents) { this.allAgents = d.agents.agents ?? []; this.agents = visibleAgents(this.allAgents, this.pickedWallet); }
     if (d.market) { this.obsMarket = d.market; }
     if (d.trades) { this.buildTicker(d.trades.items); }
     if (d.feed) { this.feed = d.feed.items.slice(0, 6); }
