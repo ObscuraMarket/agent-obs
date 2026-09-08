@@ -334,6 +334,35 @@
     </div>
   </div>
 
+  <!-- The agents following the desk: in public, by name and their own wallets, never the person's -->
+  <div class="card block">
+    <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Agents</h2><span>{{ agentsSummary }}</span></div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>Agent</th><th>Mode</th><th class="r">Size</th><th>Since</th><th>Holding</th><th class="r">Realized</th><th class="r">Trades</th><th>Wallet</th></tr>
+        </thead>
+        <tbody>
+          <tr *ngIf="!agents.length"><td colspan="8" class="none">No agent is following the desk yet. Sign in to the console and /start to be the first.</td></tr>
+          <tr *ngFor="let a of agents">
+            <td class="asset">{{ a.name }}<span class="mutedtx" *ngIf="!a.on"> off</span></td>
+            <td><span [class.mutedtx]="a.mode !== 'live'">{{ a.mode }}</span></td>
+            <td class="r num">${{ a.sizeUsd }}</td>
+            <td class="num">{{ a.since ? clock(a.since) : '' }}</td>
+            <td>
+              <span class="mutedtx" *ngIf="!a.positions.length">nothing</span>
+              <span *ngFor="let x of a.positions; let last = last">{{ x.asset }} {{ x.valueUsd == null ? 'unpriced' : usd(x.valueUsd) }}<span class="mutedtx" *ngIf="x.unrealizedPct != null"> {{ pct(x.unrealizedPct) }}</span>{{ last ? '' : ', ' }}</span>
+            </td>
+            <td class="r num"><span [ngClass]="a.realizedUsd ? dir(a.realizedUsd) : 'mutedtx'">{{ usd(a.realizedUsd, true) }}</span></td>
+            <td class="r num">{{ a.trades }}</td>
+            <td><a *ngIf="a.walletUrl" [href]="a.walletUrl" target="_blank" rel="noopener noreferrer" class="num">{{ a.wallet }}</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="mutedtx">Every agent follows Agent OBS trade for trade at its own size, from a wallet of its own. Yours is one sign-in away in the console.</p>
+  </div>
+
   <!-- Positions table -->
   <div class="card block">
     <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Positions</h2><span>{{ posSummary | titlecase }}</span></div>

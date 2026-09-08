@@ -213,6 +213,10 @@ export interface ObsInFlight {
   costUsd: number | null;
 }
 
+/** One agent following the desk, as anyone may see it: its name and its own wallet, never the person's. */
+export interface ObsPublicAgent { name: string; wallet: string | null; walletUrl: string | null; on: boolean; mode: 'paper' | 'live'; sizeUsd: number; since: number | null; positions: Array<{ asset: string; valueUsd: number | null; unrealizedPct: number | null }>; realizedUsd: number; trades: number; exits: number; }
+export interface ObsAgents { ok: boolean; agents: ObsPublicAgent[]; on: number; live: number; at: number; }
+
 export interface ObsPnl {
   snapshot: ObsBookSnapshot;
   prices: { [asset: string]: number | null };
@@ -451,6 +455,11 @@ export class ObsDeskService {
 
   pnl(hours = 168): Observable<ObsPnl> {
     return this.http.get<ObsPnl>(`${this.base}/api/obs/pnl`, { params: { hours } });
+  }
+
+  /** `/api/obs/agents`: every agent following the desk, for anyone: on or off, live or paper, what they hold, what they made. */
+  agents(): Observable<ObsAgents> {
+    return this.http.get<ObsAgents>(`${this.base}/api/obs/agents`);
   }
 
   thoughts(limit = 12): Observable<ObsItems<ObsThought>> {

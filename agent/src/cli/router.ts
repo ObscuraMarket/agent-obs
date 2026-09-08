@@ -7,7 +7,7 @@
 // same validator the settings route uses, never a write from here.
 import { STYLES, DEFAULT_NAME, type UserSettings } from "../desk/userSettings.ts";
 
-export type DeskCommand = "status" | "positions" | "thoughts" | "research" | "watch" | "reads";
+export type DeskCommand = "status" | "positions" | "thoughts" | "research" | "watch" | "reads" | "agents";
 
 /** The site's own pages the console opens beside itself, one command each. They left the header for this; their routes stay for deep links. */
 export type ConsoleView = "trade" | "rewards" | "cards" | "yield";
@@ -66,8 +66,8 @@ export interface ConsoleContext {
 const ok = (lines: string[], effect: ConsoleEffect = { kind: "none" }, suggest?: string[]): ConsoleResult => (suggest?.length ? { lines, effect, suggest } : { lines, effect });
 const err = (lines: string[], suggest?: string[]): ConsoleResult => (suggest?.length ? { lines, effect: { kind: "none" }, error: true, suggest } : { lines, effect: { kind: "none" }, error: true });
 
-const DESK: DeskCommand[] = ["status", "positions", "thoughts", "research", "watch", "reads"];
-const DESK_ALIAS: Record<string, DeskCommand> = { book: "positions", thought: "thoughts", log: "research", live: "watch", read: "reads" };
+const DESK: DeskCommand[] = ["status", "positions", "thoughts", "research", "watch", "reads", "agents"];
+const DESK_ALIAS: Record<string, DeskCommand> = { book: "positions", thought: "thoughts", log: "research", live: "watch", read: "reads", leaderboard: "agents", board: "agents", followers: "agents" };
 
 type Door = Pick<ConsoleContext, "apps" | "gate">;
 
@@ -85,6 +85,7 @@ export function helpLines(door: Door = {}): string[] {
     "  /explore           A short tour, one step at a time",
     "  /status            Your own agent's status once you're signed in; the desk's until then",
     "  /desk              What Agent OBS, the house desk, is doing right now",
+    "  /agents            Every agent following the desk: who is on, what they hold, what they made",
     "  /trade /rewards /cards /yield   Open a page of the app beside the console",
     "  /swap 0.05 ETH USDG   Swap from your own wallet through the pools",
     `  /connect           ${connectLine(door.gate)}`,
@@ -138,6 +139,7 @@ export function helpAllLines(door: Door = {}): string[] {
   "",
   "  The desk (live, read only)",
   "    /desk              What Agent OBS is doing right now (/status is your own agent once you're signed in)",
+  "    /agents            Every agent following the desk, in public: on or off, live or paper, what they hold, what they made",
   "    /positions /thoughts [n] /research [n] /watch /reads",
   "",
   "  Your wallet",

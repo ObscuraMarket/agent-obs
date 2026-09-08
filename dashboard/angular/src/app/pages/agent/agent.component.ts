@@ -4,7 +4,7 @@ import { Subscription, interval } from 'rxjs';
 
 import { Curve, buildCurve, curveYAt, traceCurve } from './curve';
 import {
-  CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade,
+  CgMarket, ObsDeskService, ObsFeedItem, ObsInFlight, ObsMarket, ObsPnl, ObsPosition, ObsClosedTrade, ObsPublicAgent,
   ObsAgentToken, ObsLive, ObsRails, ObsReads, ObsResearchEvent, ObsStatus, ObsThought, ObsTokenDigest, ObsTrade, ObsWatchEvent
 } from '../../service/obs-desk.service';
 
@@ -49,6 +49,11 @@ const TERM_LINE_CAP = 700;
 export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   status: ObsStatus | null = null;
   pnl: ObsPnl | null = null;
+  /** The agents following the desk, as anyone may see them. */
+  agents: ObsPublicAgent[] = [];
+  agentsOn = 0;
+  agentsLive = 0;
+  get agentsSummary(): string { return this.agents.length ? `${this.agentsOn} on, ${this.agentsLive} live, ${this.agents.length} all time` : 'none yet'; }
   reads: ObsReads | null = null;
   obsMarket: ObsMarket | null = null;
   agentToken: ObsAgentToken | null = null;
@@ -261,6 +266,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
     this.obs.agentToken().subscribe({ next: (t) => { this.agentToken = t; if (this.marketAsset === 'agent') { this.buildStats(); } }, error: () => { /* the card keeps its placeholders */ } });
     this.obs.reads().subscribe({ next: (r) => { this.reads = r; this.buildWallet(r); this.buildStats(); if (this.chartSeries === 'obs') { this.updateChart(); } }, error: fail('reads') });
     this.obs.pnl(this.chartHours).subscribe({ next: (p) => { this.pnl = p; this.buildPortfolio(p); this.buildPositions(p); this.updateChart(); }, error: fail('pnl') });
+    // The agents following the desk, in public; a failed read leaves the last list standing.
+    this.obs.agents().subscribe({ next: (a) => { this.agents = a.agents ?? []; this.agentsOn = a.on ?? 0; this.agentsLive = a.live ?? 0; }, error: () => undefined });
     this.obs.market(this.chartHours).subscribe({ next: (m) => { this.obsMarket = m; this.buildStats(); if (this.chartSeries === 'obs') { this.updateChart(); } }, error: fail('market') });
     this.obs.trades(30).subscribe({ next: (t) => { this.buildTicker(t.items); }, error: fail('trades') });
     this.obs.feed(8).subscribe({ next: (f) => { this.feed = f.items.slice(0, 6); }, error: fail('feed') });

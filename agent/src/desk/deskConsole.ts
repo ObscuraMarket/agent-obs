@@ -73,3 +73,15 @@ export function swapsLines(e: { swaps: number; recent: Array<{ at: number; from:
   if (!e.swaps) out.push("  Try /quote 0.05 ETH USDG to see what the pools pay, then /swap to do it from your own wallet.");
   return out;
 }
+
+/** Every agent following the desk, for anyone who asks: who is on, in which mode, what they hold, what they made. */
+export function agentsLines(p: { agents: Array<{ name: string; wallet: string | null; on: boolean; mode: string; sizeUsd: number; since: number | null; positions: Array<{ asset: string; valueUsd: number | null; unrealizedPct: number | null }>; realizedUsd: number; trades: number; exits: number }>; on: number; live: number }): string[] {
+  if (!p.agents.length) return ["No agent is following the desk yet. Sign in and /start to be the first."];
+  const out = [`agents following the desk: ${p.on} on (${p.live} live), ${p.agents.length} all time`];
+  for (const a of p.agents) {
+    const held = a.positions.length ? a.positions.map((x) => `${x.asset} ${usd(x.valueUsd, 0)}${x.unrealizedPct != null ? ` (${pct(x.unrealizedPct)})` : ""}`).join(", ") : "holding nothing";
+    out.push(`  ${a.name.slice(0, 12).padEnd(12)} ${a.mode.padEnd(5)} ${(a.on ? "on" : "off").padEnd(3)} $${String(a.sizeUsd).padEnd(4)} a trade${a.since ? `  since ${clock(a.since)}` : ""}  ${held}  realized ${usd(a.realizedUsd, 2)}  ${a.trades} trade${a.trades === 1 ? "" : "s"}${a.wallet ? `  wallet ${a.wallet}` : ""}`);
+  }
+  out.push("  Every agent follows Agent OBS trade for trade at its own size. /agent is yours; /start turns it on.");
+  return out;
+}

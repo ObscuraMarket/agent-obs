@@ -51,7 +51,7 @@ import { issueChallenge, linkAccount, verifySession, bearerOf } from "./desk/acc
 import { getSettings, updateSettings, sanitizeSettings, describeSettings } from "./desk/userSettings.ts";
 import { refreshModel, modelFor, personaFor, approveTool, ensureUserAgent, streamUserAgent, userAgentHistory, refreshPersona, agentDisplayName, chatGuard, endTurn, deEmDash } from "./desk/userAgents.ts";
 import { routeConsole } from "./cli/router.ts";
-import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines } from "./desk/deskConsole.ts";
+import { statusLines, positionsLines, thoughtsLines, researchLines, watchLines, readsLines, swapsLines, appsLines, agentsLines } from "./desk/deskConsole.ts";
 import { appsOn, ensureApps, listApps, connectApp, disconnectApp, resolveApp, appName, allowedToolkits } from "./desk/apps.ts";
 import { holderGate, forgetHolder, gateMode } from "./desk/gate.ts";
 import { followState, readFollow, recordFollow, checkSize, followBook, followLines, liveBook, readFollowTrades, readFollowNotes, liveTrades, mirrorTrades, followEvents, type FollowMode } from "./desk/follow.ts";
@@ -467,8 +467,54 @@ function requireWallet(req: IncomingMessage, res: ServerResponse): string | null
 }
 
 /** The desk's read-only commands as lines, from the same payloads the page reads. */
+// ---- Every agent following the desk, in public: who is on, what they hold, what they made. ----------------------
+// A person's own wallet is never shown; the agent's name and its own wallet are. Cached for thirty seconds.
+export interface PublicAgent {
+  name: string;
+  wallet: string | null;
+  walletUrl: string | null;
+  on: boolean;
+  mode: "paper" | "live";
+  sizeUsd: number;
+  since: number | null;
+  positions: Array<{ asset: string; valueUsd: number | null; unrealizedPct: number | null }>;
+  realizedUsd: number;
+  trades: number;
+  exits: number;
+}
+let agentsCache: { at: number; value: { ok: true; agents: PublicAgent[]; on: number; live: number; at: number } } | null = null;
+async function agentsPayload(now: number): Promise<{ ok: true; agents: PublicAgent[]; on: number; live: number; at: number }> {
+  if (agentsCache && now - agentsCache.at < 30_000) return agentsCache.value;
+  const rows = readFollow();
+  const addresses = [...new Set(rows.map((r) => r.address))];
+  const p = await pnlPayload(1, now, false);
+  const prices = (p.prices as Prices | undefined) ?? {};
+  const deskTrades = deskFromDisk().book.trades;
+  const tradeRows = readFollowTrades();
+  const notes = readFollowNotes();
+  const agents: PublicAgent[] = [];
+  for (const a of addresses) {
+    const state = followState(rows, a);
+    const book = state.mode === "live" ? liveBook(a, state, tradeRows, notes, prices, null) : followBook(deskTrades, state, prices);
+    const wallet = walletsOn() ? agentWalletAddress(a) : null;
+    agents.push({
+      name: agentDisplayName(a),
+      wallet: wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : null,
+      walletUrl: wallet ? `${EXPLORER_URL}/address/${wallet}` : null,
+      on: state.on, mode: state.mode, sizeUsd: state.sizeUsd, since: state.since,
+      positions: book.positions.positions.map((x) => ({ asset: x.asset, valueUsd: x.valueUsd, unrealizedPct: x.unrealizedPct })),
+      realizedUsd: book.positions.realizedUsd, trades: book.trades.length, exits: book.trades.filter((t) => t.exit).length,
+    });
+  }
+  agents.sort((x, y) => Number(y.on) - Number(x.on) || y.realizedUsd - x.realizedUsd);
+  const value = { ok: true as const, agents: agents.slice(0, 50), on: agents.filter((x) => x.on).length, live: agents.filter((x) => x.on && x.mode === "live").length, at: now };
+  agentsCache = { at: now, value };
+  return value;
+}
+
 async function deskLines(command: string, n: number | undefined, now: number): Promise<string[]> {
   switch (command) {
+    case "agents": return agentsLines(await agentsPayload(now));
     case "status": return statusLines(statusPayload(now), await pnlPayload(24, now, false));
     case "positions": return positionsLines(await pnlPayload(24, now, false));
     case "thoughts": return thoughtsLines(readThoughts(Math.max(1, Math.min(20, n ?? 3))).map(withDigest));
@@ -738,6 +784,12 @@ export function handle(req: IncomingMessage, res: ServerResponse): void {
   }
   if (path === "/api/obs/status") {
     json(res, 200, statusPayload(now));
+    return;
+  }
+  if (path === "/api/obs/agents") {
+    // Every agent following the desk, for anyone: names, their own wallets, what they hold and what they made.
+    res.setHeader("Cache-Control", "public, max-age=30");
+    agentsPayload(now).then((p) => json(res, 200, p)).catch((err) => json(res, 502, { ok: false, error: err instanceof Error ? err.message : "agents unavailable" }));
     return;
   }
   if (path === "/api/obs/console/door") {

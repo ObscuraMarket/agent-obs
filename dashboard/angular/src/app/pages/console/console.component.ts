@@ -14,6 +14,7 @@ interface CommandHelp { cmd: string; what: string; usage?: string; args?: boolea
 const COMMAND_HELP: CommandHelp[] = [
   { cmd: 'status', what: 'Your own agent\'s status once you\'re signed in; the desk\'s until then' },
   { cmd: 'desk', what: 'What Agent OBS, the house desk, is doing right now' },
+  { cmd: 'agents', what: 'Every agent following the desk: who is on, what they hold, what they made' },
   { cmd: 'trade', what: 'Open Trade beside the console' },
   { cmd: 'rewards', what: 'Open Rewards: your cashback in tokenized stocks' },
   { cmd: 'cards', what: 'Open Cards' },

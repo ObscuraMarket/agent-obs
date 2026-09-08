@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { routeConsole, suggest, HELP_ALL, TOUR, VOCAB, VIEWS } from "../src/cli/router.ts";
 import { sanitizeSettings, sanitizeName, getSettings, describeSettings } from "../src/desk/userSettings.ts";
-import { statusLines, positionsLines, thoughtsLines, swapsLines } from "../src/desk/deskConsole.ts";
+import { statusLines, positionsLines, thoughtsLines, swapsLines, agentsLines } from "../src/desk/deskConsole.ts";
 import { personaFor, agentIdForWallet, deEmDash, isMissingSession, DENIED_TOOLS, standingLine } from "../src/desk/userAgents.ts";
 
 test("a person's agent is denied the gateway's shell, files, web, self-editing and admin tools, and keeps its memory", () => {
@@ -16,6 +16,17 @@ test("a line without a slash is a message to the agent; a slash is a command; a 
   assert.deepEqual(routeConsole("what are you holding", ctx), { lines: [], effect: { kind: "chat", text: "what are you holding" } });
   assert.deepEqual(routeConsole("/status", ctx).effect, { kind: "desk", command: "status" });
   assert.deepEqual(routeConsole("/desk", ctx).effect, { kind: "desk", command: "status", house: true }, "the house desk by name, whoever is signed in");
+  assert.deepEqual(routeConsole("/agents", ctx).effect, { kind: "desk", command: "agents" }, "every agent following the desk, for anyone");
+  assert.deepEqual(routeConsole("/leaderboard", ctx).effect, { kind: "desk", command: "agents" });
+  assert.deepEqual(agentsLines({ agents: [], on: 0, live: 0 }), ["No agent is following the desk yet. Sign in and /start to be the first."]);
+  const table = agentsLines({ on: 1, live: 1, agents: [
+    { name: "Scout", wallet: "0xbdbF...374B", on: true, mode: "live", sizeUsd: 10, since: Date.UTC(2026, 8, 7, 22, 3), positions: [{ asset: "LENNY", valueUsd: 9.57, unrealizedPct: -0.043 }], realizedUsd: -0.81, trades: 3, exits: 1 },
+    { name: "OBS", wallet: null, on: false, mode: "paper", sizeUsd: 100, since: null, positions: [], realizedUsd: 0, trades: 0, exits: 0 },
+  ] });
+  assert.equal(table[0], "agents following the desk: 1 on (1 live), 2 all time");
+  assert.match(table[1], /^  Scout {8}live {2}on {2}\$10 {3}a trade {2}since 22:03Z {2}LENNY \$10 \(-4\.3%\) {2}realized -\$0\.81 {2}3 trades {2}wallet 0xbdbF\.\.\.374B$/);
+  assert.match(table[2], /^  OBS {10}paper off \$100 {2}a trade {2}holding nothing {2}realized \$0\.00 {2}0 trades$/);
+  for (const l of table) assert.ok(!l.includes("—"));
   assert.deepEqual(routeConsole("/obs", ctx).effect, { kind: "desk", command: "status", house: true });
   assert.deepEqual(routeConsole("/thoughts 5", ctx).effect, { kind: "desk", command: "thoughts", n: 5 });
   assert.deepEqual(routeConsole("/book", ctx).effect, { kind: "desk", command: "positions" });
