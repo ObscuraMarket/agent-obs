@@ -40,8 +40,8 @@ export type ConsoleEffect =
   | { kind: "credits"; action: "show" | "buy"; amount?: number; token?: string }
   /** The wallet's own trading agent, which follows the desk: turn it on (with a size), off, resize it, or show its book. */
   | { kind: "follow"; action: "start" | "stop" | "size" | "show"; sizeUsd?: number; mode?: "paper" | "live" }
-  /** The agent's own wallet: show it, fund it from the person's wallet (they sign), or send ETH back to their wallet. */
-  | { kind: "agentWallet"; action: "show" | "fund" | "withdraw"; amount?: number; all?: boolean };
+  /** The agent's own wallet: show it, fund it from the person's wallet (they sign), send ETH back to their wallet, or a token it holds: sent back whole (withdrawToken) or sold whole for ETH (sell). */
+  | { kind: "agentWallet"; action: "show" | "fund" | "withdraw" | "withdrawToken" | "sell"; amount?: number; all?: boolean; symbol?: string };
 
 export interface ConsoleResult {
   lines: string[];
@@ -91,7 +91,7 @@ export function helpLines(door: Door = {}): string[] {
     `  /connect           ${connectLine(door.gate)}`,
     "  /start [size]      Turn your trading agent on: it follows every trade Agent OBS makes, at your size, live from its own wallet once you fund it. /stop, /agent",
     "  /size 150          What it puts into each entry, in dollars; change it any time",
-    "  /wallet            Your agent's own wallet: /fund 0.05 ETH puts ETH in from your wallet, /withdraw all takes it back",
+    "  /wallet            Your agent's own wallet: /fund 0.05 ETH puts ETH in from your wallet, /withdraw all takes it back; /withdraw LENNY or /sell LENNY for a token it holds",
     ...(door.apps === false ? [] : ["  /apps              Connect Slack, Linear, X, Gmail, Google Docs and more to your agent"]),
     "  /model             Pick the model your agent runs on, any of them",
     "  /credits           Your credits, and how to add some with ETH, USDG, AOBS or a tokenized stock",
@@ -131,6 +131,8 @@ export function helpAllLines(door: Door = {}): string[] {
   "    /wallet            Its own wallet, made for it and held by the desk: where it is and what it holds",
   "    /fund 0.05 ETH     Put ETH in from your wallet; you sign the transfer",
   "    /withdraw all      Send it back to your wallet, or a part: /withdraw 0.02; it can only ever go to the wallet you signed in with",
+  "    /withdraw LENNY    Send a token it holds to your wallet, all of it",
+  "    /sell LENNY        Sell a token it holds for ETH, all of it, through the pools the desk uses; for a token the desk did not sell",
   "",
   "  The app (opens beside the console; /close puts it away)",
   "    /trade             Swap through Obscura's routes",
@@ -172,6 +174,11 @@ export function tourFor(door: Door = {}): Array<{ title: string; lines: string[]
 export const TOUR = tourFor();
 
 const list = (xs: readonly string[]) => xs.join(" | ");
+/** PURE: a token named on its own, or after "all", as the symbol the desk resolves it by; null for anything else. */
+const tokenArg = (arg: string): string | null => {
+  const m = arg.match(/^(?:all\s+)?([A-Za-z0-9]{1,20})$/i);
+  return m ? m[1].toUpperCase() : null;
+};
 
 /** PURE: route one line against the wallet's current settings and standing. Never mutates either. */
 export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
@@ -216,9 +223,22 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
     case "withdraw": {
       if (/^all$/i.test(arg)) return ok([], { kind: "agentWallet", action: "withdraw", all: true });
       const m = arg.match(/^([\d,]*\d(?:\.\d+)?)\s*(eth)?$/i);
-      const amount = m ? Number(m[1].replace(/,/g, "")) : NaN;
-      if (!m || !(amount > 0)) return err(["Say how much to send back to your wallet: /withdraw 0.02 ETH, or /withdraw all"], ["/withdraw all", "/wallet"]);
-      return ok([], { kind: "agentWallet", action: "withdraw", amount });
+      if (m) {
+        const amount = Number(m[1].replace(/,/g, ""));
+        if (!(amount > 0)) return err(["Say how much to send back to your wallet: /withdraw 0.02 ETH, or /withdraw all"], ["/withdraw all", "/wallet"]);
+        return ok([], { kind: "agentWallet", action: "withdraw", amount });
+      }
+      // A symbol with no amount is a token the agent holds, sent out whole; "all LENNY" says the same thing.
+      const symbol = tokenArg(arg);
+      if (symbol === "ETH") return err(["ETH goes by amount: /withdraw 0.02 or /withdraw all."], ["/withdraw all", "/wallet"]);
+      if (symbol) return ok([], { kind: "agentWallet", action: "withdrawToken", symbol });
+      return err(["Say how much to send back to your wallet: /withdraw 0.02 ETH, or /withdraw all; or a token your agent holds: /withdraw LENNY"], ["/withdraw all", "/wallet"]);
+    }
+    case "sell": {
+      const symbol = tokenArg(arg);
+      if (!symbol) return err(["Say which token your agent should sell for ETH, all of it: /sell LENNY"], ["/agent", "/wallet"]);
+      if (symbol === "ETH") return err(["ETH is what it sells into. /withdraw 0.02 or /withdraw all takes ETH out."], ["/withdraw all", "/agent"]);
+      return ok([], { kind: "agentWallet", action: "sell", symbol });
     }
     case "start":
     case "on": {
@@ -329,7 +349,7 @@ export function routeConsole(raw: string, ctx: ConsoleContext): ConsoleResult {
   }
 }
 
-export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "model", "models", "credits", "buy", "swaps", "apps", "connect", "balance", "quote", "swap", "start", "stop", "size", "agent", "wallet", "fund", "withdraw", "desk", ...VIEWS, "close", ...DESK];
+export const VOCAB = ["help", "explore", "clear", "whoami", "name", "style", "voice", "goal", "reset", "model", "models", "credits", "buy", "swaps", "apps", "connect", "balance", "quote", "swap", "start", "stop", "size", "agent", "wallet", "fund", "withdraw", "sell", "desk", ...VIEWS, "close", ...DESK];
 
 /** PURE: one near miss for a typo, by edit distance, only when it is actually close. */
 export function suggest(cmd: string): string[] {

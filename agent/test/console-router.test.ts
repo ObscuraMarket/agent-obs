@@ -120,6 +120,37 @@ test("the app's pages are console views: one command opens each beside the conso
   for (const v of [...VIEWS, "close"]) assert.ok(VOCAB.includes(v), `${v} is in the vocabulary`);
 });
 
+test("a token the agent holds leaves by name: /withdraw LENNY sends it whole, /sell LENNY sells it whole for ETH, and ETH still goes by amount", () => {
+  assert.deepEqual(routeConsole("/withdraw LENNY", ctx).effect, { kind: "agentWallet", action: "withdrawToken", symbol: "LENNY" });
+  assert.deepEqual(routeConsole("/withdraw all lenny", ctx).effect, { kind: "agentWallet", action: "withdrawToken", symbol: "LENNY" }, "all plus a symbol says the same thing, upper-cased");
+  assert.deepEqual(routeConsole("/withdraw all", ctx).effect, { kind: "agentWallet", action: "withdraw", all: true }, "the ETH forms stand");
+  assert.deepEqual(routeConsole("/withdraw 0.02 ETH", ctx).effect, { kind: "agentWallet", action: "withdraw", amount: 0.02 });
+  assert.deepEqual(routeConsole("/withdraw 0.02", ctx).effect, { kind: "agentWallet", action: "withdraw", amount: 0.02 });
+  assert.deepEqual(routeConsole("/withdraw 1,000", ctx).effect, { kind: "agentWallet", action: "withdraw", amount: 1000 });
+  const ethByName = routeConsole("/withdraw ETH", ctx);
+  assert.equal(ethByName.error, true);
+  assert.match(ethByName.lines[0], /^ETH goes by amount/);
+  assert.match(routeConsole("/withdraw", ctx).lines[0], /^Say how much to send back/);
+  assert.match(routeConsole("/withdraw 0", ctx).lines[0], /^Say how much to send back/);
+  assert.equal(routeConsole("/withdraw 0.5x", ctx).error, true, "neither an amount nor a symbol");
+  assert.deepEqual(routeConsole("/sell LENNY", ctx).effect, { kind: "agentWallet", action: "sell", symbol: "LENNY" });
+  assert.deepEqual(routeConsole("/sell all lenny", ctx).effect, { kind: "agentWallet", action: "sell", symbol: "LENNY" });
+  const noSymbol = routeConsole("/sell", ctx);
+  assert.equal(noSymbol.error, true);
+  assert.match(noSymbol.lines[0], /^Say which token your agent should sell/);
+  assert.match(routeConsole("/sell ETH", ctx).lines[0], /^ETH is what it sells into/);
+  assert.equal(routeConsole("/sell 5 LENNY", ctx).error, true, "a sale is the whole balance; there is no amount form");
+  assert.ok(VOCAB.includes("sell"));
+  assert.deepEqual(suggest("sel"), ["/sell"]);
+  const all = routeConsole("/help all", ctx).lines.join("\n");
+  assert.ok(all.includes("/withdraw LENNY") && all.includes("/sell LENNY"), "the full help teaches both");
+  assert.ok(routeConsole("/help", ctx).lines.join("\n").includes("/sell LENNY"), "and the short help");
+  const p = personaFor("0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38", { name: "Ledger" });
+  assert.match(p, /\/withdraw LENNY sends all of it to their wallet, \/sell LENNY sells all of it for ETH/);
+  assert.match(p, /If they ask you to buy a particular token, say you only follow the desk's trades/, "a buy of its own is still not its to place");
+  for (const l of [...routeConsole("/help all", ctx).lines, ...noSymbol.lines, ...ethByName.lines]) assert.ok(!l.includes("—"));
+});
+
 test("settings are cleaned and capped, and a present-but-invalid field is refused rather than dropped", () => {
   assert.deepEqual(sanitizeSettings({ name: "  Ledger <b>x</b> " }), { settings: { name: "Ledger bx/b" } });
   assert.equal(sanitizeName("<<>>"), null);
