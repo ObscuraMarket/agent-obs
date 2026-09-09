@@ -44,7 +44,8 @@ export function relayBody(from: Asset, to: Asset, amount: number, user: string):
 export interface RelayStep {
   id: string;
   kind: string;
-  txs: Array<{ to: string; value: string; chainId: number | null }>;
+  /** The transactions the step asks the wallet to send, calldata included: this is what the desk puts in its batch. */
+  txs: Array<{ to: string; value: string; chainId: number | null; data: string }>;
 }
 
 export interface RelayQuote {
@@ -81,7 +82,7 @@ export function parseRelayQuote(json: unknown): RelayQuote | null {
     kind: String(s.kind ?? ""),
     txs: (Array.isArray(s.items) ? s.items : []).map((it: Record<string, unknown>) => {
       const tx = (it.data ?? {}) as Record<string, unknown>;
-      return { to: String(tx.to ?? ""), value: String(tx.value ?? "0"), chainId: num(tx.chainId) };
+      return { to: String(tx.to ?? ""), value: String(tx.value ?? "0"), chainId: num(tx.chainId), data: String(tx.data ?? "0x") };
     }),
   }));
   return {

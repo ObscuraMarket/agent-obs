@@ -18,8 +18,9 @@ import { ASSETS, assetKey, chainOf, type Asset } from "./assets.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { recordTrade, readBook, latestTrades, boughtSymbols, intentTimedOut, INTENT_STALE_MIN, type Trade } from "./book.ts";
 import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet, type ReceiptRead } from "./signer.ts";
-import { aaOn, swapBatch, ethInPlan, buildUserOp, simulateUserOp, simulateBatch, submitUserOp, waitUserOp, ensureDeposit, depositMinWei, depositTopUpWei, prefundWei, spendableEthRaw, receivedRawFromLogs, nativeOutFromSwapLogs, opOutcomeOf, type PreparedOp, type SwapBatchToken } from "./aa.ts";
-import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
+import { fomoOn, fomoRoute, maxGiveUpPct, type FomoRoute } from "./fomo.ts";
+import { aaOn, swapBatch, wethWithdrawData, type AaCall, ethInPlan, buildUserOp, simulateUserOp, simulateBatch, submitUserOp, waitUserOp, ensureDeposit, depositMinWei, depositTopUpWei, prefundWei, spendableEthRaw, receivedRawFromLogs, nativeOutFromSwapLogs, opOutcomeOf, type PreparedOp, type SwapBatchToken } from "./aa.ts";
+import { WALLET_ADDRESS, NEVER_TRADE, WETH_CONTRACT } from "../config.ts";
 import { ledgerWriteFailures } from "../ledger.ts";
 import { raiseAlert, type AlertKind } from "./alerts.ts";
 import { dynamicAssets, dynamicPoolSpec, readFeed, resolveAny, tokenInfo, upsertToken, exitVerdict, isHolding, type FeedSnapshot } from "./candidates.ts";
@@ -365,8 +366,18 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   const tx = encodeSwap(q.route, amountInRaw, q.minOutRaw, address, deadline);
   let approvals: string[] = [];
   let prepared: PreparedOp | null = null;
+  // The route fomo's own app takes, when the operator has asked for it: the same pools underneath, through the
+  // aggregator its followers are notified by. Only for the desk's own wallet, and only under the lane, since it is
+  // the batch that makes it one operation. A route that will not quote or pays far less than the pools falls back
+  // to the desk's own router rather than stopping the trade: the notification is worth a few percent, never a miss.
+  let fomo: FomoRoute | null = null;
+  if (aa && fomoOn()) {
+    const r = await fomoRoute({ from: i.from, to: i.to, amount: amountIn, amountInRaw, poolAmountOut: q.amountOut, user: address });
+    if (r.ok) fomo = r.route;
+    else console.log(`[fomo] the desk's own router is taking this one: ${r.reason}`);
+  }
   if (aa) {
-    const built = await prepareSwapOp(i.from, tx, withdrawRaw, amountInRaw, now);
+    const built = fomo ? await prepareFomoOp(i.from, fomo, now) : await prepareSwapOp(i.from, tx, withdrawRaw, amountInRaw, now);
     if (!built.ok) return { ok: false, reason: built.reason };
     prepared = built.prepared;
     approvals = built.approvals;
@@ -386,15 +397,29 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     venue: "pool",
     ...(i.exit ? { exit: true } : {}),
     from: { asset: i.from.symbol, network: i.from.network, amount: amountIn, usd: i.usd ?? legUsd(i.from, amountIn, q.priceInUsd, ethUsd) },
-    to: { asset: i.to.symbol, network: i.to.network, amount: q.amountOut, usd: legUsd(i.to, q.amountOut, q.priceOutUsd, ethUsd) },
-    partner: "pool",
-    note: `${q.route.hops.map((h) => h.key).join(" then ")} on chain; expected ${q.amountOut} ${i.to.symbol}, floor ${q.minOut}${q.costPct != null ? `, route cost ${q.costPct.toFixed(2)}% (fees ${q.feePct.toFixed(2)}%)` : ""}${approvals.length ? `; approvals ${approvals.join(", ")}` : ""}${prepared ? `; one user operation through the entry point (${prepared.userOpHash.slice(0, 10)}), gas from the gas wallet` : ""}`,
+    to: { asset: i.to.symbol, network: i.to.network, amount: fomo ? fomo.amountOut : q.amountOut, usd: legUsd(i.to, fomo ? fomo.amountOut : q.amountOut, q.priceOutUsd, ethUsd) },
+    partner: fomo ? "fomo" : "pool",
+    note: fomo
+      ? `through fomo's own route, so the account's followers are told; expected ${fomo.amountOut} ${i.to.symbol}, ${fomo.giveUpPct >= 0 ? `${fomo.giveUpPct.toFixed(2)}% under` : `${(-fomo.giveUpPct).toFixed(2)}% over`} the pools' ${q.amountOut}${fomo.feeUsd != null ? `, its fees $${fomo.feeUsd.toFixed(2)}` : ""}${approvals.length ? `; ${approvals.join(", ")}` : ""}${prepared ? `; one user operation through the entry point (${prepared.userOpHash.slice(0, 10)}), gas from the gas wallet` : ""}`
+      : `${q.route.hops.map((h) => h.key).join(" then ")} on chain; expected ${q.amountOut} ${i.to.symbol}, floor ${q.minOut}${q.costPct != null ? `, route cost ${q.costPct.toFixed(2)}% (fees ${q.feePct.toFixed(2)}%)` : ""}${approvals.length ? `; approvals ${approvals.join(", ")}` : ""}${prepared ? `; one user operation through the entry point (${prepared.userOpHash.slice(0, 10)}), gas from the gas wallet` : ""}`,
   };
   if (prepared) {
     const poolManager = chainMemory().contracts.uniswapV4.poolManager;
     return sendSwap({ intent: i, base, tx, quote: q, address, ethUsd, now, aa: { fill: (logs) => aaFillFromLogs(logs, i.to, q.route, address, poolManager) } }, aaLane(prepared));
   }
   return sendSwap({ intent: i, base, tx, quote: q, address, ethUsd, now, runAs });
+}
+
+/**
+ * Fomo's own route as one user operation: the transactions Relay handed back, with the WETH the batch spends
+ * unwrapped ahead of them (the wallet holds no native ETH), then the same deposit and simulation as any other
+ * operation. The calls were checked against fomo's routers before this is called; nothing here trusts them again,
+ * and the simulation is the last word.
+ */
+async function prepareFomoOp(from: Asset, route: FomoRoute, now: number): Promise<{ ok: true; prepared: PreparedOp; approvals: string[] } | { ok: false; reason: string }> {
+  const calls = route.valueRaw > 0n ? [{ to: WETH_CONTRACT as `0x${string}`, value: 0n, data: wethWithdrawData(route.valueRaw) }, ...route.calls] : route.calls;
+  const approvals = route.calls.length > 1 ? [`${from.symbol} approved to fomo's router in the batch`] : [];
+  return finishOp(calls, approvals, now);
 }
 
 /**
@@ -423,7 +448,12 @@ async function prepareSwapOp(from: Asset, tx: RawTx, withdrawRaw: bigint, amount
       return { ok: false, reason: `the allowances could not be read: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
-  const calls = swapBatch({ tx, withdrawRaw, token });
+  return finishOp(swapBatch({ tx, withdrawRaw, token }), approvals, now);
+}
+
+/** Build, fund and simulate one batch, whichever router it goes to. A reason means nothing was sent. */
+async function finishOp(calls: AaCall[], approvals: string[], now: number): Promise<{ ok: true; prepared: PreparedOp; approvals: string[] } | { ok: false; reason: string }> {
+  void now;
   let prepared: PreparedOp;
   try {
     prepared = await buildUserOp(calls);

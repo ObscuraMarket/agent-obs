@@ -46,7 +46,8 @@ test("Relay's reply is read the way the app reads it: the formatted output, the 
   assert.equal(q.impactPct, -0.07);
   assert.equal(q.feeUsd, 0.530578);
   assert.equal(q.rate, 2506.69);
-  assert.deepEqual(q.steps, [{ id: "swap", kind: "transaction", txs: [{ to: "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f", value: "50000000000000000", chainId: 4663 }] }]);
+  // The calldata rides along: it is what the desk puts in its batch when it trades through fomo's own route.
+  assert.deepEqual(q.steps, [{ id: "swap", kind: "transaction", txs: [{ to: "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f", value: "50000000000000000", chainId: 4663, data: "0xcd" }] }]);
   assert.equal(parseRelayQuote({ details: { currencyOut: { amountFormatted: "0" } } }), null);
   assert.equal(parseRelayQuote("nope"), null);
 });
