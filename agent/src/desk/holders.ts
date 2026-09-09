@@ -119,12 +119,19 @@ export async function updateTransfers(token: `0x${string}`, decimals: number, no
     const head = await pub.getBlock({ blockTag: "latest" });
     const headBlock = head.number;
     const headAt = Number(head.timestamp) * 1000;
+    const backSec = launchAt != null ? Math.max(60, (now - launchAt) / 1000 + 120) : rules.firstPullHours * 3600;
+    const fromLaunch = headBlock - BigInt(Math.ceil(backSec * BLOCKS_PER_SEC));
+    // A stored scan is normally extended forward from its last block. But one that never held the mint can never
+    // reach it that way, and its wallet count stays a floor for the life of the token: on 2026-09-09, with the
+    // explorer refusing every read, that floor was the only thing the desk had and every candidate failed on it.
+    // So a scan that does not reach the launch is filled in from the launch once, and the rows it already has are
+    // kept (they are merged by transaction below). Only when a launch time is known: without one there is no
+    // beginning to scan from and the window would be a guess.
+    const backfill = existing.length > 0 && launchAt != null && !scanFromLaunch(existing);
     let fromBlock: bigint;
-    if (existing.length) fromBlock = BigInt(existing[existing.length - 1].block) + 1n;
-    else {
-      const backSec = launchAt != null ? Math.max(60, (now - launchAt) / 1000 + 120) : rules.firstPullHours * 3600;
-      fromBlock = headBlock - BigInt(Math.ceil(backSec * BLOCKS_PER_SEC));
-    }
+    if (backfill) fromBlock = fromLaunch;
+    else if (existing.length) fromBlock = BigInt(existing[existing.length - 1].block) + 1n;
+    else fromBlock = fromLaunch;
     if (fromBlock < 0n) fromBlock = 0n;
     if (fromBlock > headBlock) return existing;
     const rows: TransferRow[] = [];
@@ -137,12 +144,13 @@ export async function updateTransfers(token: `0x${string}`, decimals: number, no
         rows.push({ at: headAt - Math.round((Number(headBlock) - block) / BLOCKS_PER_SEC) * 1000, block, tx: `${l.transactionHash}:${l.logIndex}`, from: d.from.toLowerCase(), to: d.to.toLowerCase(), amount: Number(d.value) / 10 ** decimals });
       }
     }
-    if (rows.length) {
-      mkdirSync(dir(), { recursive: true });
-      appendFileSync(file(token), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
-    }
     const seen = new Set(existing.map((r) => r.tx));
-    return [...existing, ...rows.filter((r) => !seen.has(r.tx))].sort((a, b) => a.block - b.block);
+    const fresh = rows.filter((r) => !seen.has(r.tx));
+    if (fresh.length) {
+      mkdirSync(dir(), { recursive: true });
+      appendFileSync(file(token), fresh.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    }
+    return [...existing, ...fresh].sort((a, b) => a.block - b.block);
   } catch {
     return existing;
   }
