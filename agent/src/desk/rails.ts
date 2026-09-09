@@ -17,6 +17,13 @@ export interface Rails {
   maxSwapUsd: number;
   maxOpenOrders: number;
   gasReserveEth: number;
+  /**
+   * How many times the gas reserve an ENTRY must leave behind, when the reserve is a pool the wallet does not hold
+   * itself (the account-abstraction lane's EntryPoint deposit plus its gas wallet). One threshold for both
+   * directions would stop the desk buying and selling in the same instant, and a desk that cannot sell what it
+   * holds is worse than one that cannot buy.
+   */
+  gasEntryMultiple: number;
   /** Lower-cased partner names, or null for any partner Obscura quotes. */
   allowedPartners: Set<string> | null;
   /** SYMBOL@network keys the desk may trade. */
@@ -80,6 +87,7 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     maxSwapUsd: Number(env.OBS_MAX_SWAP_USD ?? 25),
     maxOpenOrders: Number(env.OBS_MAX_OPEN_ORDERS ?? 1),
     gasReserveEth: Number(env.OBS_GAS_RESERVE_ETH ?? 0.002),
+    gasEntryMultiple: Math.max(1, Number(env.OBS_GAS_ENTRY_MULTIPLE ?? 5)),
     allowedPartners: partners.length ? new Set(partners) : null,
     allowedAssets: new Set(((env.OBS_TRADE_ASSETS ?? DEFAULT_TRADE_ASSETS) + ((env.OBS_BASIS ?? "off") === "on" ? ",NVDA@robinhood" : "")).split(",").map((s) => s.trim()).filter(Boolean)),
     allowedChains: new Set((env.OBS_TRADE_CHAINS ?? DEFAULT_TRADE_CHAINS).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)),
@@ -215,10 +223,16 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
     // An entry keeps the reserve twice: its own gas and the exit's, since a wallet left under the reserve by the
     // entry's gas is refused every token exit at the check below (2026-09-08).
     if (have - i.amount < r.gasReserveEth * 2) return { ok: false, reason: `sending ${i.amount} ${i.from.symbol} would leave less than ${r.gasReserveEth * 2} ETH, the gas reserve for the round trip` };
-  } else if (c.nativeOnFromChain == null || c.nativeOnFromChain < r.gasReserveEth) {
+  } else {
     // Under account abstraction the wallet pays no gas of its own, so an ETH leg keeps nothing back; the reserve
-    // checked here is the lane's, the EntryPoint deposit plus the gas wallet (aa.ts), for either leg.
-    return { ok: false, reason: c.aa ? `less than the ${r.gasReserveEth} ETH gas reserve between the entry point deposit and the gas wallet` : `less than the ${r.gasReserveEth} ETH gas reserve on ${i.from.chain}` };
+    // checked here is the lane's, the EntryPoint deposit plus the gas wallet (aa.ts), for either leg. An entry is
+    // held to a multiple of it so that buying stops well before selling does: the reserve drains one way (the app's
+    // own sweep after every exit draws the same deposit and pays somebody else's bundler), and an exit refused for
+    // gas leaves the desk holding a token through whatever the market does next.
+    const floor = i.exit ? r.gasReserveEth : r.gasReserveEth * r.gasEntryMultiple;
+    if (c.nativeOnFromChain == null || c.nativeOnFromChain < floor) {
+      return { ok: false, reason: c.aa ? `less than the ${floor} ETH gas reserve between the entry point deposit and the gas wallet${i.exit ? "" : ", which an entry keeps back so an exit always has gas"}` : `less than the ${floor} ETH gas reserve on ${i.from.chain}` };
+    }
   }
   return { ok: true };
 }

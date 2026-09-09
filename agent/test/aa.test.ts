@@ -221,3 +221,23 @@ test("a batch that reverted inside a landed transaction fails the row with the o
   assert.equal(rows[2].note, "reverted on chain: V4TooLittleReceived");
   assert.equal("reason" in r ? r.reason : null, `swap ${TX_HASH} reverted: V4TooLittleReceived`);
 });
+
+test("under the lane an entry keeps a multiple of the gas reserve back, so buying stops long before selling does", () => {
+  const rails = railsFromEnv({ OBS_TRADING: "on", OBS_BASIS: "on", OBS_MAX_SWAP_USD: "200", OBS_GAS_RESERVE_ETH: "0.002", OBS_TRADE_ASSETS: "ETH@robinhood,USDG@robinhood,NVDA@robinhood" } as NodeJS.ProcessEnv);
+  assert.equal(rails.gasEntryMultiple, 5, "five times the reserve by default");
+  assert.equal(railsFromEnv({ OBS_GAS_ENTRY_MULTIPLE: "0.5" } as NodeJS.ProcessEnv).gasEntryMultiple, 1, "never under the exit's own floor");
+  const buy: Intent = { from: ETH, to: NVDA, amount: 0.05, usd: 120 };
+  const sell: Intent = { from: NVDA, to: ETH, amount: 0.4, usd: 80, exit: true };
+  // The reserve is the lane's pool, not the wallet's own ETH: the EntryPoint deposit plus the gas wallet.
+  const at = (reserve: number | null): RailContext => ({ rails, balances: { "ETH@robinhood": 0.0501, "WETH@robinhood": 0.05, "NVDA@robinhood": 0.4 }, nativeOnFromChain: reserve, openOrders: 0, aa: true });
+  const no = (i: Intent, c: RailContext) => (checkRails(i, c) as { ok: false; reason: string }).reason;
+  assert.deepEqual(checkRails(buy, at(0.02)), { ok: true }, "plenty of gas: the entry passes");
+  assert.deepEqual(checkRails(buy, at(0.01)), { ok: true }, "exactly five times the reserve still buys");
+  assert.equal(checkRails(buy, at(0.005)).ok, false, "under it, no new entry");
+  assert.match(no(buy, at(0.005)), /less than the 0\.01 ETH gas reserve between the entry point deposit and the gas wallet, which an entry keeps back/);
+  // The point of the split: the same reserve that stops a buy still sells, so the desk is never stuck holding.
+  assert.deepEqual(checkRails(sell, at(0.005)), { ok: true }, "the same reserve still exits");
+  assert.deepEqual(checkRails(sell, at(0.002)), { ok: true }, "an exit runs down to the reserve itself");
+  assert.equal(checkRails(sell, at(0.0019)).ok, false, "below the reserve nothing can be sent at all");
+  assert.equal(checkRails(sell, at(null)).ok, false, "an unread reserve refuses rather than guesses");
+});
