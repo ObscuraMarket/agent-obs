@@ -46,7 +46,8 @@
     "relay": "bash ../scripts/relay-dashboard.sh",
     "replay:entries": "tsx scripts/replayEntries.ts",
     "replay:ignition": "tsx scripts/replayIgnition.ts",
-    "book:withdraw": "tsx scripts/withdrawProposals.ts"
+    "book:withdraw": "tsx scripts/withdrawProposals.ts",
+    "book:correct": "tsx scripts/correctTrade.ts"
   },
   "bin": {
     "obs": "bin/obs.mjs"
