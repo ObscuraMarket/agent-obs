@@ -503,15 +503,50 @@ export function lastSampledEth(): number | null {
   return rows.length ? Number(rows[rows.length - 1].priceUsd) : null;
 }
 
+/**
+ * How long ONE upstream read may take before the set goes on without it. Until 2026-09-09 a read that never answered
+ * held up every other read here, and through them the whole dashboard: after a restart emptied the cache, one dead
+ * upstream left /api/obs/dashboard 502-ing for every viewer and the Agent page rendered blank while the book on disk
+ * was fine. The wallet comes off the chain RPC and must still arrive when the explorer is refusing, so each read is
+ * bounded on its own rather than the set being bounded as a whole.
+ */
+const READ_DEADLINE_MS = 6_000;
+
+async function within<T>(label: string, read: () => Promise<T>, fallback: T, ms = READ_DEADLINE_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const p = read();
+    p.catch(() => undefined); // the loser of the race still settles; without this its rejection is an unhandled one
+    return await Promise.race([
+      p,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => {
+          console.log(`[reads] ${label} did not answer in ${ms} ms; going on without it`);
+          resolve(fallback);
+        }, ms);
+        timer.unref?.();
+      }),
+    ]);
+  } catch {
+    return fallback;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+const noToken = (): TokenRead => ({ address: OBS_CONTRACT, name: null, symbol: null, decimals: null, totalSupply: null, holders: null, explorerPriceUsd: null, volume24hUsd: null, marketCapUsd: null });
+const NO_PRICES: PriceRead = { btcUsd: null, ethUsd: null };
+
 export async function liveReads(): Promise<Reads> {
-  const othersP = Promise.all([prices(), siteUp(), apiUp()]);
-  // The Robinhood-heavy reads run back to back, not on top of each other.
-  const token = await obsToken();
-  const wallet = await walletRead();
+  const othersP = Promise.all([within("prices", prices, NO_PRICES), within("site", siteUp, false), within("api", apiUp, false)]);
+  // The Robinhood-heavy reads run back to back, not on top of each other, and each one is bounded: a refusing
+  // explorer must not cost the wallet, which is read off the RPC and is what the page shows.
+  const token = await within("token", obsToken, noToken());
+  const wallet = await within("wallet", () => walletRead(), null);
   const [p, up, api] = await othersP;
   // OBS's market needs the ETH price when its deep pool is the ETH one; when the price feed is down, the last sampled ETH price serves.
   const ethUsd = p.ethUsd ?? lastSampledEth();
-  const market = await obsMarket(ethUsd);
+  const market = await within("market", () => obsMarket(ethUsd), null);
   if (market && !DRY) sampleMarket(market);
   const now = Date.now();
   token.change24h = tokenChanges({ at: now, volume24hUsd: token.volume24hUsd, holders: token.holders, tvlUsd: market?.tvlUsd ?? null, pool: market ? `${market.venue}:${market.quote ?? ""}` : null }, now);
