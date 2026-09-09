@@ -133,3 +133,21 @@ test("the cadence turns apart from the form, so the feed is not one length forev
   assert.match(prompt, /You write in lowercase, the way the account already reads/, "the style the timeline already has, said as a rule and not only shown in the examples");
 });
 
+test("a reply answers the person, and carries a number only when one was asked for", () => {
+  // Nine replies in a row on 2026-09-09 were a pleasantry with a market statistic welded on: "glad to have company
+  // on the tape. right now i am just watching MANTA sit in a breakdown 20% off its peak", to people who had asked
+  // nothing about the market. The prompt had told it to answer a PRICE question with a fact from the block, and it
+  // had generalised that into every reply.
+  const p = traderReplyPrompt({ handle: "AgentOBSRH", block: "- equity $1,000", authorHandle: "someone", text: "gm", maxChars: 280 });
+  assert.match(p, /ANSWER WHAT THEY SAID/);
+  assert.match(p, /MOST REPLIES CARRY NO NUMBER/);
+  assert.match(p, /ONLY when they asked about the book, the trade or the market/);
+  assert.match(p, /USUALLY ONE LINE/);
+  assert.match(p, /never reuse a phrase you have used before/, "the stock deflection appeared twice word for word");
+  assert.match(p, /That permission is for THAT question and not a habit for every reply/, "the price answer is no longer a template for everything");
+  // The style the account already reads, which the post prompt had and this one did not.
+  assert.match(p, /You write in lowercase, the way the account already reads/);
+  assert.match(p, /money and percentages keep their symbols/);
+  assert.ok(!p.includes("—"));
+});
+
