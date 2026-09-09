@@ -42,12 +42,16 @@ export interface RelayBody {
  * the router's transferFrom then reverts and takes the whole batch with it. That is what stopped the desk selling
  * 4AI on 2026-09-09, and it would have stopped every exit of a token with a supply in the millions.
  */
-export function relayBody(from: Asset, to: Asset, amount: number | bigint, user: string): RelayBody | null {
+export function relayBody(from: Asset, to: Asset, amount: number | bigint, user: string, opts: { wethIn?: string } = {}): RelayBody | null {
   const o = relayChainId(from.network);
   const d = relayChainId(to.network);
   const raw = typeof amount === "bigint" ? amount : null;
   if (o == null || d == null || (raw == null ? !((amount as number) > 0) : raw <= 0n)) return null;
-  return { user, recipient: user, originChainId: o, destinationChainId: d, originCurrency: from.contract ?? NATIVE, destinationCurrency: to.contract ?? NATIVE, amount: raw != null ? raw.toString() : toSmallest(amount as number, from.decimals), tradeType: "EXACT_INPUT" };
+  // An ETH leg can go in as WETH instead of as native value. The route is the same and the output is identical, but
+  // it asks for a token the wallet already holds rather than value it would have to unwrap, which is what lets the
+  // swap be an ordinary transaction the app can read as a buy (2026-09-09).
+  const originCurrency = from.kind === "native" && opts.wethIn ? opts.wethIn : (from.contract ?? NATIVE);
+  return { user, recipient: user, originChainId: o, destinationChainId: d, originCurrency, destinationCurrency: to.contract ?? NATIVE, amount: raw != null ? raw.toString() : toSmallest(amount as number, from.decimals), tradeType: "EXACT_INPUT" };
 }
 
 export interface RelayStep {
@@ -116,8 +120,8 @@ export interface RelayAnswer {
 }
 
 /** The app's quote for a pair, with the reason when there is none. Never throws. */
-export async function relayQuote(from: Asset, to: Asset, amount: number | bigint, user: string, fetchFn: typeof fetch = fetch): Promise<RelayAnswer> {
-  const body = relayBody(from, to, amount, user);
+export async function relayQuote(from: Asset, to: Asset, amount: number | bigint, user: string, fetchFn: typeof fetch = fetch, opts: { wethIn?: string } = {}): Promise<RelayAnswer> {
+  const body = relayBody(from, to, amount, user, opts);
   if (!body) return { status: 0, quote: null, error: "a leg is on a chain Relay is not asked about" };
   try {
     const res = await fetchFn(`${RELAY_API}/quote/v2`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) });

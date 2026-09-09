@@ -49,7 +49,7 @@ export interface RouteCheck {
  * being spent, to one of those routers; the value across the batch must not exceed what the swap is spending. A
  * batch that fails this is never signed, whatever Relay said.
  */
-export function checkCalls(calls: AaCall[], p: { from: Asset; maxValueRaw: bigint }): RouteCheck {
+export function checkCalls(calls: AaCall[], p: { from: Asset; maxValueRaw: bigint; approvable?: string[] }): RouteCheck {
   if (!calls.length) return { ok: false, reason: "fomo's route came back with nothing to send" };
   let value = 0n;
   for (const c of calls) {
@@ -57,14 +57,16 @@ export function checkCalls(calls: AaCall[], p: { from: Asset; maxValueRaw: bigin
     value += c.value;
     if (FOMO_ROUTERS.includes(to)) continue;
     // The only other call fomo's own trades make is the approve of the token going in, to one of those routers.
-    if (p.from.kind === "erc20" && p.from.contract && to === p.from.contract.toLowerCase()) {
+    // The token going in may be approved to a router: the from-asset itself, or WETH when an ETH leg goes in wrapped.
+    const approvable = [p.from.kind === "erc20" ? p.from.contract : null, ...(p.approvable ?? [])].filter(Boolean).map((x) => String(x).toLowerCase());
+    if (approvable.includes(to)) {
       let spender: string;
       try {
         const d = decodeFunctionData({ abi: ERC20, data: c.data as Hex });
-        if (d.functionName !== "approve") return { ok: false, reason: `fomo's route calls ${p.from.symbol}.${d.functionName}, which is not an approval` };
+        if (d.functionName !== "approve") return { ok: false, reason: `fomo's route calls ${d.functionName} on the token going in, which is not an approval` };
         spender = String(d.args[0]).toLowerCase();
       } catch {
-        return { ok: false, reason: `fomo's route calls ${p.from.symbol} with something this desk cannot read` };
+        return { ok: false, reason: `fomo's route calls the token going in with something this desk cannot read` };
       }
       if (!FOMO_ROUTERS.includes(spender)) return { ok: false, reason: `fomo's route would approve ${spender}, which is not one of its routers` };
       if (c.value !== 0n) return { ok: false, reason: "an approval that also sends ETH is not signed" };
@@ -121,16 +123,19 @@ export interface FomoRoute {
  * The route fomo's app would take for this swap, checked and ready to batch, or the reason it is not being taken.
  * Nothing is signed here; the caller puts the calls in a user operation.
  */
-export async function fomoRoute(p: { from: Asset; to: Asset; amount: number; amountInRaw: bigint; poolAmountOut: number; user: string; maxGiveUp?: number }, quote = relayQuote): Promise<{ ok: true; route: FomoRoute } | { ok: false; reason: string }> {
+export async function fomoRoute(p: { from: Asset; to: Asset; amount: number; amountInRaw: bigint; poolAmountOut: number; user: string; maxGiveUp?: number; wethIn?: string }, quote = relayQuote): Promise<{ ok: true; route: FomoRoute } | { ok: false; reason: string }> {
   // The RAW amount, never the float: a large-supply token does not survive a double, and asking the router for a
   // wei more than the wallet holds reverts the whole batch (2026-09-09, 4AI).
-  const a = await quote(p.from, p.to, p.amountInRaw, p.user);
+  // wethIn asks for an ETH leg as WETH: the same route and the same output, spending a token the wallet holds
+  // rather than value it would have to unwrap, which is what lets the swap go out as an ordinary transaction.
+  const a = await quote(p.from, p.to, p.amountInRaw, p.user, undefined, p.wethIn ? { wethIn: p.wethIn } : {});
   if (!a.quote) return { ok: false, reason: `fomo's route did not quote ${p.from.symbol} to ${p.to.symbol}: ${a.error ?? "no answer"}` };
   const worth = worthIt(a.quote.amountOut, p.poolAmountOut, p.maxGiveUp ?? maxGiveUpPct());
   if (!worth.ok) return { ok: false, reason: worth.reason ?? "fomo's route is not worth taking" };
   const calls = callsFromSteps(a.quote);
   const valueRaw = valueOf(calls);
-  const safe = checkCalls(calls, { from: p.from, maxValueRaw: p.from.kind === "native" ? p.amountInRaw : 0n });
+  // With the ETH leg going in as WETH the batch carries no value at all, so the cap is zero either way.
+  const safe = checkCalls(calls, { from: p.from, maxValueRaw: p.wethIn ? 0n : p.from.kind === "native" ? p.amountInRaw : 0n, approvable: p.wethIn ? [p.wethIn] : [] });
   if (!safe.ok) return { ok: false, reason: safe.reason ?? "fomo's route was refused" };
   return { ok: true, route: { calls, amountOut: a.quote.amountOut, valueRaw, giveUpPct: worth.giveUpPct, feeUsd: a.quote.feeUsd, impactPct: a.quote.impactPct } };
 }

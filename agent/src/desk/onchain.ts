@@ -17,8 +17,9 @@ import { chainMemory, poolRead, type PoolSpec, type PoolRead } from "../obscura/
 import { ASSETS, assetKey, chainOf, type Asset } from "./assets.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { recordTrade, readBook, latestTrades, boughtSymbols, intentTimedOut, INTENT_STALE_MIN, type Trade } from "./book.ts";
-import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet, type ReceiptRead } from "./signer.ts";
+import { simulateFromWallet, sendTx, waitReceipt, readReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet, type ReceiptRead } from "./signer.ts";
 import { fomoOn, fomoRoute, maxGiveUpPct, type FomoRoute } from "./fomo.ts";
+import { directOn, fundGas, sendDirect, WETH as wethAddress } from "./direct.ts";
 import { aaOn, swapBatch, wethWithdrawData, type AaCall, ethInPlan, buildUserOp, simulateUserOp, simulateBatch, submitUserOp, waitUserOp, ensureDeposit, depositMinWei, depositTopUpWei, prefundWei, spendableEthRaw, receivedRawFromLogs, nativeOutFromSwapLogs, opOutcomeOf, type PreparedOp, type SwapBatchToken } from "./aa.ts";
 import { WALLET_ADDRESS, NEVER_TRADE, WETH_CONTRACT } from "../config.ts";
 import { ledgerWriteFailures } from "../ledger.ts";
@@ -372,16 +373,31 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   // to the desk's own router rather than stopping the trade: the notification is worth a few percent, never a miss.
   let fomo: FomoRoute | null = null;
   if (aa && fomoOn()) {
-    const r = await fomoRoute({ from: i.from, to: i.to, amount: amountIn, amountInRaw, poolAmountOut: q.amountOut, user: address });
+    // A direct send needs the ETH leg wrapped: an ordinary transaction from this wallet cannot carry native value
+    // it does not hold, and the app reads a plain router call as a buy where it reads a user operation as a receipt.
+    const r = await fomoRoute({ from: i.from, to: i.to, amount: amountIn, amountInRaw, poolAmountOut: q.amountOut, user: address, ...(directOn() && i.from.kind === "native" ? { wethIn: wethAddress() } : {}) });
     if (r.ok) fomo = r.route;
     else console.log(`[fomo] the desk's own router is taking this one: ${r.reason}`);
   }
-  if (aa) {
+  // The send: an ordinary transaction when the operator asked for one and there is a fomo route to send, since that
+  // is the only shape the app reads as a buy; the user operation otherwise, and whenever the direct send cannot be
+  // set up. A notification is never worth a missed trade, so every failure here falls back rather than stopping.
+  let direct: AaCall[] | null = null;
+  if (aa && fomo && directOn()) {
+    try {
+      const g = await fundGas();
+      if (g.hash) console.log(`[direct] gas topped up ${g.before} -> ${g.after} wei (${g.hash})`);
+      direct = fomo.calls;
+    } catch (err) {
+      console.log(`[direct] falling back to the user operation: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (aa && !direct) {
     const built = fomo ? await prepareFomoOp(i.from, fomo, now) : await prepareSwapOp(i.from, tx, withdrawRaw, amountInRaw, now);
     if (!built.ok) return { ok: false, reason: built.reason };
     prepared = built.prepared;
     approvals = built.approvals;
-  } else {
+  } else if (!aa) {
     try {
       approvals = await ensureAllowances(i.from, amountInRaw, now, runAs?.wallet);
     } catch (err) {
@@ -400,9 +416,13 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     to: { asset: i.to.symbol, network: i.to.network, amount: fomo ? fomo.amountOut : q.amountOut, usd: legUsd(i.to, fomo ? fomo.amountOut : q.amountOut, q.priceOutUsd, ethUsd) },
     partner: fomo ? "fomo" : "pool",
     note: fomo
-      ? `through fomo's own route, so the account's followers are told; expected ${fomo.amountOut} ${i.to.symbol}, ${fomo.giveUpPct >= 0 ? `${fomo.giveUpPct.toFixed(2)}% under` : `${(-fomo.giveUpPct).toFixed(2)}% over`} the pools' ${q.amountOut}${fomo.feeUsd != null ? `, its fees $${fomo.feeUsd.toFixed(2)}` : ""}${approvals.length ? `; ${approvals.join(", ")}` : ""}${prepared ? `; one user operation through the entry point (${prepared.userOpHash.slice(0, 10)}), gas from the gas wallet` : ""}`
+      ? `through fomo's own route, so the account's followers are told; expected ${fomo.amountOut} ${i.to.symbol}, ${fomo.giveUpPct >= 0 ? `${fomo.giveUpPct.toFixed(2)}% under` : `${(-fomo.giveUpPct).toFixed(2)}% over`} the pools' ${q.amountOut}${fomo.feeUsd != null ? `, its fees $${fomo.feeUsd.toFixed(2)}` : ""}${approvals.length ? `; ${approvals.join(", ")}` : ""}${prepared ? `; one user operation through the entry point (${prepared.userOpHash.slice(0, 10)}), gas from the gas wallet` : direct ? `; sent straight to the router as ${direct.length} ordinary transaction${direct.length === 1 ? "" : "s"}, which is the shape the app reads as a buy` : ""}`
       : `${q.route.hops.map((h) => h.key).join(" then ")} on chain; expected ${q.amountOut} ${i.to.symbol}, floor ${q.minOut}${q.costPct != null ? `, route cost ${q.costPct.toFixed(2)}% (fees ${q.feePct.toFixed(2)}%)` : ""}${approvals.length ? `; approvals ${approvals.join(", ")}` : ""}${prepared ? `; one user operation through the entry point (${prepared.userOpHash.slice(0, 10)}), gas from the gas wallet` : ""}`,
   };
+  if (direct) {
+    const poolManager = chainMemory().contracts.uniswapV4.poolManager;
+    return sendSwap({ intent: i, base, tx, quote: q, address, ethUsd, now, aa: { fill: (logs) => aaFillFromLogs(logs, i.to, q.route, address, poolManager) } }, directLane(direct));
+  }
   if (prepared) {
     const poolManager = chainMemory().contracts.uniswapV4.poolManager;
     return sendSwap({ intent: i, base, tx, quote: q, address, ethUsd, now, aa: { fill: (logs) => aaFillFromLogs(logs, i.to, q.route, address, poolManager) } }, aaLane(prepared));
@@ -503,6 +523,27 @@ const LIVE_LANE: SendLane = { send: (a, tx, w) => sendTx(a, tx, w), wait: (a, h)
  * reads the operation's own outcome out of the handleOps receipt (the transaction lands as success even when the
  * batch reverted), and ETH is counted as native plus WETH, which the app's sweep leaves unchanged.
  */
+/**
+ * The lane for an ordinary send: the route's calls go out as plain transactions from the trading wallet, in order,
+ * and the swap's own hash is the one the book keeps. ETH is still counted as native plus WETH, since the wallet's
+ * balance is wrapped either way.
+ */
+function directLane(calls: AaCall[]): SendLane {
+  return {
+    send: async () => (await sendDirect(calls)).hash,
+    wait: async (a, h) => {
+      const r = await waitReceipt(a, h);
+      if (!r) return null;
+      // The fill is read from the logs when the balance says nothing, the same as under a user operation.
+      const full = await readReceipt(a, h).catch(() => null);
+      return { status: r.status, gasCostWei: r.gasCostWei, ...(full ? { logs: full.logs } : {}) };
+    },
+    balance: async (a, holder) => (a.kind === "native" ? (await spendableEthRaw(holder)).total : balanceOf(a, holder)),
+    alert: (k, text, at) => raiseAlert(k, text, at),
+    clock: () => Date.now(),
+  };
+}
+
 function aaLane(p: PreparedOp): SendLane {
   return {
     send: () => submitUserOp(p),
