@@ -16,7 +16,7 @@ import { encodeAbiParameters, encodeFunctionData, parseAbi, type Hex } from "vie
 import { chainMemory, poolRead, type PoolSpec, type PoolRead } from "../obscura/pools.ts";
 import { ASSETS, assetKey, chainOf, type Asset } from "./assets.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
-import { recordTrade, readBook, latestTrades, boughtSymbols, intentTimedOut, INTENT_STALE_MIN, type Trade } from "./book.ts";
+import { recordTrade, readBook, latestTrades, boughtSymbols, costBasis, intentTimedOut, INTENT_STALE_MIN, type Trade } from "./book.ts";
 import { simulateFromWallet, sendTx, waitReceipt, readReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet, type ReceiptRead } from "./signer.ts";
 import { fomoOn, fomoRoute, maxGiveUpPct, type FomoRoute } from "./fomo.ts";
 import { directOn, fundGas, sendDirect, WETH as wethAddress } from "./direct.ts";
@@ -690,13 +690,22 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
   const dyn = dynamicAssets(feed);
   const book = readBook();
   const allTrades = [...book.trades, ...extraTrades];
+  const { lots } = costBasis(book.flows, allTrades);
   const samples = readPrices();
   // The peaks the watch persisted: the tape's window is short, and the position's high may be behind it (2026-09-08).
   const tapePeaks = readTapePeaks();
   // Only what the desk bought is ever sold: an airdrop in the wallet is not a position and is never touched.
   const bought = boughtSymbols(allTrades);
   for (const a of Object.values(dyn)) {
-    const held = balances[a.symbol] ?? 0;
+    // What the DESK holds, which is not the same as what the wallet holds. The operator buys in the app from this
+    // same wallet, and on 2026-09-09 an exit sold 4,044,007 BYCOCKET when the desk's own ledger held 2,760,750: the
+    // extra 1,283,257 was a position the operator had bought by hand twenty minutes earlier. It took their tokens,
+    // overstated the desk's realised gain and left the lot's cost basis unknown, so the page could no longer show a
+    // percentage for the token. An exit is clamped to the desk's own lot: selling too little is caught next cycle,
+    // selling someone else's is not.
+    const inWallet = balances[a.symbol] ?? 0;
+    const own = lots[a.symbol.toUpperCase()];
+    const held = own && own.qty > 0 ? Math.min(inWallet, own.qty) : inWallet;
     if (a.contract && NEVER_TRADE.has(a.contract.toLowerCase())) continue;
     if (!bought.has(a.symbol) || !isHolding(held) || !a.candidate) continue;
     const hourly = feed.hourly[a.candidate.poolId.toLowerCase()] ?? [];

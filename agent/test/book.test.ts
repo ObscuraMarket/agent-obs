@@ -232,3 +232,24 @@ test("the operator's erased windows leave a book's snapshots out by time, and a 
   assert.equal(isErased(1788891500000, w), true, "the edges belong to the window");
   assert.deepEqual(erasedWindows({} as NodeJS.ProcessEnv), []);
 });
+
+test("a lot the desk oversold is what leaves a position with no cost basis on the page", () => {
+  // 2026-09-09: the desk bought 2,760,750 BYCOCKET, the operator bought 1,283,257 more by hand in the app from the
+  // same wallet, and the exit sold the whole wallet balance of 4,044,007. The lot went negative, known went false,
+  // and the page could no longer show a cost or a percentage for the token it still held.
+  const buy = (at: number, qty: number, usd: number): Trade => ({ at, id: `b${at}`, status: "settled", venue: "pool", partner: "pool", from: { asset: "ETH", amount: usd / 2500, usd }, to: { asset: "BYC", amount: qty, usd: null }, updatedAt: at });
+  const sell = (at: number, qty: number, usd: number): Trade => ({ at, id: `s${at}`, status: "settled", venue: "pool", partner: "pool", exit: true, from: { asset: "BYC", amount: qty, usd }, to: { asset: "ETH", amount: usd / 2500, usd }, updatedAt: at });
+  const clean = costBasis([], [buy(1, 2_760_750, 200), sell(2, 2_760_750, 331)]);
+  assert.equal(clean.lots.BYC.known, true, "a lot sold down to nothing keeps a known basis for the next buy");
+  const oversold = costBasis([], [buy(1, 2_760_750, 200), sell(2, 4_044_007, 485), buy(3, 2_319_910, 200)]);
+  assert.equal(oversold.lots.BYC.known, false, "selling more than the ledger bought leaves the basis unknown");
+  // And that is what the page then shows: a real position, no cost, no percentage. Honest, but it is why it looked broken.
+  const rows = positions([], [buy(1, 2_760_750, 200), sell(2, 4_044_007, 485), buy(3, 2_319_910, 200)], { BYC: 2_319_910 }, { BYC: 0.0000843 });
+  const row = rows.positions.find((r) => r.asset === "BYC");
+  assert.ok(row, "the position is still shown");
+  assert.equal(row.avgCostUsd, null, "with no basis there is no average");
+  assert.equal(row.costUsd, null);
+  assert.equal(row.unrealizedPct, null, "and no percentage, rather than a wrong one");
+  assert.ok((row.valueUsd ?? 0) > 0, "the value is real either way");
+});
+
