@@ -71,3 +71,20 @@ test("a refusal keeps Relay's own words, and a network failure is a reason, neve
   assert.equal(off.status, 0);
   assert.match(off.error ?? "", /not asked/);
 });
+
+test("a raw amount goes to the route untouched, because a float cannot hold a big-supply token to the wei", () => {
+  // 2026-09-09: the desk could not sell 4AI. It held 1037057060205447665762187 wei; the float round trip asked the
+  // router for 1037057060205447700000000, which is 34,237,813 wei MORE than it had, so transferFrom reverted and
+  // the whole batch with it. Every exit of a token with a supply in the millions would have hit this.
+  const exact = 1037057060205447665762187n;
+  const asFloat = Number(exact) / 1e18;
+  assert.notEqual(BigInt(toSmallest(asFloat, 18)), exact, "the float does not round trip");
+  assert.ok(BigInt(toSmallest(asFloat, 18)) > exact, "and it rounds UP, past what the wallet holds");
+  const raw = relayBody(NVDA, ETH, exact, W);
+  assert.equal(raw?.amount, exact.toString(), "a raw amount is passed through to the wei");
+  const floaty = relayBody(NVDA, ETH, asFloat, W);
+  assert.equal(floaty?.amount, toSmallest(asFloat, 18), "a number is still converted, for the callers that have one");
+  assert.equal(relayBody(NVDA, ETH, 0n, W), null, "nothing to sell is no request");
+  assert.equal(relayBody(NVDA, ETH, -5n, W), null);
+});
+

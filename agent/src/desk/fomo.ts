@@ -122,7 +122,9 @@ export interface FomoRoute {
  * Nothing is signed here; the caller puts the calls in a user operation.
  */
 export async function fomoRoute(p: { from: Asset; to: Asset; amount: number; amountInRaw: bigint; poolAmountOut: number; user: string; maxGiveUp?: number }, quote = relayQuote): Promise<{ ok: true; route: FomoRoute } | { ok: false; reason: string }> {
-  const a = await quote(p.from, p.to, p.amount, p.user);
+  // The RAW amount, never the float: a large-supply token does not survive a double, and asking the router for a
+  // wei more than the wallet holds reverts the whole batch (2026-09-09, 4AI).
+  const a = await quote(p.from, p.to, p.amountInRaw, p.user);
   if (!a.quote) return { ok: false, reason: `fomo's route did not quote ${p.from.symbol} to ${p.to.symbol}: ${a.error ?? "no answer"}` };
   const worth = worthIt(a.quote.amountOut, p.poolAmountOut, p.maxGiveUp ?? maxGiveUpPct());
   if (!worth.ok) return { ok: false, reason: worth.reason ?? "fomo's route is not worth taking" };
