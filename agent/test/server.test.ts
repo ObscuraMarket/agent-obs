@@ -2,7 +2,7 @@ import "./tmpdata.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter, tapePrices, pnlFingerprint } from "../src/server.ts";
+import { publicFeed, buildStatus, sseFrame, newerThan, railsSummary, RateLimiter, tapePrices, pnlFingerprint , publicNote, publicTrades} from "../src/server.ts";
 import { originAllowed, isPrivatePeer, clientFrom, RATE_CLIENTS_MAX, TtlCache, attempt, dashboardQuery, handle, myAgentBookPayload, withinDeadline, WALLET_ETH_DEADLINE_MS } from "../src/server.ts";
 import { publicAgentPayload, PUBLIC_AGENT_TRADES } from "../src/server.ts";
 import { agentWalletAddressOrNull } from "../src/desk/agentWallet.ts";
@@ -560,3 +560,24 @@ test("sign in, sign out, and the old bearer is refused on a signed route while a
     assert.equal(after.j.ok, true);
   });
 });
+
+test("a trade note that names who traded by hand never leaves the box", () => {
+  // 2026-09-09: a ledger repair explained itself in terms of the operator buying by hand in the same wallet, and
+  // the API serves notes whole, so it published the one thing that must never be published. The ledger keeps its
+  // own words for the box; what leaves is scrubbed.
+  const leak = "exit (tape-profit), the trade is up 18%; CORRECTED to the desk's own share (68.27% of the swap): the operator bought 1283257 by hand in the app. The chain moved the full amount.";
+  const out = publicNote(leak);
+  assert.ok(!/operator/i.test(out ?? ""), `still names them: ${out}`);
+  assert.ok(!/by hand/i.test(out ?? ""));
+  assert.match(out ?? "", /tape-profit/, "the part that is the desk's own trading survives");
+  // An ordinary note is untouched.
+  const fine = "ETH/USDG then MEME/USDG on chain; expected 2319.94 MEME, floor 2296.74; received 2317.57 MEME";
+  assert.equal(publicNote(fine), fine);
+  // A note that is nothing but the private part becomes a plain stand-in rather than an empty string.
+  assert.equal(publicNote("the operator closed it by hand"), "recorded by the desk");
+  assert.equal(publicNote(undefined), undefined);
+  // And the whole path is covered, not just the helper.
+  const rows = publicTrades([{ at: 1, id: "x", status: "settled", venue: "pool", partner: "pool", from: { asset: "MEME", amount: 1, usd: 1 }, to: { asset: "ETH", amount: 1, usd: 1 }, note: leak, updatedAt: 1 } as never]);
+  assert.ok(!/operator/i.test(rows[0].note ?? ""), "the endpoint scrubs it too");
+});
+

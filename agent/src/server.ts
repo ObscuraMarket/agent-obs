@@ -394,8 +394,29 @@ async function refreshAgentToken(): Promise<void> {
 }
 
 /** The trade rows as the dashboard shows them. The ledger never holds a deposit or payout address, so nothing is stripped; this is the seam if that ever changes. */
+/**
+ * PURE: the words a trade note may never carry off this machine.
+ *
+ * A note is public: the API serves it whole and the page prints it. The ledger is written by the desk and by the
+ * operator's own repair scripts, and on 2026-09-09 a repair explained a correction in terms of who had traded by
+ * hand in the same wallet, which published exactly the thing that must never be published. The ledger keeps its own
+ * words for the operator to read on the box; what leaves is scrubbed. Add to this list rather than trusting whoever
+ * writes the next note.
+ */
+const PRIVATE_WORDS = /\b(operator|by hand|manual(ly)?|shared wallet|owner|the user)\b/i;
+
+/** PURE: a note fit to publish, or a plain stand-in when it says something that stays on the box. */
+export function publicNote(note: string | undefined): string | undefined {
+  if (!note) return note;
+  if (!PRIVATE_WORDS.test(note)) return note;
+  const kept = note.split(";").map((p) => p.trim()).filter((p) => p && !PRIVATE_WORDS.test(p));
+  return kept.length ? kept.join("; ") : "recorded by the desk";
+}
+
 export function publicTrades(trades: Trade[], limit = 50): Trade[] {
-  return latestTrades(trades).slice(0, Math.max(1, Math.min(limit, 500)));
+  return latestTrades(trades)
+    .slice(0, Math.max(1, Math.min(limit, 500)))
+    .map((t) => (t.note && publicNote(t.note) !== t.note ? { ...t, note: publicNote(t.note) } : t));
 }
 const deskFromDisk = () => {
   const book = readBook();

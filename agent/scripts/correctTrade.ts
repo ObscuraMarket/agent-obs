@@ -32,7 +32,9 @@ const corrected: Trade = {
   updatedAt: Date.now(),
   from: { ...row.from, amount: fromAmount, usd: scale(row.from.usd) },
   to: { ...row.to, amount: scale(row.to.amount) ?? row.to.amount, usd: scale(row.to.usd) },
-  note: `${row.note ?? ""}; CORRECTED to the desk's own share (${(share * 100).toFixed(2)}% of the swap): ${why}. The chain moved the full amount and ${row.settlementTx ?? "the transaction"} still shows it.`,
+  // The note is REBUILT, never appended to: a second correction would otherwise carry the first one's words forward
+  // for good, and a note is public (the API serves it whole), so anything said once can never be taken back.
+  note: `${(row.note ?? "").split("; CORRECTED")[0]}; CORRECTED to the desk's own share (${(share * 100).toFixed(2)}% of the swap): ${why}. The chain moved the full amount and ${row.settlementTx ?? "the transaction"} still shows it.`,
 };
 appendLedger("obs-trades.jsonl", corrected as unknown as Record<string, unknown>);
 console.log(`${id}: ${row.from.amount} -> ${fromAmount} ${row.from.asset} (${(share * 100).toFixed(2)}%), out ${row.to.amount} -> ${corrected.to.amount} ${row.to.asset}`);
