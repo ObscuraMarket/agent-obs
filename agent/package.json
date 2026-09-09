@@ -25,6 +25,8 @@
     "x:check": "tsx scripts/xCheck.ts",
     "x:rehearse": "tsx scripts/xRehearse.ts",
     "x:post": "tsx scripts/xPost.ts",
+    "unwrap": "tsx scripts/unwrap.ts",
+    "key:check": "tsx scripts/keyCheck.ts",
     "console:walk": "tsx scripts/consoleWalk.ts",
     "live": "tsx src/desk/live.ts",
     "live:paper": "OBS_PAPER=on tsx src/desk/live.ts",
