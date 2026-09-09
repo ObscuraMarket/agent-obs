@@ -280,3 +280,25 @@ test("a launch's curve pool id follows from its row when the watcher has not rec
   const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
   assert.equal(snap.early[0].curvePoolId, known, "the parse fills the id in");
 });
+
+test("a position at its ceiling is not topped up with dust: room left is not a reason to spend it", () => {
+  // 2026-09-09: MEME sat at its $200 cap and the desk still bought $2.23, $0.52, $1.95 and $6.79 of it in two
+  // hours. The $0.52 buy paid $0.36 in route fees, 69% of the trade. Only room === 0 was refused before this.
+  const rails = railsFromEnv({ OBS_TRADING: "on", OBS_PROBE_USD: "5", OBS_MIN_ADD_ON_USD: "25" } as NodeJS.ProcessEnv);
+  const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
+  const buy: Intent = { from: resolveAsset("ETH@robinhood")!, to: candidateAsset(snap.candidates[0]), amount: 0.01, usd: 24 };
+  const proven = { proven: true, blacklisted: false };
+  const graded = { grade: "B" as const, capUsd: 200, why: "" };
+
+  const dust = checkCandidate(buy, proven, [], rails, graded, 199.48);
+  assert.equal(dust.ok, false, "$0.52 of room is refused, not spent");
+  assert.match((dust as { reason: string }).reason, /eaten by its own fees/);
+
+  assert.deepEqual(checkCandidate(buy, proven, [], rails, graded, 175), { ok: true, maxUsd: 25, addOn: true }, "a top-up exactly at the floor still goes");
+  assert.deepEqual(checkCandidate(buy, proven, [], rails, graded, 100), { ok: true, maxUsd: 100, addOn: true }, "a real top-up is untouched");
+  assert.match((checkCandidate(buy, proven, [], rails, graded, 200) as { reason: string }).reason, /ceiling/, "a full position still reads as a ceiling, not a fee complaint");
+
+  // The floor governs TOP-UPS only: opening a position is sized by the probe and must never be blocked by it.
+  assert.deepEqual(checkCandidate(buy, null, [], rails, graded, 0), { ok: true, maxUsd: 5 }, "a first probe is untouched");
+  assert.equal(railsFromEnv({} as NodeJS.ProcessEnv).minAddOnUsd, 25, "and the floor is a variable with a default");
+});

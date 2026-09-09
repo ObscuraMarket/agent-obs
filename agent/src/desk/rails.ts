@@ -38,6 +38,12 @@ export interface Rails {
   neverTrade: ReadonlySet<string>;
   /** The first buy of any launch token is capped here until a sell is proven to work. */
   probeUsd: number;
+  /**
+   * The smallest top-up worth sending (OBS_MIN_ADD_ON_USD). Room under the ceiling used to be spent whatever was
+   * left of it: on 2026-09-09 MEME sat at its $200 cap and the desk bought $2.23, $0.52, $1.95 and $6.79 of it in
+   * two hours, and the $0.52 buy paid $0.36 in route fees, 69% of the trade. A top-up under this is refused.
+   */
+  minAddOnUsd: number;
   /** The first buy of a token still inside its launch window (OBS_PROBE_LAUNCH_USD): a fresh launch moves 50% between blocks, so it gets the small ticket while a token with a record gets the full one. Defaults to probeUsd. */
   launchProbeUsd: number;
   /** Launch positions held at once. */
@@ -95,6 +101,7 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     candidatesOn: (env.OBS_CANDIDATES ?? "on") !== "off",
     neverTrade: NEVER_TRADE,
     probeUsd: Number(env.OBS_PROBE_USD ?? 5),
+    minAddOnUsd: Number(env.OBS_MIN_ADD_ON_USD ?? 25),
     launchProbeUsd: Number(env.OBS_PROBE_LAUNCH_USD ?? env.OBS_PROBE_USD ?? 5),
     maxCandidates: Number(env.OBS_MAX_CANDIDATES ?? 1),
     candidateMaxHoldH: Number(env.OBS_CANDIDATE_MAX_HOLD_H ?? 8),
@@ -281,6 +288,9 @@ export function checkCandidate(i: Intent, known: CandidateKnowledge | null, held
   const cap = graded ? Math.min(graded.capUsd, lane === "launch" ? r.launchProbeUsd : Infinity) : probe;
   const room = Math.max(0, cap - heldUsd);
   if (room <= 0) return { ok: false, reason: `${i.to.symbol} is at its grade ${graded?.grade ?? "C"} ceiling of $${cap}` };
+  // Room left is not a reason to spend it. A ticket smaller than the floor loses more to its own fees than the move
+  // it is buying can pay back, and it is how a position already at its ceiling gets topped up four times in a night.
+  if (heldUsd > 0 && room < r.minAddOnUsd) return { ok: false, reason: `${i.to.symbol} has only $${room.toFixed(2)} of room under its grade ${graded?.grade ?? "C"} ceiling of $${cap}, under the $${r.minAddOnUsd} top-up floor: a ticket that small is eaten by its own fees` };
   return { ok: true, maxUsd: room, addOn: heldUsd > 0 };
 }
 
