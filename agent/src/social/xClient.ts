@@ -64,7 +64,8 @@ function describeXError(err: unknown): { message: string; status?: number; detai
 }
 
 /** Post a tweet, or in draft mode record what WOULD be posted. Always ledgered. */
-export async function postTweet(text: string): Promise<PostResult> {
+/** `extra` lands in the ledger row (the operator's own post is marked operator: true, so it is never counted as the agent's). */
+export async function postTweet(text: string, extra: Record<string, unknown> = {}): Promise<PostResult> {
   // Last line of defence on the house no-dash rule: the moment before it publishes.
   const trimmed = stripDashes(text).trim();
   if (!trimmed || trimmed.length > MAX_TWEET_CHARS) {
@@ -72,20 +73,20 @@ export async function postTweet(text: string): Promise<PostResult> {
   }
   const cfg = readConfig();
   if (!cfg) {
-    appendLedger("x-posts.jsonl", { at: Date.now(), mode: "unconfigured", posted: false, text: trimmed });
+    appendLedger("x-posts.jsonl", { at: Date.now(), mode: "unconfigured", posted: false, text: trimmed, ...extra });
     return { posted: false, reason: "X keys not configured", text: trimmed };
   }
   if (!xLive()) {
-    appendLedger("x-posts.jsonl", { at: Date.now(), mode: "draft", posted: false, text: trimmed });
+    appendLedger("x-posts.jsonl", { at: Date.now(), mode: "draft", posted: false, text: trimmed, ...extra });
     return { posted: false, reason: "draft mode (set X_LIVE=true to post)", text: trimmed };
   }
   try {
     const res = await client(cfg).v2.tweet(trimmed);
-    appendLedger("x-posts.jsonl", { at: Date.now(), mode: "live", posted: true, id: res.data.id, text: trimmed });
+    appendLedger("x-posts.jsonl", { at: Date.now(), mode: "live", posted: true, id: res.data.id, text: trimmed, ...extra });
     return { posted: true, id: res.data.id, text: trimmed };
   } catch (err) {
     const { message, status, detail } = describeXError(err);
-    appendLedger("x-posts.jsonl", { at: Date.now(), mode: "live", posted: false, error: message.slice(0, 200), status, detail, text: trimmed });
+    appendLedger("x-posts.jsonl", { at: Date.now(), mode: "live", posted: false, error: message.slice(0, 200), status, detail, text: trimmed, ...extra });
     console.error(`[x] post failed: ${status ?? "?"} ${detail ?? message}`.slice(0, 300));
     return { posted: false, reason: `post failed: ${(detail ?? message).slice(0, 160)}`, text: trimmed };
   }

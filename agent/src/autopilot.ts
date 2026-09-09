@@ -24,13 +24,15 @@ const gw = new GatewayClient({ baseUrl, token });
 // Cadence floor, checked BEFORE the model call so a suppressed cycle costs
 // nothing. Without it a manual post, a rerun, or timer drift stacks two
 // tweets minutes apart.
-const postedRows = readLedger<{ at?: number; id?: string; text?: string; posted?: boolean }>("x-posts.jsonl").filter((x) => x?.text);
+const postedRows = readLedger<{ at?: number; id?: string; text?: string; posted?: boolean; operator?: boolean }>("x-posts.jsonl").filter((x) => x?.text);
 const published = postedRows.filter((x) => x.posted);
+// The operator's own posts (scripts/xPost.ts) sit in the ledger for the record and the recent list, never as the agent's.
+const publishedByAgent = published.filter((x) => !x.operator);
 const recent = (published.length ? published : postedRows).map((x) => x.text as string).slice(-12);
 const lastPostAt = postedRows.length ? (postedRows[postedRows.length - 1].at ?? 0) : 0;
 // The arrival: once live, the first six published posts introduce the account in order (ARRIVAL_FORMS), closer
 // together than the daily gap (OBS_X_ARRIVAL_GAP_MIN, 30 by default). Drafts never arrive; they keep the rotation.
-const arriving = process.env.X_LIVE === "true" && X_VOICE === "trader" && published.length < ARRIVAL_FORMS.length;
+const arriving = process.env.X_LIVE === "true" && X_VOICE === "trader" && publishedByAgent.length < ARRIVAL_FORMS.length;
 const gapFloor = arriving ? Math.max(5, Number(process.env.OBS_X_ARRIVAL_GAP_MIN ?? 30)) : MIN_POST_GAP_MIN;
 if (lastPostAt && !DRY) {
   const gapMin = (Date.now() - lastPostAt) / 60000;
@@ -87,8 +89,8 @@ const FORMS: string[] = [
   `AN ADMISSION about the MARKET, not yourself. A read you hold loosely, a number you do not trust yet. Never uncertainty about your own competence.`,
 ];
 const forms = X_VOICE === "trader" ? TRADER_FORMS : FORMS;
-const form = arriving ? ARRIVAL_FORMS[published.length] : forms[postedRows.length % forms.length];
-if (arriving) console.log(`Arrival post ${published.length + 1} of ${ARRIVAL_FORMS.length}.`);
+const form = arriving ? ARRIVAL_FORMS[publishedByAgent.length] : forms[postedRows.length % forms.length];
+if (arriving) console.log(`Arrival post ${publishedByAgent.length + 1} of ${ARRIVAL_FORMS.length}.`);
 
 const copywriterPrompt = `You are Obscura's copywriter, running @${X_HANDLE} on X. Your voice guide, in full:
 
