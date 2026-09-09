@@ -148,3 +148,18 @@ test("too few wallets is a fail, and an empty read says so", () => {
   assert.match(h.why, /2 wallets \(30 needed\)/);
   assert.match(holdersLine(holderRead([], "TOK", TOKEN, now, R)), /not read yet/);
 });
+
+test("with the explorer refusing, a scan that reaches the mint keeps its wallet count and one that does not is a floor", () => {
+  const ZERO = "0x0000000000000000000000000000000000000000";
+  const pool = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
+  const now = 1_788_842_000_000;
+  const rules = holderRulesFromEnv({} as NodeJS.ProcessEnv);
+  const spread: TransferRow[] = Array.from({ length: 40 }, (_, i) => ({ at: 1_788_821_727_000 + i * 60e3, block: 57_206_929 + i, tx: `0x${i}:1`, from: pool, to: `0x${(i + 1).toString(16).padStart(40, "b")}`, amount: 1000 }));
+  const fromMint: TransferRow[] = [{ at: 1_788_821_000_000, block: 57_206_900, tx: "0xmint:1", from: ZERO, to: pool, amount: 1_000_000 }, ...spread];
+  assert.equal(scanFromLaunch(fromMint), true, "a transfer out of the zero address is the mint: the scan saw the whole life");
+  assert.equal(scanFromLaunch(spread), false, "without it the scan began partway through");
+  const complete = holderRead(fromMint, "BYCOCKET", "0xabc", now, rules, [pool]);
+  assert.equal(complete.wallets, 40, "every wallet the token ever had");
+  const floored = withoutWalletCount(holderRead(spread, "BYCOCKET", "0xabc", now, rules, [pool]), "the explorer refused; read from recent transfers", rules.minWallets);
+  assert.match(floored.why, /the explorer refused/);
+});

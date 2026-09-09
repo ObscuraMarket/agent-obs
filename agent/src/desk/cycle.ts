@@ -435,7 +435,14 @@ for (const [sym, a] of inPlay) {
         const reason = e instanceof Error ? e.message.replace(/^explorer /, "") : "no answer";
         console.log(`[desk] holders: the explorer did not answer for ${sym} (${reason}); reading recent transfers`);
         transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);
-        hr = withoutWalletCount(holderRead(transfers, sym, a.contract, now, holderRules, infraBase, null), `the explorer ${reason}; read from recent transfers`, holderRules.minWallets);
+        const scanned = holderRead(transfers, sym, a.contract, now, holderRules, infraBase, null);
+        // A scan that reaches back to the mint has seen every wallet the token ever had, so its count IS the holder
+        // count and stands on its own. Only a scan that starts partway through a token's life is a floor. Stripping
+        // the count from both is what left the desk unable to judge a single new candidate while the explorer was
+        // refusing (2026-09-09: it answered 403 to everyone for hours, and every entry the tape gave was passed up).
+        hr = scanFromLaunch(transfers)
+          ? { ...scanned, why: `${scanned.why} (the explorer ${reason}; read from the token's own transfers, back to its mint)` }
+          : withoutWalletCount(scanned, `the explorer ${reason}; read from recent transfers`, holderRules.minWallets);
       }
     } else {
       transfers = await updateTransfers(a.contract as `0x${string}`, a.decimals, now, launchAt, holderRules);
