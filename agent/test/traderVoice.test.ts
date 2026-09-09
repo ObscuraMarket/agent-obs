@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { traderBlock, traderPrompt, traderReplyPrompt, rulesLine, traderHoldings, TRADER_FORMS, ARRIVAL_FORMS } from "../src/social/traderVoice.ts";
+import { traderBlock, traderPrompt, traderReplyPrompt, rulesLine, traderHoldings, TRADER_FORMS, ARRIVAL_FORMS , TRADER_CADENCES} from "../src/social/traderVoice.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
 const T = Date.UTC(2026, 8, 7, 23, 40);
@@ -35,7 +35,7 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   const block = traderBlock({ equityUsd: null, rules: "", positions: [], closesToday: [], record: "no closes yet", thoughts: [], watching: [], now: T });
   assert.match(block, /holding nothing but ETH right now/);
   assert.match(block, /closed today: nothing yet/);
-  const p = traderPrompt({ handle: "AgentOBS", block, journal: "I said the trail was tight.", recent: ["one from before"], performance: "", form: TRADER_FORMS[0], maxChars: 280 });
+  const p = traderPrompt({ handle: "AgentOBS", block, journal: "I said the trail was tight.", recent: ["one from before"], performance: "", form: TRADER_FORMS[0], cadence: TRADER_CADENCES[0], maxChars: 280 });
   assert.match(p, /^You are Agent OBS, a trading agent on Robinhood Chain trading on the fomo\.family app, posting on X as @AgentOBS in the first person/);
   assert.match(p, /never more than one emoji/);
   assert.match(p, /the record is public, the operator is not/);
@@ -57,7 +57,7 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   assert.match(p, /never dollars and percent spelled out/);
   assert.ok(TRADER_FORMS.every((f) => /^[A-Z][A-Z ,-]+\. /.test(f) && f.length < 320));
   assert.ok(!p.includes("Anchors for the register"));
-  const withAnchors = traderPrompt({ handle: "AgentOBS", block, journal: "", recent: [], performance: "", form: TRADER_FORMS[0], maxChars: 280, examples: "- i left LENNY at 12:52 UTC, the trail took it." });
+  const withAnchors = traderPrompt({ handle: "AgentOBS", block, journal: "", recent: [], performance: "", form: TRADER_FORMS[0], cadence: TRADER_CADENCES[0], maxChars: 280, examples: "- i left LENNY at 12:52 UTC, the trail took it." });
   assert.match(withAnchors, /Anchors for the register only: never repeat one[\s\S]*- i left LENNY at 12:52 UTC/);
   assert.equal(TRADER_FORMS.length, 9);
   assert.match(TRADER_FORMS[7], /^A TAKE\./);
@@ -113,3 +113,23 @@ test("the arrival is six forms in order: who i am, what shows up, the rules, the
   assert.match(ARRIVAL_FORMS[5], /^WHERE TO WATCH\./);
   assert.ok(ARRIVAL_FORMS.every((f) => /^[A-Z][A-Z ,'-]+\. /.test(f) && !f.includes("desk") && !f.includes("\u2014")));
 });
+
+test("the cadence turns apart from the form, so the feed is not one length forever", () => {
+  // Nine forms against five cadences: forty five posts before a pairing comes round again. The voice had one
+  // rhythm before this and every post came out the same size, which is the tell of a machine writing them.
+  assert.equal(TRADER_CADENCES.length, 5);
+  assert.equal(TRADER_FORMS.length % TRADER_CADENCES.length !== 0, true, "the wheels must not share a factor, or the pairing repeats early");
+  const pairings = new Set<string>();
+  for (let i = 0; i < TRADER_FORMS.length * TRADER_CADENCES.length; i++) pairings.add(`${i % TRADER_FORMS.length}:${i % TRADER_CADENCES.length}`);
+  assert.equal(pairings.size, TRADER_FORMS.length * TRADER_CADENCES.length, "every form meets every cadence before any repeats");
+  // One of them has to give permission to be very short, which is what was missing.
+  assert.ok(TRADER_CADENCES.some((c) => /under a dozen words/.test(c)), "a cadence that allows one clipped line");
+  assert.ok(TRADER_CADENCES.some((c) => /single sentence/.test(c)), "a cadence that runs one sentence through");
+  const prompt = traderPrompt({ handle: "ObscuraOBS", block: "- equity $1,000", journal: "", recent: [], performance: "", form: TRADER_FORMS[0], cadence: TRADER_CADENCES[0], maxChars: 280 });
+  assert.match(prompt, /THE CADENCE FOR THIS POST/);
+  assert.match(prompt, /under a dozen words/);
+  assert.match(prompt, /Do not open with "i" unless the sentence genuinely needs it/, "the opener that half the timeline shared");
+  assert.ok(!/one longer sentence that walks through it and then a short one that lands it\. Units/.test(prompt), "the one fixed rhythm is gone from the general guidance");
+  assert.match(prompt, /You write in lowercase, the way the account already reads/, "the style the timeline already has, said as a rule and not only shown in the examples");
+});
+

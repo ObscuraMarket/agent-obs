@@ -6,7 +6,7 @@ import { GatewayClient } from "@openhermit/sdk";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DRY, MIN_POST_GAP_MIN, SIMILARITY_MAX, X_AGENT_ID, X_HANDLE, X_VOICE, MAX_TWEET_CHARS, ROOT_DIR } from "./config.ts";
-import { traderBlock, traderData, traderPrompt, TRADER_FORMS, ARRIVAL_FORMS } from "./social/traderVoice.ts";
+import { traderBlock, traderData, traderPrompt, TRADER_FORMS, TRADER_CADENCES, ARRIVAL_FORMS } from "./social/traderVoice.ts";
 import { postTweet, getMyPostMetrics } from "./social/xClient.ts";
 import { cleanReply, forbiddenReason, tooSimilar } from "./social/postGuards.ts";
 import { recallForPrompt, remember, splitNote } from "./journal.ts";
@@ -90,6 +90,9 @@ const FORMS: string[] = [
 ];
 const forms = X_VOICE === "trader" ? TRADER_FORMS : FORMS;
 const form = arriving ? ARRIVAL_FORMS[publishedByAgent.length] : forms[postedRows.length % forms.length];
+// The cadence turns on its own wheel: five against nine forms, so the pairing does not repeat for forty five posts.
+// The arrival posts keep their own shape and are left alone; they are the introduction and they only run once.
+const cadence = TRADER_CADENCES[publishedByAgent.length % TRADER_CADENCES.length];
 if (arriving) console.log(`Arrival post ${publishedByAgent.length + 1} of ${ARRIVAL_FORMS.length}.`);
 
 const copywriterPrompt = `You are Obscura's copywriter, running @${X_HANDLE} on X. Your voice guide, in full:
@@ -123,7 +126,7 @@ If nothing is genuinely worth saying right now: reply with PASS on the first lin
 const examplesPath = join(ROOT_DIR, "personality", "xtrader", "examples.md");
 const examples = existsSync(examplesPath) ? readFileSync(examplesPath, "utf8").replace(/^#\s+\w+\s*\n/, "").trim() : "";
 const prompt = X_VOICE === "trader"
-  ? traderPrompt({ handle: X_HANDLE, block: traderBlock(traderData()), journal, recent, performance, form, maxChars: MAX_TWEET_CHARS, examples })
+  ? traderPrompt({ handle: X_HANDLE, block: traderBlock(traderData()), journal, recent, performance, form, cadence, maxChars: MAX_TWEET_CHARS, examples })
   : copywriterPrompt;
 
 const sessionId = "x-autopilot";
