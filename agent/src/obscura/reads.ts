@@ -16,6 +16,7 @@ import { RPC_URL, OBS_CONTRACT, SITE_URL, API_URL, WALLET_ADDRESS, ETH_RPC_URL, 
 import { appendLedger, readLedger } from "../ledger.ts";
 import { ASSETS } from "../desk/assets.ts";
 import { readTokens, dynamicPoolSpec, dynamicAssets } from "../desk/candidates.ts";
+import { aaOn } from "../desk/aa.ts";
 import { UA, rpc, ethCall, rpcBlocked } from "./rpc.ts";
 import { obsMarket, poolRead, chainMemory, type MarketRead, type PoolSpec } from "./pools.ts";
 import { stockReference } from "./stockRef.ts";
@@ -530,13 +531,14 @@ export function marketLine(m: MarketRead): string {
 
 const fmt = (v: number | null, digits: number) => (v == null ? "not read" : v.toLocaleString("en-US", { maximumFractionDigits: digits }));
 
-/** PURE: the wallet lines as the prompt and the dashboard show them. */
-export function walletLines(w: WalletRead | null): string[] {
+/** PURE: the wallet lines as the prompt and the dashboard show them. Under account abstraction (aa.ts) the WETH is what a swap spends, and the line says so, or the model sizes off a native figure of zero. */
+export function walletLines(w: WalletRead | null, aa: boolean = aaOn()): string[] {
   if (!w) return [];
   const extras = Object.entries(w.tokens ?? {})
     .filter(([k, v]) => v != null && v > 0 && !["USDG@robinhood", "OBS@robinhood"].includes(k))
     .map(([k, v]) => `${fmt(v as number, k.startsWith("USD") || k.startsWith("DAI") ? 2 : 6)} ${k.split("@")[0]}${k.endsWith("@erc20") ? " on Ethereum" : ""}`);
-  const out = [`- The desk's wallet (on chain): ${fmt(w.ethRobinhood, 6)} ETH on Robinhood Chain${w.wethRobinhood ? ` plus ${fmt(w.wethRobinhood, 6)} held as WETH (on the book as ETH; a swap spends native ETH, so only the native figure can go out)` : ""}, ${fmt(w.ethMainnet, 6)} ETH on Ethereum, ${fmt(w.usdg, 2)} USDG, ${fmt(w.obs, 2)} OBS${extras.length ? ", " + extras.join(", ") : ""}.`];
+  const wethNote = aa ? "on the book as ETH; a swap spends it through the entry point, so it can go out as ETH" : "on the book as ETH; a swap spends native ETH, so only the native figure can go out";
+  const out = [`- The desk's wallet (on chain): ${fmt(w.ethRobinhood, 6)} ETH on Robinhood Chain${w.wethRobinhood ? ` plus ${fmt(w.wethRobinhood, 6)} held as WETH (${wethNote})` : ""}, ${fmt(w.ethMainnet, 6)} ETH on Ethereum, ${fmt(w.usdg, 2)} USDG, ${fmt(w.obs, 2)} OBS${extras.length ? ", " + extras.join(", ") : ""}.`];
   if (w.rewards) out.push(`- Obscura cashback for this wallet: ${w.rewards.swaps} swaps, $${w.rewards.volumeUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} volume, $${w.rewards.rewardsUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} earned, $${w.rewards.paidUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} paid out.`);
   return out;
 }

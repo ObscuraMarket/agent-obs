@@ -45,7 +45,8 @@ export async function fromChainReady(asset: Asset): Promise<boolean> {
   }
 }
 
-function loadAccount() {
+/** The desk's own account, from its file, at call time: the key signs and is never logged or kept. Exported for the account-abstraction lane (aa.ts), which signs a user operation with it. */
+export function loadAccount() {
   const w = JSON.parse(readFileSync(walletFile(), "utf8")) as { address?: string; privateKey?: string };
   if (!w.privateKey || !/^0x[0-9a-fA-F]{64}$/.test(w.privateKey)) throw new Error("wallet file has no usable key");
   const account = privateKeyToAccount(w.privateKey as Hex);

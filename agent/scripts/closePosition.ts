@@ -22,6 +22,7 @@ import { readFollow, readFollowTrades, liveHoldings } from "../src/desk/follow.t
 import { ethUsdAt } from "../src/desk/trade-memory.ts";
 import { readPrices } from "../src/desk/analysis.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
+import { railView } from "../src/desk/aa.ts";
 import { liveReads, walletBalances, assetPrices } from "../src/obscura/reads.ts";
 import { readBook, recordTrade, positions, boughtSymbols } from "../src/desk/book.ts";
 
@@ -62,7 +63,7 @@ const q = await quoteOnChain(from, eth, held);
 if (!q) { console.error("no route to ETH, or the pools did not answer"); process.exit(1); }
 console.log(`route ${q.route.hops.map((h) => h.key).join(" then ")}: expected ${q.amountOut} ETH, floor ${q.minOut}${q.costPct != null ? `, cost ${q.costPct.toFixed(2)}% against the mark` : ""}`);
 if (dry) { console.log("dry: nothing sent"); process.exit(0); }
-const ctx = { rails: railsFromEnv(), balances: chain.byKey, nativeOnFromChain: chain.byKey["ETH@robinhood"] ?? null, openOrders: 0 };
+const ctx = { rails: railsFromEnv(), ...(await railView(chain.byKey)), openOrders: 0 };
 const intent = { from, to: eth, amount: held, usd, exit: true };
 const r = await executeOnChain(intent, ctx, now);
 if (!r.ok) { console.error(`refused: ${r.reason}`); process.exit(1); }

@@ -17,7 +17,8 @@ import { chainMemory, poolRead, type PoolSpec, type PoolRead } from "../obscura/
 import { ASSETS, assetKey, chainOf, type Asset } from "./assets.ts";
 import { checkRails, type Intent, type RailContext } from "./rails.ts";
 import { recordTrade, readBook, latestTrades, boughtSymbols, intentTimedOut, INTENT_STALE_MIN, type Trade } from "./book.ts";
-import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet } from "./signer.ts";
+import { simulateFromWallet, sendTx, waitReceipt, readNativeBalance, readTokenBalance, readErc20Allowance, readPermit2Allowance, approveErc20Data, approvePermit2Data, type RawTx, type Wallet, type ReceiptRead } from "./signer.ts";
+import { aaOn, swapBatch, ethInPlan, buildUserOp, simulateUserOp, simulateBatch, submitUserOp, waitUserOp, ensureDeposit, depositMinWei, depositTopUpWei, prefundWei, spendableEthRaw, receivedRawFromLogs, nativeOutFromSwapLogs, opOutcomeOf, type PreparedOp, type SwapBatchToken } from "./aa.ts";
 import { WALLET_ADDRESS, NEVER_TRADE } from "../config.ts";
 import { ledgerWriteFailures } from "../ledger.ts";
 import { raiseAlert, type AlertKind } from "./alerts.ts";
@@ -322,11 +323,14 @@ export function legUsd(asset: Asset, amount: number, routePriceUsd: number | nul
 
 export async function executeOnChain(i: Intent, c: RailContext, now = Date.now(), runAs?: RunAs): Promise<OnChainResult> {
   const address = runAs?.wallet.address ?? (WALLET_ADDRESS as `0x${string}`);
+  // The desk's own swaps go out as one user operation when the operator says so (OBS_EXEC=aa, aa.ts); a follower's
+  // wallet is a plain EOA and keeps the plain send whatever the switch says.
+  const aa = aaOn() && !runAs;
   // The last check before anything is signed, independent of the rails object handed in: a never-trade contract on
   // either leg is refused here even if a caller built its own rails.
   for (const leg of [i.from, i.to]) if (leg.contract && NEVER_TRADE.has(leg.contract.toLowerCase())) return { ok: false, reason: `${leg.symbol} is on the never-trade list; not quoted, not approved, not sent` };
   // The rails hear whose wallet signs: an agent wallet's exit passes the trading switch (rails.ts, 2026-09-08).
-  const gate = checkRails(i, runAs ? { ...c, runAs: true } : c);
+  const gate = checkRails(i, runAs ? { ...c, runAs: true } : aa ? { ...c, aa: true } : c);
   if (!gate.ok) return { ok: false, reason: gate.reason };
   const q = await quoteOnChain(i.from, i.to, i.amount);
   if (!q) return { ok: false, reason: `no pool route from ${assetKey(i.from)} to ${assetKey(i.to)}, or the pools did not answer` };
@@ -337,22 +341,44 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
   // An ERC-20 from-leg is clamped to the wallet's exact raw balance: the book's amount is a float of the balance and
   // can sit a few hundred wei above it, and a transfer of one wei more than the wallet holds reverts the whole sell.
   let amountInRaw = q.amountInRaw;
+  // Under account abstraction an ETH leg is paid from the wallet's WETH, unwrapped inside the batch: the amount is
+  // clamped to native plus WETH, since WETH.withdraw of one wei over the balance reverts the whole operation.
+  let withdrawRaw = 0n;
   if (i.from.kind === "erc20" && i.from.contract) {
     try {
       amountInRaw = clampToBalanceRaw(q.amountInRaw, await readTokenBalance(i.from, i.from.contract as `0x${string}`, address));
     } catch { /* the quote's amount stands; the simulation says if it is too much */ }
     if (amountInRaw <= 0n) return { ok: false, reason: `the wallet holds no ${i.from.symbol} to send` };
+  } else if (aa && i.from.kind === "native") {
+    let spend: { native: bigint; weth: bigint };
+    try {
+      spend = await spendableEthRaw(address);
+    } catch (err) {
+      return { ok: false, reason: `the wallet's ETH and WETH could not be read: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    const plan = ethInPlan(q.amountInRaw, spend.native, spend.weth);
+    amountInRaw = plan.amountInRaw;
+    withdrawRaw = plan.withdrawRaw;
+    if (amountInRaw <= 0n) return { ok: false, reason: "the wallet holds no ETH or WETH to send" };
   }
   const amountIn = amountInRaw === q.amountInRaw ? i.amount : fromRaw(amountInRaw, i.from.decimals);
   const tx = encodeSwap(q.route, amountInRaw, q.minOutRaw, address, deadline);
   let approvals: string[] = [];
-  try {
-    approvals = await ensureAllowances(i.from, amountInRaw, now, runAs?.wallet);
-  } catch (err) {
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  let prepared: PreparedOp | null = null;
+  if (aa) {
+    const built = await prepareSwapOp(i.from, tx, withdrawRaw, amountInRaw, now);
+    if (!built.ok) return { ok: false, reason: built.reason };
+    prepared = built.prepared;
+    approvals = built.approvals;
+  } else {
+    try {
+      approvals = await ensureAllowances(i.from, amountInRaw, now, runAs?.wallet);
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+    const sim = await simulateFromWallet(i.from, tx, address);
+    if (!sim.ok) return { ok: false, reason: `the swap would revert: ${sim.reason}` };
   }
-  const sim = await simulateFromWallet(i.from, tx, address);
-  if (!sim.ok) return { ok: false, reason: `the swap would revert: ${sim.reason}` };
   const base: Trade = {
     at: now,
     id: nextTradeId(now),
@@ -362,20 +388,103 @@ export async function executeOnChain(i: Intent, c: RailContext, now = Date.now()
     from: { asset: i.from.symbol, network: i.from.network, amount: amountIn, usd: i.usd ?? legUsd(i.from, amountIn, q.priceInUsd, ethUsd) },
     to: { asset: i.to.symbol, network: i.to.network, amount: q.amountOut, usd: legUsd(i.to, q.amountOut, q.priceOutUsd, ethUsd) },
     partner: "pool",
-    note: `${q.route.hops.map((h) => h.key).join(" then ")} on chain; expected ${q.amountOut} ${i.to.symbol}, floor ${q.minOut}${q.costPct != null ? `, route cost ${q.costPct.toFixed(2)}% (fees ${q.feePct.toFixed(2)}%)` : ""}${approvals.length ? `; approvals ${approvals.join(", ")}` : ""}`,
+    note: `${q.route.hops.map((h) => h.key).join(" then ")} on chain; expected ${q.amountOut} ${i.to.symbol}, floor ${q.minOut}${q.costPct != null ? `, route cost ${q.costPct.toFixed(2)}% (fees ${q.feePct.toFixed(2)}%)` : ""}${approvals.length ? `; approvals ${approvals.join(", ")}` : ""}${prepared ? `; one user operation through the entry point (${prepared.userOpHash.slice(0, 10)}), gas from the gas wallet` : ""}`,
   };
+  if (prepared) {
+    const poolManager = chainMemory().contracts.uniswapV4.poolManager;
+    return sendSwap({ intent: i, base, tx, quote: q, address, ethUsd, now, aa: { fill: (logs) => aaFillFromLogs(logs, i.to, q.route, address, poolManager) } }, aaLane(prepared));
+  }
   return sendSwap({ intent: i, base, tx, quote: q, address, ethUsd, now, runAs });
+}
+
+/**
+ * The swap as one user operation (aa.ts): the approvals a token sell still lacks are read and put into the batch
+ * ahead of the router call rather than sent on their own, the operation is built and signed, the wallet's
+ * EntryPoint deposit is topped up by the gas wallet when it would not cover the prefund, and the whole thing is
+ * simulated, the batch as a self-call and the validation as the EntryPoint runs it. A reason means nothing was sent.
+ */
+async function prepareSwapOp(from: Asset, tx: RawTx, withdrawRaw: bigint, amountInRaw: bigint, now: number): Promise<{ ok: true; prepared: PreparedOp; approvals: string[] } | { ok: false; reason: string }> {
+  const c4 = chainMemory().contracts.uniswapV4;
+  const approvals: string[] = [];
+  let token: SwapBatchToken | undefined;
+  if (from.kind === "erc20" && from.contract) {
+    const contract = from.contract as `0x${string}`;
+    const permit2 = c4.permit2 as `0x${string}`;
+    const router = c4.universalRouter as `0x${string}`;
+    const nowSec = Math.floor(now / 1000);
+    try {
+      const needErc20Approve = (await readErc20Allowance(from, contract, permit2)) < amountInRaw;
+      const p = await readPermit2Allowance(from, permit2, contract, router);
+      const needPermit2Approve = p.amount < amountInRaw || p.expiration <= nowSec;
+      token = { contract, permit2, router, needErc20Approve, needPermit2Approve, expiration: nowSec + 365 * 86400 };
+      if (needErc20Approve) approvals.push(`${from.symbol}.approve(Permit2) in the batch`);
+      if (needPermit2Approve) approvals.push(`Permit2.approve(${from.symbol}, router) in the batch`);
+    } catch (err) {
+      return { ok: false, reason: `the allowances could not be read: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+  const calls = swapBatch({ tx, withdrawRaw, token });
+  let prepared: PreparedOp;
+  try {
+    prepared = await buildUserOp(calls);
+  } catch (err) {
+    return { ok: false, reason: `the swap would revert: ${err instanceof Error ? ((err as { shortMessage?: string }).shortMessage ?? err.message).split("\n")[0].slice(0, 220) : String(err)}` };
+  }
+  try {
+    const prefund = prefundWei(prepared.gas);
+    const min = depositMinWei() > prefund ? depositMinWei() : prefund;
+    const topUp = depositTopUpWei() > min ? depositTopUpWei() : min;
+    const d = await ensureDeposit(min, topUp);
+    if (d.hash) console.log(`[aa] entry point deposit topped up from ${d.before} to ${d.after} wei (${d.hash})`);
+  } catch (err) {
+    return { ok: false, reason: `the entry point deposit could not be kept up: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const sim = await simulateUserOp(prepared);
+  if (!sim.ok) return { ok: false, reason: `the user operation would fail: ${sim.reason}` };
+  return { ok: true, prepared, approvals };
+}
+
+/**
+ * PURE with logs: what a swap paid out under account abstraction, from the handleOps receipt's own logs: the
+ * Transfer to the wallet for a token, the last hop's Swap delta for native ETH (which leaves no Transfer log and
+ * which the app wraps within seconds of landing). Null when the logs say nothing.
+ */
+export function aaFillFromLogs(logs: ReceiptRead["logs"], to: Asset, route: Route, recipient: string, poolManager?: string): bigint | null {
+  if (to.kind === "native") {
+    const last = route.hops[route.hops.length - 1];
+    return last?.spec.id ? nativeOutFromSwapLogs(logs, last.spec.id, !last.zeroForOne, poolManager) : null;
+  }
+  return to.contract ? receivedRawFromLogs(logs, to.contract, recipient) : null;
 }
 
 /** The lane's effects past the quote and the simulation, injectable so the order of the rows can be tested without a chain. */
 export interface SendLane {
   send: (asset: Asset, tx: RawTx, wallet?: Wallet) => Promise<`0x${string}`>;
-  wait: (asset: Asset, hash: `0x${string}`) => Promise<{ status: "success" | "reverted"; gasCostWei: bigint } | null>;
+  /** The receipt: its status, what its gas cost, and under account abstraction its logs (the fill is read from them) and the batch's revert reason. */
+  wait: (asset: Asset, hash: `0x${string}`) => Promise<{ status: "success" | "reverted"; gasCostWei: bigint; logs?: ReceiptRead["logs"]; reason?: string } | null>;
   balance: (asset: Asset, holder: string) => Promise<bigint>;
   alert: (kind: AlertKind, text: string, now: number) => Promise<boolean>;
   clock: () => number;
 }
 const LIVE_LANE: SendLane = { send: (a, tx, w) => sendTx(a, tx, w), wait: (a, h) => waitReceipt(a, h), balance: (a, holder) => balanceOf(a, holder), alert: (k, text, at) => raiseAlert(k, text, at), clock: () => Date.now() };
+
+/**
+ * The lane under account abstraction: the send is the prepared user operation through the gas wallet, the wait
+ * reads the operation's own outcome out of the handleOps receipt (the transaction lands as success even when the
+ * batch reverted), and ETH is counted as native plus WETH, which the app's sweep leaves unchanged.
+ */
+function aaLane(p: PreparedOp): SendLane {
+  return {
+    send: () => submitUserOp(p),
+    wait: async (_asset, hash) => {
+      const r = await waitUserOp(hash, p.userOpHash);
+      return r ? { status: r.status, gasCostWei: r.gasCostWei, logs: r.logs, ...(r.op.reason ? { reason: r.op.reason } : {}) } : null;
+    },
+    balance: async (a, holder) => (a.kind === "native" ? (await spendableEthRaw(holder)).total : balanceOf(a, holder)),
+    alert: LIVE_LANE.alert,
+    clock: LIVE_LANE.clock,
+  };
+}
 
 export interface SendJob {
   intent: Intent;
@@ -387,6 +496,8 @@ export interface SendJob {
   ethUsd: number | null;
   now: number;
   runAs?: RunAs;
+  /** Set when the send is a user operation: the fill from the receipt's logs, and no gas of the wallet's to add back to a native leg. */
+  aa?: { fill: (logs: ReceiptRead["logs"]) => bigint | null };
 }
 
 /**
@@ -401,7 +512,7 @@ export interface SendJob {
  * lost sight of money in motion.
  */
 export async function sendSwap(job: SendJob, lane: SendLane = LIVE_LANE): Promise<OnChainResult> {
-  const { intent: i, base, tx, quote: q, address, ethUsd, now, runAs } = job;
+  const { intent: i, base, tx, quote: q, address, ethUsd, now, runAs, aa } = job;
   const record = runAs?.record ?? recordTrade;
   const put = (t: Trade) => recordOrAlert(record, t, now, lane.alert);
   const before = await lane.balance(i.to, address);
@@ -422,13 +533,19 @@ export async function sendSwap(job: SendJob, lane: SendLane = LIVE_LANE): Promis
   const receipt = await lane.wait(i.from, hash);
   if (!receipt) return { ok: true, trade: pending };
   if (receipt.status !== "success") {
-    const failed: Trade = { ...base, status: "failed", updatedAt: lane.clock(), settlementTx: hash, explorerUrl, note: `reverted on chain` };
+    const failed: Trade = { ...base, status: "failed", updatedAt: lane.clock(), settlementTx: hash, explorerUrl, note: `reverted on chain${receipt.reason ? `: ${receipt.reason}` : ""}` };
     await put(failed);
-    return { ok: false, reason: `swap ${hash} reverted`, trade: failed };
+    return { ok: false, reason: `swap ${hash} reverted${receipt.reason ? `: ${receipt.reason}` : ""}`, trade: failed };
   }
   const after = await lane.balance(i.to, address);
   let gotRaw = after - before;
-  if (i.to.kind === "native") gotRaw += receipt.gasCostWei;
+  // The wallet paid the gas of a plain send, so a native leg gets it added back; under account abstraction the
+  // gas wallet paid it, and when the balance reads say nothing the fill is read from the receipt's own logs.
+  if (i.to.kind === "native" && !aa) gotRaw += receipt.gasCostWei;
+  if (aa && gotRaw <= 0n && receipt.logs) {
+    const logged = aa.fill(receipt.logs);
+    if (logged != null && logged > 0n) gotRaw = logged;
+  }
   const got = gotRaw > 0n ? fromRaw(gotRaw, i.to.decimals) : q.amountOut;
   const settled: Trade = {
     ...base,
@@ -464,9 +581,22 @@ export async function proveSellable(token: Asset, amountRaw: bigint, now = Date.
   const base = known ?? { symbol: token.symbol, contract: token.contract as `0x${string}`, decimals: token.decimals, poolId: c.poolId, feePct: c.tierPct, tickSpacing: c.tickSpacing, usdgIs0: c.usdgIs0, firstSeen: now, proven: null, blacklisted: false, ...(c.curve ? { curve: c.curve } : {}) };
   if (base.proven === true) return "sell already proven";
   try {
-    await ensureAllowances(token, amountRaw, now);
     const route = routeFor(token, eth);
     if (!route) throw new Error("no route back to ETH");
+    if (aaOn()) {
+      // Under account abstraction nothing is sent for the proof: the wallet holds no native ETH to pay for an
+      // approval of its own, so the sell with both approvals ahead of it runs as one batch in simulation, the
+      // self-call the account admits (aa.ts). The approvals go out inside the real exit's batch.
+      const c4 = chainMemory().contracts.uniswapV4;
+      const nowSec = Math.floor(now / 1000);
+      const tx = encodeSwap(route, amountRaw, 1n, WALLET_ADDRESS as `0x${string}`, BigInt(nowSec + 1200));
+      const calls = swapBatch({ tx, withdrawRaw: 0n, token: { contract: token.contract as `0x${string}`, permit2: c4.permit2 as `0x${string}`, router: c4.universalRouter as `0x${string}`, needErc20Approve: true, needPermit2Approve: true, expiration: nowSec + 365 * 86400 } });
+      const sim = await simulateBatch(calls);
+      if (!sim.ok) throw new Error(sim.reason);
+      upsertToken({ ...base, proven: true, blacklisted: false, note: `sell proven ${new Date(now).toISOString()}` });
+      return "sell proven: the token can be sold back through its pool (simulated as one batch with its approvals)";
+    }
+    await ensureAllowances(token, amountRaw, now);
     const sim = await simulateFromWallet(token, encodeSwap(route, amountRaw, 1n, WALLET_ADDRESS as `0x${string}`, BigInt(Math.floor(now / 1000) + 1200)));
     if (!sim.ok) throw new Error(sim.reason);
     upsertToken({ ...base, proven: true, blacklisted: false, note: `sell proven ${new Date(now).toISOString()}` });
@@ -561,12 +691,23 @@ export async function settleOnChain(now = Date.now()): Promise<Trade[]> {
     if (!from) continue;
     const r = await waitReceipt(from, t.settlementTx as `0x${string}`, 5_000);
     if (!r) continue;
-    const row: Trade = { ...t, status: r.status === "success" ? "settled" : "failed", updatedAt: now, note: `${t.note ?? ""}; ${r.status === "success" ? "landed" : "reverted"} (amount as estimated)` };
+    // Under account abstraction the hash is a handleOps transaction, which lands as success whether or not the
+    // batch ran; the operation's own event says which (aa.ts).
+    let landed = r.status === "success";
+    let why = "";
+    if (landed && aaOn()) {
+      const op = await opOutcomeOf(t.settlementTx as `0x${string}`);
+      if (op && !op.success) {
+        landed = false;
+        why = op.reason ? ` (${op.reason})` : "";
+      }
+    }
+    const row: Trade = { ...t, status: landed ? "settled" : "failed", updatedAt: now, note: `${t.note ?? ""}; ${landed ? "landed" : `reverted${why}`} (amount as estimated)` };
     await recordOrAlert(recordTrade, row, now);
     updated.push(row);
     // A sell that landed late closes its position in the desk's memory here, since the exit pass only remembers a
     // close from a sell that settled in its own window (2026-09-08). Closed means the wallet no longer holds the token.
-    if (row.exit && r.status === "success" && from.contract) {
+    if (row.exit && landed && from.contract) {
       try {
         const left = Number(await readTokenBalance(from, from.contract as `0x${string}`, WALLET_ADDRESS as `0x${string}`)) / 10 ** from.decimals;
         if (!isHolding(left)) {

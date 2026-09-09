@@ -152,6 +152,13 @@ export interface RailContext {
    * a token while the desk was paused. Entries by an agent wallet are still refused when trading is off.
    */
   runAs?: boolean;
+  /**
+   * The swap goes out as a user operation through the EntryPoint (OBS_EXEC=aa, aa.ts): the wallet's ETH is its
+   * WETH (balances["ETH@robinhood"] is native plus WETH here), no gas leaves the wallet itself, and
+   * nativeOnFromChain is the lane's reserve, the EntryPoint deposit plus the gas wallet, checked the same way for
+   * an ETH leg as for a token leg. Never set for a follower's wallet.
+   */
+  aa?: boolean;
 }
 
 /** PURE: the whole decision, in order, first failure wins. */
@@ -204,12 +211,14 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   }
   const have = c.balances[assetKey(i.from)] ?? 0;
   if (have + 1e-12 < i.amount) return { ok: false, reason: `the wallet holds ${have} ${assetKey(i.from)}, less than ${i.amount}` };
-  if (i.from.kind === "native") {
+  if (i.from.kind === "native" && !c.aa) {
     // An entry keeps the reserve twice: its own gas and the exit's, since a wallet left under the reserve by the
     // entry's gas is refused every token exit at the check below (2026-09-08).
     if (have - i.amount < r.gasReserveEth * 2) return { ok: false, reason: `sending ${i.amount} ${i.from.symbol} would leave less than ${r.gasReserveEth * 2} ETH, the gas reserve for the round trip` };
   } else if (c.nativeOnFromChain == null || c.nativeOnFromChain < r.gasReserveEth) {
-    return { ok: false, reason: `less than the ${r.gasReserveEth} ETH gas reserve on ${i.from.chain}` };
+    // Under account abstraction the wallet pays no gas of its own, so an ETH leg keeps nothing back; the reserve
+    // checked here is the lane's, the EntryPoint deposit plus the gas wallet (aa.ts), for either leg.
+    return { ok: false, reason: c.aa ? `less than the ${r.gasReserveEth} ETH gas reserve between the entry point deposit and the gas wallet` : `less than the ${r.gasReserveEth} ETH gas reserve on ${i.from.chain}` };
   }
   return { ok: true };
 }

@@ -42,6 +42,10 @@ node scripts/ohsetup.mjs || log "persona setup skipped; is the gateway reachable
 if [ -n "${OBS_WALLET_JSON:-}" ] && [ ! -f "${OBS_WALLET_DIR:-/wallet}/obs-wallet.json" ]; then
   mkdir -p "${OBS_WALLET_DIR:-/wallet}" && umask 077 && printf '%s' "$OBS_WALLET_JSON" > "${OBS_WALLET_DIR:-/wallet}/obs-wallet.json" && log "wallet file written from OBS_WALLET_JSON"
 fi
+# The gas wallet's key (OBS_EXEC=aa: the plain EOA that sends the desk's user operations and pays their gas), written the same way beside the first.
+if [ -n "${OBS_GAS_WALLET_JSON:-}" ] && [ ! -f "${OBS_WALLET_DIR:-/wallet}/obs-gas-wallet.json" ]; then
+  mkdir -p "${OBS_WALLET_DIR:-/wallet}" && umask 077 && printf '%s' "$OBS_GAS_WALLET_JSON" > "${OBS_WALLET_DIR:-/wallet}/obs-gas-wallet.json" && log "gas wallet file written from OBS_GAS_WALLET_JSON"
+fi
 
 # 3. The read-only API, the live watch and the feed builder, in the background. First, a cycle lock left on the
 #    volume by the previous container is nobody's: its pid can name a live process in this one, and a fresh watch

@@ -5,6 +5,7 @@ import { resolveAny, readFeed, tokenInfo, gradeCandidate, gradeRulesFromEnv, dyn
 import { poolRead } from "../src/obscura/pools.ts";
 import { positions } from "../src/desk/book.ts";
 import { railsFromEnv, checkCandidate, lastEntryAt } from "../src/desk/rails.ts";
+import { railView } from "../src/desk/aa.ts";
 import { readPaper, paperBalances, paperByKey, paperExecute } from "../src/desk/paper.ts";
 import { liveReads, walletBalances, assetPrices } from "../src/obscura/reads.ts";
 import { readBook } from "../src/desk/book.ts";
@@ -53,7 +54,7 @@ if ("maxUsd" in gate && gate.maxUsd != null) {
 }
 const now = Date.now();
 const allTrades = [...readBook().trades, ...paper];
-const ctx = { rails, balances: byKey, nativeOnFromChain: byKey["ETH@robinhood"] ?? null, openOrders: 0, lastEntryAt: lastEntryAt(allTrades), now };
+const ctx = { rails, ...(await railView(byKey)), openOrders: 0, lastEntryAt: lastEntryAt(allTrades), now };
 const r = await paperExecute({ from, to, amount, usd, exit: !!from.candidate, ...(capUsd != null ? { capUsd } : {}), ...(addOn ? { addOn: true } : {}) }, ctx, real.bySymbol, now);
 if (!r.ok) { console.log(`refused: ${r.reason}`); process.exit(0); }
 console.log(`paper trade ${r.trade.id}: ${r.trade.from.amount} ${r.trade.from.asset} (${usd == null ? "unpriced" : `$${usd.toFixed(2)}`}) -> ${r.trade.to.amount} ${r.trade.to.asset}${r.trade.to.usd != null ? ` ($${r.trade.to.usd.toFixed(2)})` : ""}`);

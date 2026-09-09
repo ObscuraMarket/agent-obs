@@ -17,6 +17,7 @@ import { railsFromEnv, tradingArmed, resolveAsset, dayStartEquity, lastEntryAt, 
 import { assetKey, type Asset } from "./assets.ts";
 import { execute, settleOpenOrders } from "./execute.ts";
 import { executeOnChain, settleOnChain, poolQuotes, exitCandidates, rememberClose } from "./onchain.ts";
+import { railView } from "./aa.ts";
 import { mirrorForFollowers, sweepFollowers, markFollowers, followerSettleDeps } from "./mirror.ts";
 import { settleFollowers } from "./follow.ts";
 import { readFeed, resolveAny, dynamicAssets, tokenInfo, readTokens, gradeCandidate, gradeRulesFromEnv, dynamicPoolSpec, candidateAsset, earlyAsCandidate, curveKey, isHolding } from "./candidates.ts";
@@ -133,7 +134,8 @@ if (ARMED && readTokens().length) {
     if (heldNames.length) {
       const exitPrices = await assetPrices([...heldNames, "ETH"], {});
       // Every real exit of the desk's is mirrored for the agents that hold the token, the same share each.
-      const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), balances: chainForExit.byKey, nativeOnFromChain: chainForExit.byKey["ETH@robinhood"] ?? null, openOrders: 0 }, undefined, now, undefined, undefined, (i, row, held) => mirrorForFollowers(i, row, held, now));
+      // The rails' balance view: the wallet's keys as read, or under account abstraction ETH as native plus WETH and the lane's reserve (aa.ts).
+      const exits = await exitCandidates(chainForExit.bySymbol, exitPrices, { rails: railsFromEnv(), ...(await railView(chainForExit.byKey)), openOrders: 0 }, undefined, now, undefined, undefined, (i, row, held) => mirrorForFollowers(i, row, held, now));
       for (const t of exits) console.log(`[desk] forced exit ${t.id} ${t.status}: ${t.note}`);
       // What was sold, by amount: a scale-out leaves the rest held, and the rest must still read as held for the
       // remainder of this cycle. Zeroing the token on any exit told the model it held nothing after a 60% scale-out (2026-09-08).
@@ -361,7 +363,7 @@ const roundTripCostPct = usdgLeg && usdgLeg.amountOut != null && nvdaPool ? Math
 const basis = ref && nvdaPool ? basisSignal(nvdaPool, ref, roundTripCostPct, Number(process.env.OBS_BASIS_MIN_EDGE_PCT ?? 0.25)) : null;
 // Paper exits: a paper-held launch token past its rails is sold on paper, before the model thinks.
 if (PAPER && chain && heldDyn.length) {
-  const ctxP = { rails: railsFromEnv(), balances: chain.byKey, nativeOnFromChain: chain.byKey["ETH@robinhood"] ?? null, openOrders: 0 };
+  const ctxP = { rails: railsFromEnv(), ...(await railView(chain.byKey)), openOrders: 0 };
   const exits = await exitCandidates(chain.bySymbol, prices, ctxP, feed, now, (i, c, t) => paperExecute(i, c, real?.bySymbol ?? {}, t), paperTrades);
   for (const t of exits) console.log(`[desk] paper exit ${t.id}: ${t.note}`);
 }
@@ -613,10 +615,11 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
     const px = prices[from.symbol] ?? null;
     const usd = px != null ? decision.amount * px : null;
     const rails = railsFromEnv();
+    // The rails' balance view: the wallet's keys as read, or under account abstraction ETH as native plus WETH and the lane's reserve (aa.ts).
+    const view = chain ? await railView(chain.byKey, `ETH@${from.network === "erc20" ? "eth" : from.network}`) : { balances: {}, nativeOnFromChain: null };
     const ctx = {
       rails,
-      balances: chain?.byKey ?? {},
-      nativeOnFromChain: chain ? (chain.byKey[`ETH@${from.network === "erc20" ? "eth" : from.network}`] ?? null) : null,
+      ...view,
       openOrders: open.filter((t) => t.status === "pending").length,
       dayStartEquityUsd: dayStartEquity(book.snapshots, now),
       equityUsd: mark.equityUsd,
