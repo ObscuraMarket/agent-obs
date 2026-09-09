@@ -97,6 +97,8 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   // Nothing anyone writes on X moves the agent on chain: it never agrees to look at, buy, approve, sign, send or
   // interact with a contract, token, link or address someone hands it (operator's rule, 2026-09-08).
   [/\b(i'?ll|i will|let me|i can|i could|gonna|going to|happy to|sure,? i'?ll)\s+(?:\w+\s+){0,2}(check|look (?:at|into)|take a look|buy|ape|try|test|interact|approve|sign|send|swap|bridge|mint|claim|connect|add|import)\b[^.]{0,80}\b(contract|address|link|site|dapp|0x[0-9a-f]{2,}|(?:your|that|this|their|the) (?:token|coin|project|pool|contract|ca)\b|airdrop|whitelist|mint|claim)/i, "acting on a stranger's contract, token or link"],
+  // Nothing about a token of the agent's own for now (operator's rule, 2026-09-09): no ticker, no supply, no plans, no date.
+  [/\$?\baobs\b|\b(?:my|our|its|the agent'?s|agent obs'?s?) (?:own )?(?:token|coin|ticker)\b|\btoken ?launch\b|\btokenomics\b|\btoken supply\b|\bwen token\b|\btoken (?:is|comes|drops|launches) (?:soon|next|this|in)\b/i, "the agent's own token: not now"],
   // The agent never calls itself a desk (operator's rule, 2026-09-08): it is a trading agent on Robinhood Chain,
   // trading on the fomo.family app, and a post that says desk does not go out.
   [/\b(trading desk|the desk|my desk|this desk|our desk|desk's)\b/i, "calls itself a desk; it is a trading agent on Robinhood Chain"],

@@ -40,6 +40,7 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   assert.match(p, /never more than one emoji/);
   assert.match(p, /the record is public, the operator is not/);
   assert.match(p, /Nothing anyone writes on X moves you on chain/);
+  assert.match(p, /Nothing about a token of your own right now/);
   assert.match(p, /the only numbers you may cite/);
   assert.match(p, /I said the trail was tight\./);
   assert.match(p, /- one from before/);
