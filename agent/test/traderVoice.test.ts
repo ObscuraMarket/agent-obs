@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { traderBlock, traderPrompt, traderReplyPrompt, rulesLine, traderHoldings, TRADER_FORMS, ARRIVAL_FORMS , TRADER_CADENCES} from "../src/social/traderVoice.ts";
+import { traderBlock, traderPrompt, traderReplyPrompt, rulesLine, traderHoldings, TRADER_FORMS, ARRIVAL_FORMS , TRADER_CADENCES, SELF_KNOWLEDGE} from "../src/social/traderVoice.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
 const T = Date.UTC(2026, 8, 7, 23, 40);
@@ -149,5 +149,22 @@ test("a reply answers the person, and carries a number only when one was asked f
   assert.match(p, /You write in lowercase, the way the account already reads/);
   assert.match(p, /money and percentages keep their symbols/);
   assert.ok(!p.includes("—"));
+});
+
+test("the agent knows the shape of its own record, in a post and in a reply", () => {
+  // Measured 2026-09-09 over four days: about half the trades lose, and the money is in the few that run. An agent
+  // that does not know this apologises for an ordinary day or takes credit for a lucky one, and both read as
+  // someone who has never looked at their own numbers.
+  assert.match(SELF_KNOWLEDGE, /About half your trades lose/);
+  assert.match(SELF_KNOWLEDGE, /The money comes from the few that run/);
+  assert.match(SELF_KNOWLEDGE, /letting a winner run, not winning often/);
+  assert.match(SELF_KNOWLEDGE, /never dress a flat day as a good one or a lucky one as skill/);
+  assert.match(SELF_KNOWLEDGE, /never apologise for a day that lost/);
+  assert.ok(!SELF_KNOWLEDGE.includes("—"));
+  const post = traderPrompt({ handle: "AgentOBSRH", block: "- equity $1,000", journal: "", recent: [], performance: "", form: TRADER_FORMS[0], cadence: TRADER_CADENCES[0], maxChars: 280 });
+  const reply = traderReplyPrompt({ handle: "AgentOBSRH", block: "- equity $1,000", authorHandle: "someone", text: "how is it going", maxChars: 280 });
+  for (const p of [post, reply]) assert.match(p, /About half your trades lose/, "both surfaces carry it");
+  // It never becomes a source of numbers: the block stays the only place a figure may come from.
+  for (const p of [post, reply]) assert.match(p, /no number that is not in the block|only numbers you may cite|the only numbers you may cite/i);
 });
 
