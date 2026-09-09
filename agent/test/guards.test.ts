@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stripDashes, cleanReply, isSkip, forbiddenReason, tooSimilar, isJunk } from "../src/social/postGuards.ts";
+import { stripDashes, cleanReply, isSkip, forbiddenReason, tooSimilar, isJunk , operatorClaimReason} from "../src/social/postGuards.ts";
 import { OBS_CONTRACT } from "../src/config.ts";
 
 test("dashes used as punctuation become commas", () => {
@@ -78,3 +78,20 @@ test("junk filter catches promo spray", () => {
   assert.equal(isJunk("100x gem, presale live, dm me"), true);
   assert.equal(isJunk("How does the cashback settle if I pick a diversified mix?"), false);
 });
+
+test("a post crediting the operator with a close is checked against the ledger, not trusted", () => {
+  // 2026-09-09: "record stands at 49 closed trades ... with today's net at $29.05 after the operator closed MANTA"
+  // went out. The take-profit sold most of MANTA and the agent's own call closed the rest; no close that day was
+  // the operator's. Who closed a trade is the one thing the timeline exists to be right about.
+  const real = "record stands at 49 closed trades with 31 wins and 18 losses for +$594.54 realized, with today's net at $29.05 after the operator closed MANTA. it counts.";
+  assert.match(operatorClaimReason(real, [{ exitKind: "model" }, { exitKind: "take-profit" }]) ?? "", /credits the operator with a close/);
+  assert.equal(operatorClaimReason(real, []) === null, false, "with nothing closed at all it is still unsupported");
+  // When a close really was the operator's, saying so is exactly what the agent is told to do.
+  assert.equal(operatorClaimReason(real, [{ exitKind: "operator" }]), null);
+  assert.equal(operatorClaimReason(real, [{ exitKind: "model" }, { exitKind: "operator" }]), null);
+  // A post that never mentions them is not this guard's business, whatever it says.
+  assert.equal(operatorClaimReason("MANTA out at +14.5%, that was the take-profit doing its job.", [{ exitKind: "model" }]), null);
+  assert.equal(operatorClaimReason("the operator's hand closed it, not a rule of mine", [{ exitKind: "operator" }]), null);
+  assert.match(operatorClaimReason("closed by operators", [{ exitKind: "model" }]) ?? "", /credits the operator/, "plural and possessive forms count too");
+});
+

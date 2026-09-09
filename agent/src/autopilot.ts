@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { DRY, MIN_POST_GAP_MIN, SIMILARITY_MAX, X_AGENT_ID, X_HANDLE, X_VOICE, MAX_TWEET_CHARS, ROOT_DIR } from "./config.ts";
 import { traderBlock, traderData, traderPrompt, TRADER_FORMS, TRADER_CADENCES, ARRIVAL_FORMS } from "./social/traderVoice.ts";
 import { postTweet, getMyPostMetrics } from "./social/xClient.ts";
-import { cleanReply, forbiddenReason, tooSimilar } from "./social/postGuards.ts";
+import { cleanReply, forbiddenReason, operatorClaimReason, tooSimilar } from "./social/postGuards.ts";
 import { recallForPrompt, remember, splitNote } from "./journal.ts";
 import { appendLedger, readLedger } from "./ledger.ts";
 import { liveReads, readsBlock } from "./obscura/reads.ts";
@@ -164,7 +164,9 @@ if (tweet.length > MAX_TWEET_CHARS) {
 }
 
 // Mechanical backstop for the hard boundaries in the prompt.
-const bad = forbiddenReason(tweet);
+// Who closed a trade is checked against the ledger, not left to the model: it credited the operator with its own
+// take-profit on 2026-09-09 and the post went out.
+const bad = forbiddenReason(tweet) ?? (X_VOICE === "trader" ? operatorClaimReason(tweet, traderData().closesToday) : null);
 if (bad) {
   console.log(`BLOCKED (${bad}). Not posting.`);
   process.exit(0);

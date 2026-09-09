@@ -156,6 +156,24 @@ export function helplessReason(text: string): string | null {
   return `asks the timeline to do the desk's job: matched "${asking}" with "${admitting}"`;
 }
 
+/**
+ * PURE: a post crediting the operator with a close the operator did not make.
+ *
+ * Who closed a trade is the one thing this timeline exists to be right about: the agent takes the credit and the
+ * blame for what its own rules did, and an operator's hand is the operator's. The prompt says exactly that, and on
+ * 2026-09-09 the agent wrote "after the operator closed MANTA" about a close its own take-profit and its own call
+ * had made, on a day when no close was the operator's at all. The ledger was correct and the sentence was not, so
+ * the sentence is checked against the ledger rather than trusted.
+ *
+ * The operator is otherwise never mentioned at all (the prompt: who owns, runs or funds the agent is never said or
+ * hinted at), so naming them is only ever legitimate when a close in the window really was theirs.
+ */
+export function operatorClaimReason(text: string, closes: ReadonlyArray<{ exitKind: string }>): string | null {
+  if (!/\boperator(?:'s|s)?\b/i.test(text)) return null;
+  if (closes.some((c) => (c.exitKind ?? "").toLowerCase() === "operator")) return null;
+  return `credits the operator with a close, and no close in the window was the operator's (${closes.length} close${closes.length === 1 ? "" : "s"}: ${closes.map((c) => c.exitKind).join(", ") || "none"})`;
+}
+
 /** Returns a reason string if the text must not be posted, else null. */
 export function forbiddenReason(text: string): string | null {
   const helpless = helplessReason(text);
