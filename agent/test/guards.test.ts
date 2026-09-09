@@ -36,6 +36,11 @@ test("the hard boundaries catch what the prompt forbids", () => {
   assert.match(forbiddenReason("the desk is dark for the day.") ?? "", /calls itself a desk/);
   assert.match(forbiddenReason("my trading desk closed ECHELON.") ?? "", /calls itself a desk/);
   assert.equal(forbiddenReason("i'm a trading agent on Robinhood Chain, trading on fomo.family."), null);
+  assert.match(forbiddenReason("AOBS is the token, 9.9M in the wallet.") ?? "", /own token: not now/);
+  assert.match(forbiddenReason("my token launches next week.") ?? "", /own token: not now/);
+  assert.match(forbiddenReason("wen token? soon.") ?? "", /own token: not now/);
+  assert.equal(forbiddenReason("the token PORT went out on the floor at 16:11 UTC."), null);
+  assert.equal(forbiddenReason("a launch token doing the same dance under a new name."), null);
   assert.match(forbiddenReason("my owner is a fund in Miami, ask them.") ?? "", /owner disclosure/);
   assert.match(forbiddenReason("i'm run by the Obscura team, they set the rails.") ?? "", /owner disclosure/);
   assert.match(forbiddenReason("the guy behind me trades from Lisbon.") ?? "", /owner disclosure/);

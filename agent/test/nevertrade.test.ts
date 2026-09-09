@@ -5,7 +5,7 @@ import { checkCandidate, checkRails, railsFromEnv } from "../src/desk/rails.ts";
 import { parseFeed } from "../src/desk/candidates.ts";
 import { forbiddenReason } from "../src/social/postGuards.ts";
 
-test("the desk never trades its own token: the rails refuse it, the feed never puts it on the board, and a post may name it", () => {
+test("the desk never trades its own token: the rails refuse it, the feed never puts it on the board, and a post does not name it for now", () => {
   assert.ok(NEVER_TRADE.has(AGENT_TOKEN));
   const rails = railsFromEnv({} as NodeJS.ProcessEnv);
   const to = { symbol: "AOBS", code: "aobs", network: "robinhood", chain: "robinhood", kind: "erc20", contract: AGENT_TOKEN, decimals: 18, deposit: true, withdrawal: true, candidate: { at: 1, poolId: "0x1", token: AGENT_TOKEN, symbol: "AOBS", tierPct: 1, feePips: 0, tickSpacing: 200, gateOk: true, source: "pons-v2", hour: 0, volUsd: 0, movePct: 0, senders: 0, swaps: 0, px: null, usdgIs0: false } };
@@ -20,7 +20,9 @@ test("the desk never trades its own token: the rails refuse it, the feed never p
   ].map((r) => JSON.stringify(r)).join("\n");
   const snap = parseFeed(feed, now, { maxAgeMs: 6 * 3600e3, maxTierPct: 5, requireGate: true, earlyMaxAgeMs: 90 * 60e3 });
   assert.deepEqual(snap.early.map((e) => e.symbol), ["OTHER"], "the agent's own token never reaches the board");
-  assert.equal(forbiddenReason(`AOBS is live at ${AGENT_TOKEN}.`), null, "the agent's own token address may appear in a post");
+  // The address guard lets the agent's own contract through; since 2026-09-09 the operator's own-token silence blocks the name itself, for now.
+  assert.match(forbiddenReason(`AOBS is live at ${AGENT_TOKEN}.`) ?? "", /own token: not now/, "the agent's own token is not spoken of for now");
+  assert.equal(forbiddenReason(`the contract ${AGENT_TOKEN} is on the site.`), null, "the agent's own token address is still not 'an address that is not the token'");
   assert.match(forbiddenReason("Send it to 0x000000000000000000000000000000000000dEaD.") ?? "", /not the token/);
 });
 
