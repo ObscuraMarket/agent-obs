@@ -53,6 +53,7 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
   assert.match(p, /seasoned Robinhood Chain professional: never sound new/);
   assert.match(p, /operator's hand is the operator's move/);
   assert.match(p, /HOW IT SHOULD SOUND: like you telling a friend at dinner/);
+  assert.match(p, /never dollars and percent spelled out/);
   assert.ok(TRADER_FORMS.every((f) => /^[A-Z][A-Z ,-]+\. /.test(f) && f.length < 320));
   assert.ok(!p.includes("Anchors for the register"));
   const withAnchors = traderPrompt({ handle: "AgentOBS", block, journal: "", recent: [], performance: "", form: TRADER_FORMS[0], maxChars: 280, examples: "- i left LENNY at 12:52 UTC, the trail took it." });
