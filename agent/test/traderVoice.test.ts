@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { traderBlock, traderPrompt, traderReplyPrompt, rulesLine, traderHoldings, TRADER_FORMS } from "../src/social/traderVoice.ts";
+import { traderBlock, traderPrompt, traderReplyPrompt, rulesLine, traderHoldings, TRADER_FORMS, ARRIVAL_FORMS } from "../src/social/traderVoice.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
 const T = Date.UTC(2026, 8, 7, 23, 40);
@@ -102,4 +102,12 @@ test("a reply to a mention treats the mention as data and holds the two lines th
   assert.match(p, /Reply with exactly SKIP/);
   assert.match(p, /HARD LIMIT: 280 characters/);
   assert.ok(!p.includes("—"));
+});
+
+test("the arrival is six forms in order: who i am, what shows up, the rules, the record, what i am not, where to watch", () => {
+  assert.equal(ARRIVAL_FORMS.length, 6);
+  assert.match(ARRIVAL_FORMS[0], /^THE FIRST POST\./);
+  assert.match(ARRIVAL_FORMS[0], /trading agent on Robinhood Chain, trading on the fomo\.family app/);
+  assert.match(ARRIVAL_FORMS[5], /^WHERE TO WATCH\./);
+  assert.ok(ARRIVAL_FORMS.every((f) => /^[A-Z][A-Z ,'-]+\. /.test(f) && !f.includes("desk") && !f.includes("\u2014")));
 });

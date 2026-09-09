@@ -6,7 +6,7 @@ import { GatewayClient } from "@openhermit/sdk";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DRY, MIN_POST_GAP_MIN, SIMILARITY_MAX, X_AGENT_ID, X_HANDLE, X_VOICE, MAX_TWEET_CHARS, ROOT_DIR } from "./config.ts";
-import { traderBlock, traderData, traderPrompt, TRADER_FORMS } from "./social/traderVoice.ts";
+import { traderBlock, traderData, traderPrompt, TRADER_FORMS, ARRIVAL_FORMS } from "./social/traderVoice.ts";
 import { postTweet, getMyPostMetrics } from "./social/xClient.ts";
 import { cleanReply, forbiddenReason, tooSimilar } from "./social/postGuards.ts";
 import { recallForPrompt, remember, splitNote } from "./journal.ts";
@@ -28,10 +28,14 @@ const postedRows = readLedger<{ at?: number; id?: string; text?: string; posted?
 const published = postedRows.filter((x) => x.posted);
 const recent = (published.length ? published : postedRows).map((x) => x.text as string).slice(-12);
 const lastPostAt = postedRows.length ? (postedRows[postedRows.length - 1].at ?? 0) : 0;
+// The arrival: once live, the first six published posts introduce the account in order (ARRIVAL_FORMS), closer
+// together than the daily gap (OBS_X_ARRIVAL_GAP_MIN, 30 by default). Drafts never arrive; they keep the rotation.
+const arriving = process.env.X_LIVE === "true" && X_VOICE === "trader" && published.length < ARRIVAL_FORMS.length;
+const gapFloor = arriving ? Math.max(5, Number(process.env.OBS_X_ARRIVAL_GAP_MIN ?? 30)) : MIN_POST_GAP_MIN;
 if (lastPostAt && !DRY) {
   const gapMin = (Date.now() - lastPostAt) / 60000;
-  if (gapMin < MIN_POST_GAP_MIN) {
-    console.log(`Holding: last post was ${gapMin.toFixed(0)}m ago, floor is ${MIN_POST_GAP_MIN}m.`);
+  if (gapMin < gapFloor) {
+    console.log(`Holding: last post was ${gapMin.toFixed(0)}m ago, floor is ${gapFloor}m${arriving ? " (arrival)" : ""}.`);
     process.exit(0);
   }
 }
@@ -83,7 +87,8 @@ const FORMS: string[] = [
   `AN ADMISSION about the MARKET, not yourself. A read you hold loosely, a number you do not trust yet. Never uncertainty about your own competence.`,
 ];
 const forms = X_VOICE === "trader" ? TRADER_FORMS : FORMS;
-const form = forms[postedRows.length % forms.length];
+const form = arriving ? ARRIVAL_FORMS[published.length] : forms[postedRows.length % forms.length];
+if (arriving) console.log(`Arrival post ${published.length + 1} of ${ARRIVAL_FORMS.length}.`);
 
 const copywriterPrompt = `You are Obscura's copywriter, running @${X_HANDLE} on X. Your voice guide, in full:
 

@@ -78,6 +78,19 @@ export const TRADER_FORMS: string[] = [
   "A CHAIN NOTE. Something only a trader who has been on Robinhood Chain and fomo.family a while would say: the hours, the launch rhythms, the crowd, how a tape behaves at a certain time of day. From experience, plain words, no number that is not in the block. Short, with personality.",
 ];
 
+/**
+ * How the account enters the timeline: the first six live posts, in this order, one form each, and only once the
+ * account is live (drafts keep the daily rotation). After the sixth published post the daily forms take over.
+ */
+export const ARRIVAL_FORMS: string[] = [
+  "THE FIRST POST. You have traded Robinhood Chain for a long time and this is the first time you keep the record in public; it is the first thing anyone reads from you. Say who you are in one breath, the way a professional does: a trading agent on Robinhood Chain, trading on the fomo.family app from your own wallet in public, on a journey to become the most profitable agentic trader on Robinhood, thinking out loud before every move and posting what your rules did. No promise, no pitch, no welcome. One or two lines, the way a person introduces themselves when they would rather get on with it.",
+  "WHAT WILL SHOW UP HERE. The kinds of things this timeline will carry: trades as they close, the rule that closed them, the record as it stands, losses as plainly as wins, what you are watching and why you are not touching it, and your takes on the tape. Two or three lines. Make it sound like a habit, not a content plan.",
+  "THE RULES YOU TRADE UNDER, ON DAY ONE. Pick two or three from the rules line in the block and say them in plain words, with their numbers, and make it clear they are code that fires whether you like it or not. End on what you think of that.",
+  "THE RECORD AS AN OPENING HAND. The record line from the block, said the way a professional tells a friend on the day they decide to keep it in public. No adjectives on the numbers. One honest line about what it does and does not prove.",
+  "WHAT YOU ARE NOT. Not advice, not picks, not a signal service, not a place to ask what to buy. You will have takes and you will be wrong out loud sometimes; nobody should trade off them. Say what a reader should expect from you and what they should not, dry and without lecturing. Short.",
+  "WHERE TO WATCH. The book is public at obscura.market/agent and every trade is a swap anyone can open on the explorer. One line that says where to look, and nothing that tells anyone what to do there.",
+];
+
 export interface TraderPromptInput {
   handle: string;
   block: string;
