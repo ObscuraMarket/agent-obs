@@ -38,6 +38,25 @@ export const SIMPLE_7702_IMPLEMENTATION: Address = "0xe6Cae83BdE06E4c305530e199D
  * (AA25 invalid account nonce). Never key 0.
  */
 export const DESK_NONCE_KEY = 0x6f62732d6465736b00000000000000000000000000000000n;
+
+/**
+ * PURE: the nonce key one operation goes out on.
+ *
+ * The app stamps every operation it makes with a fresh key that is the wall clock in milliseconds (read off the
+ * chain: 0x1a085673f08, 0x1a08594759d, 0x1a085a69494, each one larger than the last and each about 1.788e12). A key
+ * nobody has used before always starts at sequence zero, which is why it can never collide with the sweeps the app
+ * runs on this same wallet, and it is the same reason the desk used a fixed key of its own.
+ *
+ * The desk now matches the app's shape. On 2026-09-09 the fomo app did not show the desk's trades even once they
+ * went through fomo's own router, and of everything that separated a desk operation from an app one, only two
+ * things were left: who submitted it, which is fomo's bundler and not ours to change, and this key. Matching it
+ * costs nothing, removes the last difference the desk controls, and is if anything safer than the fixed key.
+ */
+export function nonceKeyFor(now = Date.now(), env: NodeJS.ProcessEnv = process.env): bigint {
+  if ((env.OBS_AA_NONCE_KEY ?? "").toLowerCase() === "fixed") return DESK_NONCE_KEY;
+  const ms = BigInt(Math.max(1, Math.floor(now)));
+  return ms < 2n ** 192n ? ms : DESK_NONCE_KEY;
+}
 /** A fixed small tip on top of twice the base fee; the chain has no priority auction, this only keeps the op from sitting at the base fee's edge. */
 export const TIP_WEI = 10_000_000n;
 /** The gas plan's fixed parts: ECDSA validation on a 7702 account needs well under 200k; preVerificationGas is the bundle's own overhead, ours, so it is not tuned against any bundler. */
@@ -253,7 +272,7 @@ export async function buildUserOp(calls: AaCall[]): Promise<PreparedOp> {
   const pub = publicClient();
   const chain = viemChain(eth());
   const callData = await account.encodeCalls(calls.map((c) => ({ to: c.to, value: c.value, data: c.data })));
-  const nonce = await account.getNonce({ key: DESK_NONCE_KEY });
+  const nonce = await account.getNonce({ key: nonceKeyFor() });
   const innerEstimate = await pub.estimateGas({ account: account.address, to: account.address, data: callData });
   const gas = gasFor({ innerEstimate, baseFeeWei: await baseFeeWei() });
   const unsigned: UserOperation<"0.8"> = { sender: account.address, nonce, callData, ...gas, signature: "0x" };

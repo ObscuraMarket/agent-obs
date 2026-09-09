@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { decodeFunctionData, encodeAbiParameters, encodeErrorResult, encodeEventTopics, erc20Abi, parseAbi, type Hex } from "viem";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { entryPoint08Abi } from "viem/account-abstraction";
-import { aaOn, gasWalletFile, depositMinWei, depositTopUpWei, DESK_NONCE_KEY, ENTRY_POINT, nonceOf, ethInPlan, swapBatch, gasFor, prefundWei, parseHandleOpsReceipt, decodeRevertBytes, receivedRawFromLogs, nativeOutFromSwapLogs, aaRailView, VERIFICATION_GAS_LIMIT, PRE_VERIFICATION_GAS, CALL_GAS_FLOOR, TIP_WEI } from "../src/desk/aa.ts";
+import { aaOn, nonceKeyFor, gasWalletFile, depositMinWei, depositTopUpWei, DESK_NONCE_KEY, ENTRY_POINT, nonceOf, ethInPlan, swapBatch, gasFor, prefundWei, parseHandleOpsReceipt, decodeRevertBytes, receivedRawFromLogs, nativeOutFromSwapLogs, aaRailView, VERIFICATION_GAS_LIMIT, PRE_VERIFICATION_GAS, CALL_GAS_FLOOR, TIP_WEI } from "../src/desk/aa.ts";
 import { checkRails, railsFromEnv, type Intent, type RailContext } from "../src/desk/rails.ts";
 import { resolveAsset } from "../src/desk/assets.ts";
 import { sendSwap, aaFillFromLogs, routeFor, type SendLane, type SendJob } from "../src/desk/onchain.ts";
@@ -241,3 +241,20 @@ test("under the lane an entry keeps a multiple of the gas reserve back, so buyin
   assert.equal(checkRails(sell, at(0.0019)).ok, false, "below the reserve nothing can be sent at all");
   assert.equal(checkRails(sell, at(null)).ok, false, "an unread reserve refuses rather than guesses");
 });
+
+test("an operation goes out on a fresh key shaped like the app's, and the fixed key is still there behind a switch", () => {
+  // Read off the chain on 2026-09-09, the app's own keys: each the wall clock in milliseconds, each larger than the
+  // one before. A key nobody has used starts at sequence zero, so it can never collide with the app's own sweeps.
+  const t = 1_788_934_403_220;
+  assert.equal(nonceKeyFor(t, {} as NodeJS.ProcessEnv), BigInt(t));
+  // The app's own keys that day were 0x1a085673f08, 0x1a08594759d, 0x1a085a69494: eleven hex digits beginning 1a08.
+  const hex = nonceKeyFor(t, {} as NodeJS.ProcessEnv).toString(16);
+  assert.equal(hex.length, 11, `the same width the app writes, got ${hex}`);
+  assert.ok(hex.startsWith("1a08"), `the same era as the app's keys, got ${hex}`);
+  assert.ok(nonceKeyFor(t + 1000, {} as NodeJS.ProcessEnv) > nonceKeyFor(t, {} as NodeJS.ProcessEnv), "later operations take later keys");
+  assert.ok(nonceKeyFor(t, {} as NodeJS.ProcessEnv) > 0n, "never key 0, which is the app's own sequence");
+  assert.ok(nonceKeyFor(t, {} as NodeJS.ProcessEnv) < 2n ** 192n, "a uint192");
+  assert.equal(nonceKeyFor(t, { OBS_AA_NONCE_KEY: "fixed" } as NodeJS.ProcessEnv), DESK_NONCE_KEY, "the old fixed key is one switch away");
+  assert.equal(nonceOf(nonceKeyFor(t, {} as NodeJS.ProcessEnv), 0n) >> 64n, BigInt(t), "the key still sits in the top bits");
+});
+
