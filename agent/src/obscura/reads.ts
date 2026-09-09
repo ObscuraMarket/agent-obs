@@ -512,6 +512,16 @@ export function lastSampledEth(): number | null {
  */
 const READ_DEADLINE_MS = 6_000;
 
+/**
+ * The wallet gets far longer than the rest, because it is not one call: it walks native ETH, WETH, USDG, OBS, every
+ * registered token and EVERY launch token the desk has ever traded, one at a time, because the chain RPC is rate
+ * limited. That was 39 launch tokens on 2026-09-09 with the RPC answering in 3.4 s a call, so the walk ran minutes
+ * and a 6 s deadline killed it on every refresh: the reads came back with no wallet at all and the Agent page had
+ * nothing to show. Latency here costs almost nothing because the refresh runs in the background on the TTL; only a
+ * cold read waits, and a cold read that returns the wallet slowly beats a fast one that never returns it.
+ */
+const WALLET_DEADLINE_MS = 90_000;
+
 async function within<T>(label: string, read: () => Promise<T>, fallback: T, ms = READ_DEADLINE_MS): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -542,7 +552,7 @@ export async function liveReads(): Promise<Reads> {
   // The Robinhood-heavy reads run back to back, not on top of each other, and each one is bounded: a refusing
   // explorer must not cost the wallet, which is read off the RPC and is what the page shows.
   const token = await within("token", obsToken, noToken());
-  const wallet = await within("wallet", () => walletRead(), null);
+  const wallet = await within("wallet", () => walletRead(), null, WALLET_DEADLINE_MS);
   const [p, up, api] = await othersP;
   // OBS's market needs the ETH price when its deep pool is the ETH one; when the price feed is down, the last sampled ETH price serves.
   const ethUsd = p.ethUsd ?? lastSampledEth();
