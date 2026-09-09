@@ -581,3 +581,24 @@ test("a trade note that names who traded by hand never leaves the box", () => {
   assert.ok(!/operator/i.test(rows[0].note ?? ""), "the endpoint scrubs it too");
 });
 
+
+test("a payload part that HANGS degrades to null, so one dead read never wedges the whole page", async () => {
+  // 2026-09-09: the chain reads stopped answering after a restart, readsPayload never settled, and the dashboard's
+  // Promise.all never resolved. Every viewer got a 502 while the book on disk was fine. A hang must read as absent.
+  const started = Date.now();
+  const never = () => new Promise<number>(() => {});
+  assert.equal(await attempt(never, 50), null, "a read that never settles comes back as a missing part");
+  assert.ok(Date.now() - started < 2000, "and it comes back on the deadline, not never");
+
+  // The other parts of the same payload still answer.
+  const [dead, alive] = await Promise.all([attempt(never, 50), attempt(() => ({ items: [], at: 1 }), 50)]);
+  assert.equal(dead, null);
+  assert.deepEqual(alive, { items: [], at: 1 });
+
+  // A slow-but-answering read inside the deadline is NOT cut off.
+  assert.equal(await attempt(() => new Promise<number>((r) => setTimeout(() => r(7), 10)), 500), 7);
+
+  // A rejection after the race is lost must not surface as an unhandled rejection.
+  assert.equal(await attempt(() => new Promise((_, rej) => setTimeout(() => rej(new Error("late")), 20)), 5), null);
+  await new Promise((r) => setTimeout(r, 60));
+});

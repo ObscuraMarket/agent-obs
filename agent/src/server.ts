@@ -95,6 +95,8 @@ export function originAllowed(origin: string, list: string[]): boolean {
 // longest ago is forgotten and would be logged again, which is the cheap side to err on (2026-09-08).
 const refusedOrigins = new Lru<string, number>(5_000);
 const READS_TTL_MS = 60_000;
+/** How long a caller waits on a COLD chain read before giving up. The refresh continues in the background. */
+const COLD_READS_TIMEOUT_MS = 20_000;
 
 export interface FeedItem {
   at: number;
@@ -242,7 +244,20 @@ async function cachedReads(): Promise<Reads> {
   if (readsCache) return readsCache.value;
   // Cold: one read in flight, shared by every caller, never several at once.
   if (!readsRefreshing) readsRefreshing = refreshReads().finally(() => { readsRefreshing = null; });
-  await readsRefreshing;
+  // Bounded: the cold read walks the chain and the explorer, and when either stops answering it can hang forever.
+  // The refresh keeps running and will warm the cache; this caller just refuses to wait past the deadline.
+  let coldTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      readsRefreshing,
+      new Promise((_, reject) => {
+        coldTimer = setTimeout(() => reject(new Error("the chain reads did not answer in time")), COLD_READS_TIMEOUT_MS);
+        coldTimer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (coldTimer) clearTimeout(coldTimer);
+  }
   const warmed = readsCache as { at: number; startedAt: number; value: Reads } | null;
   if (!warmed) throw new Error("reads unavailable");
   return warmed.value;
@@ -624,11 +639,33 @@ export class TtlCache<T> {
 }
 
 /** PURE: a read that answers null instead of throwing, so one failed part never fails the page's whole read. Exported for tests. */
-export async function attempt<T>(read: () => T | Promise<T>): Promise<T | null> {
+/**
+ * How long one part of a combined payload may take before the payload gives up on it. A part that never settles is
+ * worse than one that fails: on 2026-09-09 the chain reads stopped answering after a restart, readsPayload never
+ * resolved, the dashboard's Promise.all never settled, and /api/obs/dashboard 502'd for every viewer while the book
+ * on disk was perfectly fine. A hang must degrade to a missing part, never to a dead page.
+ */
+export const PART_TIMEOUT_MS = 8_000;
+
+/** A part of a combined payload that must never wedge the whole read: an error AND a hang both come back as null. */
+export async function attempt<T>(read: () => T | Promise<T>, timeoutMs: number = PART_TIMEOUT_MS): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await read();
+    const value = read();
+    if (!(value instanceof Promise) || !(timeoutMs > 0)) return await value;
+    // The loser of the race still settles later; without this its rejection surfaces as an unhandled one.
+    value.catch(() => undefined);
+    return await Promise.race([
+      value,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
   } catch {
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
