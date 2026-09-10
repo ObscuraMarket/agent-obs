@@ -1,4 +1,5 @@
-// Prove the desk's own router under account abstraction on BOTH legs, at a size that cannot hurt.
+// Prove the desk's own router on BOTH legs, on whichever lane the desk runs (a user operation under OBS_EXEC=aa, an
+// ordinary transaction from a plain wallet otherwise), at a size that cannot hurt.
 //   npm run own:probe -- BYCOCKET 5         quotes the buy, builds and simulates its user operation; nothing is sent
 //   npm run own:probe -- BYCOCKET 5 --now   sends the $5 buy through the production lane, waits for it to settle,
 //                                           then sells all of it back through the same lane; both rows are real and
@@ -13,7 +14,7 @@ import { isHolding } from "../src/desk/book.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 import { railView, swapBatch, buildUserOp, simulateUserOp, ethInPlan, spendableEthRaw, formatGasPlan, aaOn } from "../src/desk/aa.ts";
 import { executeOnChain, quoteOnChain, encodeSwap } from "../src/desk/onchain.ts";
-import { readTokenBalance } from "../src/desk/signer.ts";
+import { readTokenBalance, simulateFromWallet } from "../src/desk/signer.ts";
 import { liveReads, walletBalances, assetPrices } from "../src/obscura/reads.ts";
 import { fomoOn } from "../src/desk/fomo.ts";
 import { WALLET_ADDRESS } from "../src/config.ts";
@@ -23,7 +24,9 @@ const live = process.argv.includes("--now");
 const [toArg = "BYCOCKET", usdArg = "5"] = args;
 const sizeUsd = Number(usdArg);
 const fail = (why: string): never => { console.error(why); process.exit(1); };
-if (!aaOn()) fail("OBS_EXEC is not aa: this probe proves the account-abstraction lane only");
+// Either lane: the desk moved to a plain wallet of its own on 2026-09-10, whose first trades go out as ordinary
+// transactions, and a first exit on a lane never proven is the failure this probe exists to find before arming.
+const lane = aaOn() ? "a user operation" : "the plain lane";
 if (fomoOn()) fail("OBS_ROUTE is fomo: this probe proves the desk's own router; set OBS_ROUTE=own first");
 if (!(sizeUsd > 0 && sizeUsd <= 25)) fail("size must be between $0 and $25: this is a probe, not a trade");
 if (!WALLET_ADDRESS) fail("no OBS_WALLET_ADDRESS configured");
@@ -64,15 +67,24 @@ if (!skipBuy) {
   const q = await quoteOnChain(eth, tok, amountEth);
   if (!q) fail("no pool route, or the pools did not answer");
   console.log(`buy quote: ${q.route.hops.map((h) => h.key).join(" then ")}; expected ${q.amountOut} ${tok.symbol}, floor ${q.minOut}; fees ${q.feePct.toFixed(2)}%, all-in cost vs mark ${q.costPct?.toFixed(2) ?? "?"}%`);
-  const spend = await spendableEthRaw(desk);
-  const plan = ethInPlan(q.amountInRaw, spend.native, spend.weth);
-  const tx = encodeSwap(q.route, plan.amountInRaw, q.minOutRaw, desk, BigInt(Math.floor(Date.now() / 1000) + 1200));
-  const calls = swapBatch({ tx, withdrawRaw: plan.withdrawRaw });
-  const built = await buildUserOp(calls);
-  console.log(`buy operation: ${calls.length} call${calls.length === 1 ? "" : "s"} (${plan.withdrawRaw > 0n ? "WETH.withdraw, then " : ""}the router); ${formatGasPlan(built.gas)}`);
-  const sim = await simulateUserOp(built);
-  console.log(sim.ok ? "buy simulation through the entry point: OK" : `buy simulation through the entry point: ${sim.reason}`);
-  if (!sim.ok) fail("the buy would not go; nothing sent");
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  if (aaOn()) {
+    const spend = await spendableEthRaw(desk);
+    const plan = ethInPlan(q.amountInRaw, spend.native, spend.weth);
+    const tx = encodeSwap(q.route, plan.amountInRaw, q.minOutRaw, desk, deadline);
+    const calls = swapBatch({ tx, withdrawRaw: plan.withdrawRaw });
+    const built = await buildUserOp(calls);
+    console.log(`buy operation: ${calls.length} call${calls.length === 1 ? "" : "s"} (${plan.withdrawRaw > 0n ? "WETH.withdraw, then " : ""}the router); ${formatGasPlan(built.gas)}`);
+    const sim = await simulateUserOp(built);
+    console.log(sim.ok ? "buy simulation through the entry point: OK" : `buy simulation through the entry point: ${sim.reason}`);
+    if (!sim.ok) fail("the buy would not go; nothing sent");
+  } else {
+    // The plain lane: the router call as an ordinary transaction from the wallet, value in native ETH.
+    const tx = encodeSwap(q.route, q.amountInRaw, q.minOutRaw, desk, deadline);
+    const sim = await simulateFromWallet(eth, tx, desk);
+    console.log(sim.ok ? "buy simulation from the wallet (plain lane): OK" : `buy simulation from the wallet (plain lane): ${sim.reason}`);
+    if (!sim.ok) fail("the buy would not go; nothing sent");
+  }
 }
 if (!live) {
   console.log(skipBuy ? "\nnothing sent. Add --now to sell what the wallet holds." : "\nnothing sent. Add --now to send the buy and then sell it back.");
@@ -107,4 +119,4 @@ const left = await balanceOf();
 console.log(got != null
   ? `\nround trip: ${amountEth} ETH -> ${got} ${tok.symbol} -> ${back} ETH, ${((back / amountEth - 1) * 100).toFixed(2)}%${left > 0 ? ` (${left} ${tok.symbol} left as dust)` : " (nothing left)"}`
   : `\nsold ${held} ${tok.symbol} -> ${back} ETH${left > 0 ? ` (${left} ${tok.symbol} left as dust)` : " (nothing left)"}`);
-console.log("the desk's own router sells under account abstraction: PROVEN on chain");
+console.log(`the desk's own router sells on ${lane}: PROVEN on chain`);
