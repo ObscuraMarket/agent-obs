@@ -33,12 +33,19 @@ export function rulesLine(r: Rails): string {
   const loop = r.lossStreak > 0 && r.lossStreakHaltH > 0 ? `, or for ${n(r.lossStreakHaltH)} h after ${n(r.lossStreak)} losses in a row` : "";
   const back = r.reentryCooldownH > 0 ? `; a token it lost on is not bought back for ${n(r.reentryCooldownH)} h` : "";
   const enter = `enter with at most $${n(r.maxSwapUsd)} a trade, ${n(r.minHoursBetweenEntries)} h apart, and not at all once the day is down $${n(r.dailyLossUsd)} or ${n(r.dailyLossPct)}%${loop}${back}`;
+  // A rule set to zero is switched off (exitVerdict only runs the trail and the tape exit above zero) and is left
+  // out, so the account never states a rule like "out when 0% of the peak is given back" (2026-09-10).
+  const tpOn = r.candidateTakeProfitPct > 0;
+  const trailOn = r.candidateTrailPct > 0;
+  const tapeOn = r.candidateTapeExitMinPct > 0;
+  const partial = (tpOn && r.candidateTakeProfitShare < 1) || (tapeOn && r.candidateTapeExitShare < 1);
+  const sold = (share: number) => (share >= 1 ? "everything" : `${Math.round(share * 100)}%`);
   const exit = [
     `the floor at -${n(r.candidateFloorPct)}%`,
-    `the trailing stop, armed at +${n(r.candidateTrailArmPct)}% and out when ${n(r.candidateTrailPct)}% of the peak is given back`,
-    `the take-profit, ${Math.round(r.candidateTakeProfitShare * 100)}% sold at +${n(r.candidateTakeProfitPct)}%`,
-    `the tape exit, ${Math.round(r.candidateTapeExitShare * 100)}% sold past +${n(r.candidateTapeExitMinPct)}% once buyers fall under ${n(r.candidateTapeExitPressurePct)}% of the tape`,
-    `a remainder floor at -${n(r.candidateRemainderFloorPct)}% after a partial sale`,
+    ...(trailOn ? [`the trailing stop, armed at +${n(r.candidateTrailArmPct)}% and out when ${n(r.candidateTrailPct)}% of the peak is given back`] : []),
+    ...(tpOn ? [`the take-profit, ${sold(r.candidateTakeProfitShare)} sold at +${n(r.candidateTakeProfitPct)}%`] : []),
+    ...(tapeOn ? [`the tape exit, ${sold(r.candidateTapeExitShare)} sold past +${n(r.candidateTapeExitMinPct)}% once buyers fall under ${n(r.candidateTapeExitPressurePct)}% of the tape`] : []),
+    ...(partial ? [`a remainder floor at -${n(r.candidateRemainderFloorPct)}% after a partial sale`] : []),
     `and the time stop at ${n(r.candidateMaxHoldH)} h`,
   ].join("; ");
   return `${enter}. Exits, whichever comes first: ${exit}.`;

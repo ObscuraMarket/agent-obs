@@ -200,3 +200,11 @@ test("the agent no longer says it trades on fomo, and it knows its two days ther
   assert.match(SELF_KNOWLEDGE, /no other story about that wallet/);
   assert.ok(!SELF_KNOWLEDGE.includes("—"));
 });
+
+test("the rules line leaves out a rule that is switched off, so the account never states a zero rule", () => {
+  // 2026-09-10: sell everything at +15%, no trailing stop and no tape exit (both set to 0, which exitVerdict treats as off).
+  const r = railsFromEnv({ OBS_CANDIDATE_FLOOR_PCT: "30", OBS_CANDIDATE_TAKE_PROFIT_PCT: "15", OBS_CANDIDATE_TAKE_PROFIT_SHARE: "1", OBS_CANDIDATE_TRAIL_PCT: "0", OBS_CANDIDATE_TAPE_EXIT_MIN_PCT: "0", OBS_CANDIDATE_MAX_HOLD_H: "24" } as NodeJS.ProcessEnv);
+  const line = rulesLine(r);
+  assert.match(line, /Exits, whichever comes first: the floor at -30%; the take-profit, everything sold at \+15%; and the time stop at 24 h\.$/);
+  assert.doesNotMatch(line, /trailing stop|tape exit|remainder floor|0% of the peak/);
+});
