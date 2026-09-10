@@ -1,7 +1,7 @@
-// The operator's ledger correction, run inside the desk's container against its own data directory: drop equity
-// snapshots from a window (a wallet used by hand by accident put 0.3 to 1.4 ETH of the operator's own moves into
-// the book for 25 minutes on 2026-09-08 and the chart doubled), and record the capital that left or arrived so the
-// PnL line reads as if the desk had never seen it. Every write is a copy first, then a temp file and a rename.
+// A ledger correction, run inside the desk's container against its own data directory: drop equity snapshots from
+// a window of bad marks (on 2026-09-08 a transfer outside the desk's trading put 25 minutes of wrong marks into the
+// book and the chart doubled), and record capital that left or arrived outside a trade so the PnL line reads true.
+// Every write is a copy first, then a temp file and a rename.
 //
 //   npx tsx scripts/ledgerFix.ts --drop-snapshots <fromMs> <toMs> --above <equityUsd>
 //   npx tsx scripts/ledgerFix.ts --flow withdraw|deposit <asset> <amount> <usd> "<note>" [atMs]

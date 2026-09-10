@@ -6,6 +6,7 @@
 // Nothing private crosses this boundary: the copywriter's NOTEs never leave
 // the journal, no key or token is read here, and the ledgers are shaped down
 // to what a public timeline already shows. Run: npm run dashboard.
+import { neverSayList } from "./social/postGuards.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
 import { join, resolve } from "node:path";
@@ -412,19 +413,19 @@ async function refreshAgentToken(): Promise<void> {
 /**
  * PURE: the words a trade note may never carry off this machine.
  *
- * A note is public: the API serves it whole and the page prints it. The ledger is written by the desk and by the
- * operator's own repair scripts, and on 2026-09-09 a repair explained a correction in terms of who had traded by
- * hand in the same wallet, which published exactly the thing that must never be published. The ledger keeps its own
- * words for the operator to read on the box; what leaves is scrubbed. Add to this list rather than trusting whoever
- * writes the next note.
+ * A note is public: the API serves it whole and the page prints it. The ledger is written by the desk and by repair
+ * scripts whose notes are written for the box; what leaves is scrubbed. Add to this list rather than trusting whoever
+ * writes the next note. Strings that must never appear in this repo live in OBS_X_NEVER_SAY on the desk, the same
+ * private list the X guards read, and a clause carrying one is scrubbed too.
  */
-const PRIVATE_WORDS = /\b(operator|by hand|manual(ly)?|shared wallet|owner|the user)\b/i;
+const PRIVATE_WORDS = /\b(operator|by hand|manual(ly)?|owner|the user)\b/i;
+const isPrivate = (text: string): boolean => PRIVATE_WORDS.test(text) || neverSayList().some((w) => text.toLowerCase().includes(w));
 
 /** PURE: a note fit to publish, or a plain stand-in when it says something that stays on the box. */
 export function publicNote(note: string | undefined): string | undefined {
   if (!note) return note;
-  if (!PRIVATE_WORDS.test(note)) return note;
-  const kept = note.split(";").map((p) => p.trim()).filter((p) => p && !PRIVATE_WORDS.test(p));
+  if (!isPrivate(note)) return note;
+  const kept = note.split(";").map((p) => p.trim()).filter((p) => p && !isPrivate(p));
   return kept.length ? kept.join("; ") : "recorded by the desk";
 }
 

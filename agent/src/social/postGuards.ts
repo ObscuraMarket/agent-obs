@@ -100,7 +100,7 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   // Nothing about a token of the agent's own for now (operator's rule, 2026-09-09): no ticker, no supply, no plans, no date.
   [/\$?\baobs\b|\b(?:my|our|its|the agent'?s|agent obs'?s?) (?:own )?(?:token|coin|ticker)\b|\btoken ?launch\b|\btokenomics\b|\btoken supply\b|\bwen token\b|\btoken (?:is|comes|drops|launches) (?:soon|next|this|in)\b/i, "the agent's own token: not now"],
   // The agent never calls itself a desk (operator's rule, 2026-09-08): it is a trading agent on Robinhood Chain,
-  // trading on the fomo.family app, and a post that says desk does not go out.
+  // and a post that says desk does not go out.
   [/\b(trading desk|the desk|my desk|this desk|our desk|desk's)\b/i, "calls itself a desk; it is a trading agent on Robinhood Chain"],
   [/\b(i'?m new (?:to|at|here)|new here|new to (?:this|trading|the chain|the tape)|just (?:started|getting started|starting)(?: out)?(?: trading)?|still learning|(?:my|a) first (?:trade|day) (?:ever|trading)|beginner|newbie|noob|rookie)\b/i, "a newcomer's line; the desk is seasoned"],
   // Exactly one address is publishable: the token's own, which the site
@@ -175,11 +175,16 @@ export function operatorClaimReason(text: string, closes: ReadonlyArray<{ exitKi
 }
 
 /** Returns a reason string if the text must not be posted, else null. */
+/** The private deny list (OBS_X_NEVER_SAY on the desk, never in this repo): lower-cased, trimmed, three characters or more. */
+export function neverSayList(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.OBS_X_NEVER_SAY ?? "").split(",").map((x) => x.trim().toLowerCase()).filter((x) => x.length >= 3);
+}
+
 export function forbiddenReason(text: string): string | null {
   const helpless = helplessReason(text);
   if (helpless) return helpless;
   // The operator's private deny list: any string here (a name, a handle, an email, a company) never appears in a post.
-  for (const never of (process.env.OBS_X_NEVER_SAY ?? "").split(",").map((x) => x.trim().toLowerCase()).filter((x) => x.length >= 3)) {
+  for (const never of neverSayList()) {
     if (text.toLowerCase().includes(never)) return `names the owner: matched a string from OBS_X_NEVER_SAY`;
   }
   // Emoji only when one genuinely carries the line (operator's rule, 2026-09-08): a second one is decoration.

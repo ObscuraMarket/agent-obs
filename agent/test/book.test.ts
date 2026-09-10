@@ -234,9 +234,8 @@ test("the operator's erased windows leave a book's snapshots out by time, and a 
 });
 
 test("a lot the desk oversold is what leaves a position with no cost basis on the page", () => {
-  // 2026-09-09: the desk bought 2,760,750 BYCOCKET, the operator bought 1,283,257 more by hand in the app from the
-  // same wallet, and the exit sold the whole wallet balance of 4,044,007. The lot went negative, known went false,
-  // and the page could no longer show a cost or a percentage for the token it still held.
+  // 2026-09-09: an exit sold the whole wallet balance, more than the desk's own lot. The lot went negative, known went
+  // false, and the page could no longer show a cost or a percentage for the token it still held.
   const buy = (at: number, qty: number, usd: number): Trade => ({ at, id: `b${at}`, status: "settled", venue: "pool", partner: "pool", from: { asset: "ETH", amount: usd / 2500, usd }, to: { asset: "BYC", amount: qty, usd: null }, updatedAt: at });
   const sell = (at: number, qty: number, usd: number): Trade => ({ at, id: `s${at}`, status: "settled", venue: "pool", partner: "pool", exit: true, from: { asset: "BYC", amount: qty, usd }, to: { asset: "ETH", amount: usd / 2500, usd }, updatedAt: at });
   const clean = costBasis([], [buy(1, 2_760_750, 200), sell(2, 2_760_750, 331)]);

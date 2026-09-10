@@ -1,7 +1,6 @@
-// Swap every USDG in the desk's wallet back to ETH, the book's base, through the desk's own router as one user
-// operation, the way an exit goes. For the operator: on 2026-09-10 the fomo app sold the desk's MGARD together
-// with the operator's own and paid USDG to the app's cash contract, which only the app can move; once the operator
-// withdraws that cash into the wallet, this puts it back into the ETH stake (profits stay in ETH, operator's rule).
+// Swap every USDG in the desk's wallet back to ETH, the book's base, through the desk's own router, the way an exit
+// goes. USDG that lands in the wallet (a sale settled in dollars, a transfer in) goes back into the ETH stake:
+// profits stay in ETH.
 //   npm run usdg:sweep            reads the balance, quotes, checks the rails; nothing sent
 //   npm run usdg:sweep -- --now   sends it
 // The trading switch is treated as on for this one call, as paper and the probe do; every other rail applies as

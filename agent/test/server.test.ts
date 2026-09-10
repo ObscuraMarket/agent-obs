@@ -561,11 +561,10 @@ test("sign in, sign out, and the old bearer is refused on a signed route while a
   });
 });
 
-test("a trade note that names who traded by hand never leaves the box", () => {
-  // 2026-09-09: a ledger repair explained itself in terms of the operator buying by hand in the same wallet, and
-  // the API serves notes whole, so it published the one thing that must never be published. The ledger keeps its
-  // own words for the box; what leaves is scrubbed.
-  const leak = "exit (tape-profit), the trade is up 18%; CORRECTED to the desk's own share (68.27% of the swap): the operator bought 1283257 by hand in the app. The chain moved the full amount.";
+test("a trade note's private clause never leaves the box", () => {
+  // The API serves notes whole, so a note's private clause must never leave the box. The ledger keeps its own words
+  // for the box; what leaves is scrubbed.
+  const leak = "exit (tape-profit), the trade is up 18%; CORRECTED to the desk's own share (68.27% of the swap): a repair made by hand by the operator. The chain moved the full amount.";
   const out = publicNote(leak);
   assert.ok(!/operator/i.test(out ?? ""), `still names them: ${out}`);
   assert.ok(!/by hand/i.test(out ?? ""));
@@ -601,4 +600,16 @@ test("a payload part that HANGS degrades to null, so one dead read never wedges 
   // A rejection after the race is lost must not surface as an unhandled rejection.
   assert.equal(await attempt(() => new Promise((_, rej) => setTimeout(() => rej(new Error("late")), 20)), 5), null);
   await new Promise((r) => setTimeout(r, 60));
+});
+
+test("a public note also drops a clause carrying a string from the private deny list", () => {
+  const before = process.env.OBS_X_NEVER_SAY;
+  process.env.OBS_X_NEVER_SAY = "zqx-private-marker, ab";
+  try {
+    assert.equal(publicNote("exit (floor), down 31%; the zqx-private-marker clause"), "exit (floor), down 31%");
+    assert.equal(publicNote("exit (floor), down 31%; ab is ignored"), "exit (floor), down 31%; ab is ignored", "entries under three characters are ignored, as the X guard ignores them");
+  } finally {
+    if (before === undefined) delete process.env.OBS_X_NEVER_SAY;
+    else process.env.OBS_X_NEVER_SAY = before;
+  }
 });

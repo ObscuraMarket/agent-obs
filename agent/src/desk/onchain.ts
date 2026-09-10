@@ -697,12 +697,10 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
   // Only what the desk bought is ever sold: an airdrop in the wallet is not a position and is never touched.
   const bought = boughtSymbols(allTrades);
   for (const a of Object.values(dyn)) {
-    // What the DESK holds, which is not the same as what the wallet holds. The operator buys in the app from this
-    // same wallet, and on 2026-09-09 an exit sold 4,044,007 BYCOCKET when the desk's own ledger held 2,760,750: the
-    // extra 1,283,257 was a position the operator had bought by hand twenty minutes earlier. It took their tokens,
-    // overstated the desk's realised gain and left the lot's cost basis unknown, so the page could no longer show a
-    // percentage for the token. An exit is clamped to the desk's own lot: selling too little is caught next cycle,
-    // selling someone else's is not.
+    // What the DESK holds, which is not always what the wallet holds (an airdrop, a transfer in, dust). An exit sized
+    // from the wallet balance once sold more than the desk's own lot, overstated its realised gain and left the lot's
+    // cost basis unknown, so the page could no longer show a percentage for the token. An exit is clamped to the
+    // desk's own lot: selling too little is caught next cycle, selling too much is not.
     const inWallet = balances[a.symbol] ?? 0;
     const own = lots[a.symbol.toUpperCase()];
     const held = own && own.qty > 0 ? Math.min(inWallet, own.qty) : inWallet;

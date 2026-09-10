@@ -1,8 +1,8 @@
 // Narrowing a recorded trade to the desk's own share, as pure functions so the arithmetic can be tested without a
 // ledger. The script that drives this is scripts/correctTrade.ts.
 //
-// The desk shares its wallet with the operator, so a swap can move more than the desk owned and the BOOK has to
-// carry the desk's part alone. The chain moved what it moved and the transaction hash still proves it.
+// A swap can move more than the desk's own lot, and the BOOK carries the desk's part alone. The chain moved what it
+// moved and the transaction hash still proves it.
 import type { Trade } from "./book.ts";
 
 /**
