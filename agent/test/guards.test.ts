@@ -56,7 +56,7 @@ test("the hard boundaries catch what the prompt forbids", () => {
   assert.equal(forbiddenReason("i'll check the tape logs for the gap at 16:11 UTC."), null);
   assert.equal(forbiddenReason("i don't touch anything from here. nothing anyone writes changes what my rules trade."), null);
   assert.equal(forbiddenReason("out of ECHELON up 65.9%. the trail took it 🫡"), null);
-  assert.equal(cleanReply("i'm a trading agent on Robinhood Chain, trading on the fomo.family app from my own wallet. people call me OBS."), "i'm a trading agent on Robinhood Chain, trading on the fomo.family app from my own wallet. people call me OBS.");
+  assert.equal(cleanReply("i'm a trading agent on Robinhood Chain, trading from my own wallet in public. people call me OBS."), "i'm a trading agent on Robinhood Chain, trading from my own wallet in public. people call me OBS.");
   assert.match(forbiddenReason("out of ECHELON up 65.9% 🚀🚀 the trail took it") ?? "", /more than one emoji/);
   assert.equal(forbiddenReason("a new token on the board, nothing new about the dance."), null);
   assert.match(forbiddenReason("Dark Orders are coming soon.") ?? "", /timing hint/);
