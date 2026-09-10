@@ -13,7 +13,8 @@ import { join } from "node:path";
 import { DRY, ENGAGE_CAP, X_AGENT_ID, X_HANDLE, X_VOICE, MAX_TWEET_CHARS, ROOT_DIR, dataPath } from "./config.ts";
 import { traderBlock, traderData, traderReplyPrompt } from "./social/traderVoice.ts";
 import { getMentions, postReply } from "./social/xClient.ts";
-import { cleanReply, forbiddenReason, isSkip, isJunk } from "./social/postGuards.ts";
+import { cleanReply, forbiddenReason, isSkip, isJunk, repeatsReply } from "./social/postGuards.ts";
+import { readLedger } from "./ledger.ts";
 
 const baseUrl = process.env.OPENHERMIT_GATEWAY_URL;
 const token = process.env.GATEWAY_ADMIN_TOKEN;
@@ -100,6 +101,9 @@ const voice = readFileSync(join(ROOT_DIR, "OBS_X_VOICE.md"), "utf8");
 const block = X_VOICE === "trader" ? traderBlock(traderData()) : "";
 
 let replied = 0;
+// What this account already said in replies, newest last. The model never sees its past replies, so it cannot avoid
+// repeating one; the repeat check does it for the model, and a reply sent this pass joins the list (2026-09-10).
+const recentReplies = readLedger<{ posted?: boolean; text?: string }>("x-replies.jsonl").filter((r) => r?.posted && r.text).map((r) => r.text as string).slice(-40);
 for (const m of mentions) {
   // Always advance the cursor, even for skipped mentions, so we never reprocess a thread.
   state.lastMentionId = m.id;
@@ -151,6 +155,11 @@ This is a conversation, not a broadcast, so write like you are talking to one pe
     console.log(`[BLOCKED ${bad}] @${m.authorHandle}`);
     continue;
   }
+  const repeat = repeatsReply(reply, recentReplies);
+  if (repeat) {
+    console.log(`[skip, repeats a recent reply] @${m.authorHandle}: ${repeat.slice(0, 60)}`);
+    continue;
+  }
   if (reply.length > MAX_TWEET_CHARS) {
     console.log(`[skip, too long] @${m.authorHandle}`);
     continue;
@@ -158,6 +167,7 @@ This is a conversation, not a broadcast, so write like you are talking to one pe
   console.log(`[reply] @${m.authorHandle}: ${m.text.slice(0, 60)}\n  -> ${reply}`);
   if (DRY) {
     console.log("  DRY RUN, not posting.");
+    recentReplies.push(reply);
     replied++;
     continue;
   }
@@ -167,7 +177,10 @@ This is a conversation, not a broadcast, so write like you are talking to one pe
   await sleep(wait);
   const r = await postReply(reply, m.id);
   console.log(r.posted ? `  POSTED: https://x.com/${X_HANDLE}/status/${r.id}` : `  not posted: ${r.reason}`);
-  if (r.posted) replied++;
+  if (r.posted) {
+    replied++;
+    recentReplies.push(reply);
+  }
 }
 
 saveState(state);

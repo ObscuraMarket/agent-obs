@@ -6,7 +6,7 @@ import { GatewayClient } from "@openhermit/sdk";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DRY, MIN_POST_GAP_MIN, SIMILARITY_MAX, X_AGENT_ID, X_HANDLE, X_VOICE, MAX_TWEET_CHARS, ROOT_DIR } from "./config.ts";
-import { traderBlock, traderData, traderPrompt, TRADER_FORMS, TRADER_CADENCES, ARRIVAL_FORMS } from "./social/traderVoice.ts";
+import { traderBlock, traderData, traderPrompt, TRADER_FORMS, TRADER_CADENCES, ARRIVAL_FORMS, postRotation } from "./social/traderVoice.ts";
 import { postTweet, getMyPostMetrics } from "./social/xClient.ts";
 import { cleanReply, forbiddenReason, operatorClaimReason, tooSimilar } from "./social/postGuards.ts";
 import { recallForPrompt, remember, splitNote } from "./journal.ts";
@@ -28,6 +28,9 @@ const postedRows = readLedger<{ at?: number; id?: string; text?: string; posted?
 const published = postedRows.filter((x) => x.posted);
 // The operator's own posts (scripts/xPost.ts) sit in the ledger for the record and the recent list, never as the agent's.
 const publishedByAgent = published.filter((x) => !x.operator);
+// Every run that reached the model wrote one decision row before any guard ran. The rotation keys on that count, so a
+// draft the guards refuse still moves the next run on to a different form and cadence (2026-09-10).
+const attempts = readLedger<{ agent?: string }>("obs-decisions.jsonl").filter((d) => d?.agent === X_AGENT_ID).length;
 const recent = (published.length ? published : postedRows).map((x) => x.text as string).slice(-12);
 const lastPostAt = postedRows.length ? (postedRows[postedRows.length - 1].at ?? 0) : 0;
 // The arrival: once live, the first six published posts introduce the account in order (ARRIVAL_FORMS), closer
@@ -77,8 +80,8 @@ const voice = readFileSync(join(ROOT_DIR, "OBS_X_VOICE.md"), "utf8");
 const kb = readFileSync(join(ROOT_DIR, "OBSCURA_KB.md"), "utf8");
 
 // THE SHAPE OF THIS CYCLE'S POST, rotated deterministically so the feed does
-// not read like one long essay in instalments. Keyed to the number of posts
-// already in the ledger, so it survives restarts and never repeats twice running.
+// not read like one long essay in instalments. Keyed to the number of attempts in
+// the decisions ledger, so it survives restarts, never repeats twice running, and a refused draft still moves on.
 const FORMS: string[] = [
   `A SHIP NOTE. Something that is now true for someone using Obscura, stated the way a project posts a real update: one concrete fact first, then one plain line of what it means, then stop. Only from what the knowledge base says is live today; never a roadmap item.`,
   `A MECHANIC READ. One thing a public order leaks, or one thing about how a route settles, and why it matters. Lead with the mechanic, land the point in a line or two.`,
@@ -89,10 +92,11 @@ const FORMS: string[] = [
   `AN ADMISSION about the MARKET, not yourself. A read you hold loosely, a number you do not trust yet. Never uncertainty about your own competence.`,
 ];
 const forms = X_VOICE === "trader" ? TRADER_FORMS : FORMS;
-const form = arriving ? ARRIVAL_FORMS[publishedByAgent.length] : forms[postedRows.length % forms.length];
-// The cadence turns on its own wheel: five against nine forms, so the pairing does not repeat for forty five posts.
+const turn = postRotation(attempts, forms.length, TRADER_CADENCES.length);
+const form = arriving ? ARRIVAL_FORMS[publishedByAgent.length] : forms[turn.form];
+// The cadence turns on its own wheel: five against nine forms, so the pairing does not repeat for forty five attempts.
 // The arrival posts keep their own shape and are left alone; they are the introduction and they only run once.
-const cadence = TRADER_CADENCES[publishedByAgent.length % TRADER_CADENCES.length];
+const cadence = TRADER_CADENCES[turn.cadence];
 if (arriving) console.log(`Arrival post ${publishedByAgent.length + 1} of ${ARRIVAL_FORMS.length}.`);
 
 const copywriterPrompt = `You are Obscura's copywriter, running @${X_HANDLE} on X. Your voice guide, in full:

@@ -217,6 +217,28 @@ export function tooSimilar(text: string, recent: string[], max = 0.45): { hit: s
   return null;
 }
 
+/** The first sentence, lowercased and stripped to letters, digits and single spaces: what a stock opener shares. */
+const openingSentence = (s: string): string =>
+  (s ?? "").toLowerCase().split(/[.!?\n]/)[0].replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+
+/**
+ * The recent reply this one repeats, or null. Replies had no repeat check at all: "there is nothing to say about that
+ * right now" went out nine times in 31 hours (2026-09-09 to 2026-09-10), sometimes bare and sometimes with a new
+ * tail, which is the stock line the reply prompt itself forbids. The model never sees its past replies, so it cannot
+ * avoid one; this does it for the model. Both tests are narrow on purpose so a short, genuinely new answer is never
+ * refused: the same first sentence once it is long enough to be a phrase (not a "fair" or a "gm"), or near-identical
+ * wording when both replies carry at least three meaningful words.
+ */
+export function repeatsReply(reply: string, recent: string[], max = 0.8): string | null {
+  const head = openingSentence(reply);
+  const mine = words(reply);
+  for (const r of recent) {
+    if (head.length >= 12 && head === openingSentence(r)) return r;
+    if (mine.size >= 3 && words(r).size >= 3 && similarity(reply, r) >= max) return r;
+  }
+  return null;
+}
+
 /**
  * Junk filter for OTHER people's tweets, deciding what is even worth reading.
  * Crypto X is heavy with launchpad promos, giveaway farming and pump chatter

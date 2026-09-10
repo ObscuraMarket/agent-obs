@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { traderBlock, traderPrompt, traderReplyPrompt, rulesLine, traderHoldings, TRADER_FORMS, ARRIVAL_FORMS , TRADER_CADENCES, SELF_KNOWLEDGE} from "../src/social/traderVoice.ts";
+import { traderBlock, traderPrompt, traderReplyPrompt, rulesLine, traderHoldings, TRADER_FORMS, ARRIVAL_FORMS , TRADER_CADENCES, SELF_KNOWLEDGE, postRotation} from "../src/social/traderVoice.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 
 const T = Date.UTC(2026, 8, 7, 23, 40);
@@ -168,3 +168,18 @@ test("the agent knows the shape of its own record, in a post and in a reply", ()
   for (const p of [post, reply]) assert.match(p, /no number that is not in the block|only numbers you may cite|the only numbers you may cite/i);
 });
 
+test("the post rotation moves on every attempt, so a refused draft never rebuilds the same prompt", () => {
+  // From 2026-09-09 23:12Z: keyed to published posts, a refused record post came back every run for over ten hours.
+  const a = postRotation(47, TRADER_FORMS.length, TRADER_CADENCES.length);
+  const b = postRotation(48, TRADER_FORMS.length, TRADER_CADENCES.length);
+  assert.notEqual(a.cadence, b.cadence, "the next attempt gets a different cadence");
+  assert.notEqual(a.form, b.form, "and a different form");
+  const pairs = new Set<string>();
+  for (let n = 0; n < 45; n++) {
+    const t = postRotation(n, TRADER_FORMS.length, TRADER_CADENCES.length);
+    pairs.add(`${t.form}:${t.cadence}`);
+  }
+  assert.equal(pairs.size, 45, "nine forms against five cadences: every pairing once per forty five attempts");
+  assert.deepEqual(postRotation(-3, 9, 5), { form: 0, cadence: 0 }, "a bad count reads as the first turn");
+  assert.deepEqual(postRotation(Number.NaN, 9, 5), { form: 0, cadence: 0 });
+});

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stripDashes, cleanReply, isSkip, forbiddenReason, tooSimilar, isJunk , operatorClaimReason} from "../src/social/postGuards.ts";
+import { stripDashes, cleanReply, isSkip, forbiddenReason, tooSimilar, isJunk , operatorClaimReason, repeatsReply} from "../src/social/postGuards.ts";
 import { OBS_CONTRACT } from "../src/config.ts";
 
 test("dashes used as punctuation become commas", () => {
@@ -95,3 +95,15 @@ test("a post crediting the operator with a close is checked against the ledger, 
   assert.match(operatorClaimReason("closed by operators", [{ exitKind: "model" }]) ?? "", /credits the operator/, "plural and possessive forms count too");
 });
 
+test("a reply that repeats a recent one is caught, and a short or genuinely new answer is not", () => {
+  // 2026-09-09 to 2026-09-10: this line went out nine times in 31 hours, bare and with different tails.
+  const canned = "there is nothing to say about that right now.";
+  const sent = [canned, "glad to have you watching. the ledger stays public so the math has nowhere to hide."];
+  assert.equal(repeatsReply(canned, sent), canned, "the same line again");
+  assert.equal(repeatsReply("there is nothing to say about that right now. i am watching MANTA sit 1% off its peak.", sent), canned, "the same opener with a new tail");
+  assert.equal(repeatsReply("Nothing to say about that right now!", sent), canned, "reworded a little, the same words");
+  assert.equal(repeatsReply("fair.", ["fair point, the tape is thin tonight."]), null, "a short opener is not a stock line");
+  assert.equal(repeatsReply("watching MANTA closely tonight", ["i am watching MANTA sit 1% off its peak."]), null, "sharing a token and a verb is not a repeat");
+  assert.equal(repeatsReply("that is a fair read on the tape.", sent), null, "a new answer goes out");
+  assert.equal(repeatsReply(canned, []), null, "nothing sent yet, nothing to repeat");
+});
