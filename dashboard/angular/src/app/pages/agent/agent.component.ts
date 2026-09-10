@@ -122,6 +122,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   agentToken: ObsAgentToken | null = null;
   agentCopied = false;
   err = '';
+  /** The parts the desk's last answer left out. Not an error: the API answered, and its chain reads warm for about a minute after a restart. */
+  warming = '';
 
   stats: StatCell[] = [];
   portfolio: StatCell[] = [];
@@ -274,6 +276,7 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
   refresh(): void {
     if (document.hidden) { return; }
     this.err = '';
+    this.warming = '';
     this.obs.dashboard(DASHBOARD_HOURS, 30, 8).subscribe({
       next: (d) => { this.applyDashboard(d); this.scheduleRefresh(tickStatus(null, this.myBookLimited || this.pickedLimited)); },
       error: (e: { status?: number }) => { this.err = 'dashboard'; this.scheduleRefresh(tickStatus(e?.status ?? 0, this.myBookLimited || this.pickedLimited)); }
@@ -462,7 +465,10 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
    */
   private applyDashboard(d: ObsDashboard): void {
     const missing = (['status', 'reads', 'pnl', 'market', 'trades'] as const).filter((k) => !d[k]);
-    if (missing.length) { this.err = missing.join(', '); }
+    // A part left out of an answer is not a failure to reach the desk: since 2026-09-09 the API answers with a
+    // part missing rather than hanging, and the chain reads take about a minute to warm after a restart. The
+    // footer says so in those words; the red line is for an answer that never came.
+    this.warming = missing.length ? missing.join(', ') : '';
     if (d.status) { this.status = d.status; }
     if (d.agentToken) { this.agentToken = d.agentToken; }
     if (d.reads) { this.reads = d.reads; }

@@ -134,7 +134,7 @@
         <div class="val num" [ngClass]="c.valCls || ''">{{ c.val }}</div>
         <div class="sub num" *ngIf="c.sub" [ngClass]="c.subCls || ''">{{ c.sub }}</div>
       </div>
-      <div class="none" *ngIf="!stats.length">Loading.</div>
+      <div class="none" *ngIf="!stats.length">{{ marketAsset === 'obs' || marketAsset === 'agent' ? 'Reading the chain.' : 'Waiting on CoinGecko.' }}</div>
     </div>
   </div>
 
@@ -446,7 +446,8 @@
     </ng-container>
   </div>
 
-  <div class="foot" *ngIf="err">
-    <div class="err">could not reach the desk API ({{ err }})</div>
+  <div class="foot" *ngIf="err || warming">
+    <div class="err" *ngIf="err">could not reach the desk API ({{ err }})</div>
+    <div class="warm" *ngIf="!err && warming">the desk answered without {{ warming }}: its chain reads warm for about a minute after a restart</div>
   </div>
 </div>

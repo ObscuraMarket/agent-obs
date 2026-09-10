@@ -82,6 +82,11 @@
   color: var(--red);
 }
 
+/* The desk answered with a part still warming: said plainly, never in red. */
+.warm {
+  opacity: 0.7;
+}
+
 /* A badge/label and the text next to it are separate elements and Angular
    strips the template whitespace between them, so any such group is a flex
    row with a real gap. */
