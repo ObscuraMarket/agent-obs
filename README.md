@@ -47,13 +47,20 @@ wallet: talk to it, train it, pick its model, turn it on.
 ## Verify it
 
 - **The desk's wallet is public:**
-  [`0x1C3C…0F82`](https://robinhoodchain.blockscout.com/address/0x1C3CAda24a5BEec97E07aefE3673325C07630F82),
-  funded twice by the team
+  [`0x2dA4…2b5d`](https://robinhoodchain.blockscout.com/address/0x2dA43C49cE0af0e463CB581202b000E2B8a52b5d).
+  Its capital was funded twice by the team on 2026-09-01
   ([0.34 ETH](https://robinhoodchain.blockscout.com/tx/0xcf9c31c03e428609cfa8f5e69b93dd3d3fc0e8a7fb507bc9b19fedacb4d0013f),
   [0.07 ETH](https://robinhoodchain.blockscout.com/tx/0xbce1e0ee8bd2f916565348ed495dac7fd6c17d3c04f441c1306a41199e83d313))
-  and never by anyone else.
-- **Every trade is a transaction** from that wallet, or from a follower's own
-  agent wallet, with its hash and explorer link on the page and in the API.
+  into the desk's first wallet
+  [`0x89a2…3F38`](https://robinhoodchain.blockscout.com/address/0x89a26d6e7f572a12CDf0252Fd0A581268dfA3F38),
+  and moved with the desk each time it changed wallets: to
+  [`0x1C3C…0F82`](https://robinhoodchain.blockscout.com/address/0x1C3CAda24a5BEec97E07aefE3673325C07630F82)
+  on 2026-09-08, and to the current wallet on 2026-09-10
+  ([one transaction](https://robinhoodchain.blockscout.com/tx/0xe2115b172034f57ec585fd9be1f65c8b74a352194eaeecb9091ae0b9ab20b6f3)).
+  Nobody outside the team has ever funded it.
+- **Every trade is a transaction** from the desk's wallet at the time, or from a
+  follower's own agent wallet, with its hash and explorer link on the page and
+  in the API.
 - **The book is read from the chain.** Equity is what the wallet holds at the
   pools' prices, capital is the deposits, PnL is the difference.
 - **The desk's API is read-only.** The only writes are a person's own signed

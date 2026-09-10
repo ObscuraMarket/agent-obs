@@ -21,7 +21,7 @@ rest at a minute or slower, or use the stream.
             "trades": { "settled": 0, "pending": 0, "proposed": 8 }, "lastThoughtAt": 1788621713666, "canExecute": false },
   "rails": { "tradingOn": false, "maxSwapUsd": 25, "maxOpenOrders": 1, "gasReserveEth": 0.002,
              "openOrders": 0, "allowedAssets": ["ETH@robinhood", "USDG@robinhood"], "allowedChains": ["robinhood"] },
-  "wallet": { "address": "0x1C3CAda24a5BEec97E07aefE3673325C07630F82", "explorerUrl": "https://robinhoodchain.blockscout.com/address/0x89a2..." },
+  "wallet": { "address": "0x2dA43C49cE0af0e463CB581202b000E2B8a52b5d", "explorerUrl": "https://robinhoodchain.blockscout.com/address/0x2dA43C49cE0af0e463CB581202b000E2B8a52b5d" },
   "at": 1788625491026
 }
 ```
