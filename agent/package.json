@@ -28,6 +28,7 @@
     "unwrap": "tsx scripts/unwrap.ts",
     "key:check": "tsx scripts/keyCheck.ts",
     "aa:probe": "tsx scripts/aaProbe.ts",
+    "usdg:sweep": "tsx scripts/usdgToEth.ts",
     "own:probe": "tsx scripts/ownRouterProbe.ts",
     "console:walk": "tsx scripts/consoleWalk.ts",
     "live": "tsx src/desk/live.ts",
