@@ -30,6 +30,7 @@ import { readTape, tapeStats, tapeWindowMin } from "./tape.ts";
 import { readEntries, recordClose, positionSpans, closeFromSpan, entryForSpan, closeRow, ethUsdAt, type TradeClose } from "./trade-memory.ts";
 import { railInput, quoteUsd, tapeLastUsd } from "./railInput.ts";
 import { readTapePeaks } from "./tapePeaks.ts";
+import { acquire, type AcquireOptions } from "./walletLock.ts";
 import type { QuoteRead } from "./thoughts.ts";
 
 export const NATIVE = "0x0000000000000000000000000000000000000000" as const;
@@ -323,7 +324,30 @@ export function legUsd(asset: Asset, amount: number, routePriceUsd: number | nul
   return null;
 }
 
+/**
+ * The desk's own sends take the wallet's lock (walletLock.ts), the way a follower's agent wallet already does. Two
+ * signers from one wallet collide on the nonce, and the cycle's own lock goes stale after fifteen minutes, so a slow
+ * cycle and the next one, or an operator script, could sign at once and sell the same lot twice (review 2026-09-10).
+ * Busy is a refusal like any other: an exit is tried again on the next look. A follower's send (runAs) is locked by
+ * its caller in mirror.ts and agentWallet.ts, so it is not locked twice here.
+ */
 export async function executeOnChain(i: Intent, c: RailContext, now = Date.now(), runAs?: RunAs): Promise<OnChainResult> {
+  if (runAs || !WALLET_ADDRESS) return executeOnChainUnlocked(i, c, now, runAs);
+  return withDeskLock(WALLET_ADDRESS, `${i.exit ? "exit" : "entry"} ${i.exit ? i.from.symbol : i.to.symbol}`, () => executeOnChainUnlocked(i, c, now));
+}
+
+/** The lock around one of the desk's sends: busy when another live process holds it, released however the send ends. */
+export async function withDeskLock(address: string, what: string, send: () => Promise<OnChainResult>, opts: AcquireOptions = {}): Promise<OnChainResult> {
+  const release = acquire(address, what, opts);
+  if (!release) return { ok: false, reason: "the desk's wallet is busy with another send; this goes again on the next look" };
+  try {
+    return await send();
+  } finally {
+    release();
+  }
+}
+
+async function executeOnChainUnlocked(i: Intent, c: RailContext, now = Date.now(), runAs?: RunAs): Promise<OnChainResult> {
   const address = runAs?.wallet.address ?? (WALLET_ADDRESS as `0x${string}`);
   // The desk's own swaps go out as one user operation when the operator says so (OBS_EXEC=aa, aa.ts); a follower's
   // wallet is a plain EOA and keeps the plain send whatever the switch says.
@@ -608,11 +632,19 @@ export async function sendSwap(job: SendJob, lane: SendLane = LIVE_LANE): Promis
     await put(failed);
     return { ok: false, reason: `swap ${hash} reverted${receipt.reason ? `: ${receipt.reason}` : ""}`, trade: failed };
   }
-  const after = await lane.balance(i.to, address);
-  let gotRaw = after - before;
+  // The swap has landed: a balance read that throws now must not lose that. The row settles on the estimate (or,
+  // under account abstraction, the receipt's own logs) and says so, rather than the error escaping the lane and
+  // taking the rest of an exit pass with it (review 2026-09-10).
+  let after: bigint | null = null;
+  try {
+    after = await lane.balance(i.to, address);
+  } catch (err) {
+    console.error(`[desk] the balance after ${hash} was not read (${err instanceof Error ? err.message : String(err)}); the row settles on the estimate`);
+  }
+  let gotRaw = after != null ? after - before : 0n;
   // The wallet paid the gas of a plain send, so a native leg gets it added back; under account abstraction the
   // gas wallet paid it, and when the balance reads say nothing the fill is read from the receipt's own logs.
-  if (i.to.kind === "native" && !aa) gotRaw += receipt.gasCostWei;
+  if (after != null && i.to.kind === "native" && !aa) gotRaw += receipt.gasCostWei;
   if (aa && gotRaw <= 0n && receipt.logs) {
     const logged = aa.fill(receipt.logs);
     if (logged != null && logged > 0n) gotRaw = logged;
@@ -625,7 +657,7 @@ export async function sendSwap(job: SendJob, lane: SendLane = LIVE_LANE): Promis
     settlementTx: hash,
     explorerUrl,
     to: { ...base.to, amount: got, usd: legUsd(i.to, got, q.priceOutUsd, ethUsd) },
-    note: `${base.note}; received ${got} ${i.to.symbol}`,
+    note: `${base.note}; received ${got} ${i.to.symbol}${after == null && gotRaw <= 0n ? " (the estimate: the balance after the swap was not read)" : ""}`,
   };
   await put(settled);
   // The sell proof is the desk's probe on its own first buy; a follower's token was proven by the desk already.
@@ -650,7 +682,19 @@ export async function proveSellable(token: Asset, amountRaw: bigint, now = Date.
   const known = tokenInfo(token.contract as string);
   const c = token.candidate as NonNullable<Asset["candidate"]>;
   const base = known ?? { symbol: token.symbol, contract: token.contract as `0x${string}`, decimals: token.decimals, poolId: c.poolId, feePct: c.tierPct, tickSpacing: c.tickSpacing, usdgIs0: c.usdgIs0, firstSeen: now, proven: null, blacklisted: false, ...(c.curve ? { curve: c.curve } : {}) };
-  if (base.proven === true) return "sell already proven";
+  if (base.proven === true) {
+    // Proven is per token, not per wallet: a token proven under account abstraction (nothing sent) or by an earlier
+    // wallet reaches its first plain sale with no approvals, and a floor exit then waits on two more transactions.
+    // Granting them now, at buy time, costs two reads when they already exist (review 2026-09-10).
+    if (!aaOn()) {
+      try {
+        await ensureAllowances(token, amountRaw, now);
+      } catch (err) {
+        return `sell already proven; the exit's approvals could not be granted now (${err instanceof Error ? err.message : String(err)}), so the first sale grants them`;
+      }
+    }
+    return "sell already proven";
+  }
   try {
     const route = routeFor(token, eth);
     if (!route) throw new Error("no route back to ETH");
@@ -725,7 +769,15 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
     const amount = v.share >= 1 ? held : Number((held * v.share).toPrecision(8));
     const usd = priceUsd != null ? amount * priceUsd : null;
     const exitIntent: Intent = { from: a, to: eth, amount, usd, exit: true };
-    const r = await exec(exitIntent, ctx, now);
+    let r: OnChainResult;
+    try {
+      r = await exec(exitIntent, ctx, now);
+    } catch (err) {
+      r = { ok: false, reason: `the exit threw: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    // Keyed per token: an unkeyed exit alert was silenced by ANY exit alert in the last half hour, a follower's
+    // included, so one alert hid the desk's failed exits on every token (review 2026-09-10).
+    const alertKey = `${(WALLET_ADDRESS || "desk").toLowerCase()} ${a.symbol}`;
     if (r.ok) {
       // The ETH that came back is priced so the close is recorded as what it was: the exit prices carry ETH for this.
       const toUsd = r.trade.to.usd ?? (prices.ETH != null && r.trade.to.amount != null ? r.trade.to.amount * prices.ETH : null);
@@ -737,11 +789,17 @@ export async function exitCandidates(balances: Record<string, number>, prices: R
       // A close is remembered from a settled sell only: a receipt still pending has no ETH leg yet, and the close it
       // produced read as a full loss in the desk's memory (2026-09-08). settleOnChain remembers it once it lands.
       if (v.share >= 1 && row.status === "settled") rememberClose(a.symbol, a.contract ?? "", [...allTrades, row], ethUsdAt(samples, prices.ETH ?? null), input.peakPnlPct, v.kind, exec !== executeOnChain, now);
-    } else if ("trade" in r && r.trade) out.push(r.trade);
+    } else if ("trade" in r && r.trade) {
+      out.push(r.trade);
+      // Sent and failed (reverted, or the send threw): the row is written, and until 2026-09-10 nobody heard. The
+      // wallet still holds the token, so the next look tries again.
+      console.error(`[desk] exit of ${a.symbol} failed: ${r.reason}`);
+      if (exec === executeOnChain) await raiseAlert("exit", `the desk's sale of ${a.symbol} did not go through (${v.kind}: ${v.reason}): ${r.reason}; it tries again on the next look`, now, undefined, undefined, alertKey);
+    }
     else {
       // A position the rails wanted out of and could not sell: the one failure a person must hear about at once.
       console.error(`[desk] exit of ${a.symbol} refused: ${r.reason}`);
-      if (exec === executeOnChain) await raiseAlert("exit", `the desk could not sell ${a.symbol} (${v.kind}: ${v.reason}); the chain refused it: ${r.reason}`, now);
+      if (exec === executeOnChain) await raiseAlert("exit", `the desk could not sell ${a.symbol} (${v.kind}: ${v.reason}); the chain refused it: ${r.reason}`, now, undefined, undefined, alertKey);
     }
   }
   return out;

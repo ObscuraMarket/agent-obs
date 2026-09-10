@@ -37,6 +37,7 @@ import { recordResearch } from "./research.ts";
 import { writeSignals, convoyRulesFromEnv, type SignalWant } from "./signalLedger.ts";
 import { digestThought, shortWhy } from "./digest.ts";
 import { readCloses, recallLike, recallLine, launchRecord, launchRecordLine, recordEntry, readEntries, recordClose, reconcileCloses, ethUsdAt } from "./trade-memory.ts";
+import { raiseAlert } from "./alerts.ts";
 import { chainMemory, poolRead } from "../obscura/pools.ts";
 import { appendLedger } from "../ledger.ts";
 import { positions } from "./book.ts";
@@ -126,6 +127,8 @@ let heldNow: string[] = [];
 if (ARMED && readTokens().length) {
   const readsForExit = await liveReads();
   const chainForExit = readsForExit.wallet ? walletBalances(readsForExit.wallet) : null;
+  // A wallet read that did not answer skips every forced exit below; until 2026-09-10 it did so without a word.
+  if (!chainForExit) await raiseAlert("exit", "the desk could not read its wallet, so this cycle's forced exits were skipped; they run again on the next look", now, undefined, undefined, "desk wallet-read");
   if (chainForExit) {
     const bookForExit = readBook();
     const boughtForExit = boughtSymbols(bookForExit.trades);

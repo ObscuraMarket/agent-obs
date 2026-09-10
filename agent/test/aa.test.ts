@@ -258,3 +258,23 @@ test("an operation goes out on a fresh key shaped like the app's, and the fixed 
   assert.equal(nonceOf(nonceKeyFor(t, {} as NodeJS.ProcessEnv), 0n) >> 64n, BigInt(t), "the key still sits in the top bits");
 });
 
+
+test("a balance read that throws after the swap landed settles on the estimate and says so, instead of escaping the lane", async () => {
+  // Review 2026-09-10: the read after the receipt had no guard; if it threw once the sale had landed, the error left
+  // the lane and took the rest of an exit pass with it, while the row sat pending with its hash.
+  const throwingAfter = (receipt: Awaited<ReturnType<SendLane["wait"]>>): SendLane => {
+    let reads = 0;
+    return { ...lane(receipt), balance: async () => { if (reads++ === 0) return 0n; throw new Error("rpc down"); } };
+  };
+  const rows: Trade[] = [];
+  const bought = await sendSwap(job(NVDA, rows, false), throwingAfter({ status: "success", gasCostWei: 999n }));
+  assert.ok(bought.ok, "the landed swap is a success, not an error");
+  assert.equal(bought.trade.status, "settled");
+  assert.equal(bought.trade.to.amount, 0.5, "the quote's estimate stands in for the unread balance");
+  assert.match(bought.trade.note ?? "", /the estimate: the balance after the swap was not read/);
+  // A native leg: the wallet's gas is NOT added to an unread balance, or 999 wei would be recorded as the fill.
+  const sold = await sendSwap(job(ETH, [], false), throwingAfter({ status: "success", gasCostWei: 999n }));
+  assert.ok(sold.ok);
+  assert.equal(sold.trade.to.amount, 0.5);
+  assert.match(sold.trade.note ?? "", /the estimate/);
+});

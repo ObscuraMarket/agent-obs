@@ -20,6 +20,7 @@ import { aaOn } from "../desk/aa.ts";
 import { UA, rpc, ethCall, rpcBlocked } from "./rpc.ts";
 import { obsMarket, poolRead, chainMemory, type MarketRead, type PoolSpec } from "./pools.ts";
 import { stockReference } from "./stockRef.ts";
+import { decodeFunctionResult, encodeFunctionData, parseAbi, type Hex } from "viem";
 
 export { rpcBlocked };
 export type { MarketRead };
@@ -80,6 +81,51 @@ async function tokenBalance(token: string, holder: string, decimals: number): Pr
   const r = await ethCall(token, balanceOfData(holder));
   const v = r ? decodeUint(r) : null;
   return v == null ? null : fromRaw(v, decimals);
+}
+
+/** Multicall3 at its canonical address, deployed on Robinhood Chain (checked 2026-09-10). */
+export const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
+export const MULTICALL_ABI = parseAbi([
+  "function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns ((bool success, bytes returnData)[] returnData)",
+]);
+const isAddr = (a: string): boolean => /^0x[0-9a-fA-F]{40}$/.test(a);
+
+/**
+ * Robinhood Chain balances for many tokens in ONE call through Multicall3, instead of one paced call each. Read one
+ * at a time the wallet's tokens were about 46 calls and 19 s on a good day and past the wallet read's 90 s deadline
+ * on a slow RPC, and a wallet read that times out skips the cycle's forced exits (review 2026-09-10). Each token is
+ * its own allowFailure call, so one bad token reads as null (unread) without spoiling the rest. When the batch does
+ * not answer or does not decode, it falls back to one call each, so it is never worse than before. Same numbers as
+ * one call each: a token that did not answer is null, never zero.
+ */
+export async function robinhoodBalances(holder: string, list: Array<{ contract: string; decimals: number }>, call: (to: string, data: string) => Promise<string | null> = ethCall, chunk = 100): Promise<Array<number | null>> {
+  const out: Array<number | null> = list.map(() => null);
+  const data = balanceOfData(holder);
+  const idx = list.map((t, k) => (isAddr(t.contract) ? k : -1)).filter((k) => k >= 0);
+  for (let start = 0; start < idx.length; start += chunk) {
+    const part = idx.slice(start, start + chunk);
+    let done = false;
+    try {
+      const req = encodeFunctionData({ abi: MULTICALL_ABI, functionName: "aggregate3", args: [part.map((k) => ({ target: list[k].contract as `0x${string}`, allowFailure: true, callData: data as Hex }))] });
+      const r = await call(MULTICALL3, req);
+      if (r && r !== "0x") {
+        const res = decodeFunctionResult({ abi: MULTICALL_ABI, functionName: "aggregate3", data: r as Hex }) as ReadonlyArray<{ success: boolean; returnData: Hex }>;
+        if (res.length === part.length) {
+          res.forEach((x, j) => {
+            const v = x.success ? decodeUint(x.returnData) : null;
+            out[part[j]] = v == null ? null : fromRaw(v, list[part[j]].decimals);
+          });
+          done = true;
+        }
+      }
+    } catch { /* the batch did not answer or decode: one call each below */ }
+    if (!done) for (const k of part) {
+      const r = await call(list[k].contract, data);
+      const v = r ? decodeUint(r) : null;
+      out[k] = v == null ? null : fromRaw(v, list[k].decimals);
+    }
+  }
+  return out;
 }
 
 export interface WalletRead {
@@ -169,17 +215,30 @@ export async function walletRead(address = WALLET_ADDRESS): Promise<WalletRead |
   const mainnetP = Promise.all([nativeBalance(ETH_RPC_URL, address), ...mainnetTokens.map((a) => mainnetTokenBalance(a.contract as string, address, a.decimals))]);
   const tokens: Record<string, number | null> = {};
   const ethRobinhood = await nativeBalance(RPC_URL, address);
-  const wethRobinhood = await tokenBalance(WETH_CONTRACT, address, 18);
-  const usdg = await tokenBalance(USDG_CONTRACT, address, 6);
-  const obs = await tokenBalance(OBS_CONTRACT, address, 18);
-  tokens["USDG@robinhood"] = usdg;
-  tokens["OBS@robinhood"] = obs;
-  for (const a of registered.filter((x) => x.chain === "robinhood" && x.symbol !== "USDG")) tokens[`${a.symbol}@${a.network}`] = await tokenBalance(a.contract as string, address, a.decimals);
-  // Launch tokens the desk has traded (data/obs-tokens.json): read too, so a held one is on the book.
-  for (const t of readTokens()) if (!ASSETS[`${t.symbol}@robinhood`]) tokens[`${t.symbol}@robinhood`] = await tokenBalance(t.contract, address, t.decimals);
-  // Tokenized stocks that arrived as credits payments: read too, so they are on the book.
-  for (const t of receivedStocks()) if (!(`${t.symbol}@robinhood` in tokens)) tokens[`${t.symbol}@robinhood`] = await tokenBalance(t.contract, address, 18);
-  const own = { symbol: AGENT_TOKEN_SYMBOL, contract: AGENT_TOKEN, qty: await tokenBalance(AGENT_TOKEN, address, 18) };
+  // Every Robinhood Chain token balance in one batch (robinhoodBalances): WETH, USDG, OBS, the registered tokens, every
+  // launch token the desk has traded (data/obs-tokens.json, so a held one is on the book), the tokenized stocks paid
+  // in as credits, and the agent's own token. The keys and which one wins are the same as when each was its own call.
+  const want: Array<{ key: string; contract: string; decimals: number }> = [];
+  const taken = new Set<string>();
+  const add = (key: string, contract: string, decimals: number) => {
+    if (taken.has(key)) return;
+    taken.add(key);
+    want.push({ key, contract, decimals });
+  };
+  add("\u0000WETH", WETH_CONTRACT, 18);
+  add("USDG@robinhood", USDG_CONTRACT, 6);
+  add("OBS@robinhood", OBS_CONTRACT, 18);
+  for (const a of registered.filter((x) => x.chain === "robinhood" && x.symbol !== "USDG")) add(`${a.symbol}@${a.network}`, a.contract as string, a.decimals);
+  for (const t of readTokens()) if (!ASSETS[`${t.symbol}@robinhood`]) add(`${t.symbol}@robinhood`, t.contract, t.decimals);
+  for (const t of receivedStocks()) add(`${t.symbol}@robinhood`, t.contract, 18);
+  add("\u0000OWN", AGENT_TOKEN, 18);
+  const got = await robinhoodBalances(address, want);
+  const read = new Map(want.map((w, k) => [w.key, got[k]] as const));
+  const wethRobinhood = read.get("\u0000WETH") ?? null;
+  const usdg = read.get("USDG@robinhood") ?? null;
+  const obs = read.get("OBS@robinhood") ?? null;
+  for (const w of want) if (!w.key.startsWith("\u0000")) tokens[w.key] = read.get(w.key) ?? null;
+  const own = { symbol: AGENT_TOKEN_SYMBOL, contract: AGENT_TOKEN, qty: read.get("\u0000OWN") ?? null };
   const nvda = tokens["NVDA@robinhood"] ?? null;
   const [[ethMainnet, ...mainnetBalances], rewards] = await Promise.all([
     mainnetP,

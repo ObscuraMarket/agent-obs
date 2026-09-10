@@ -175,3 +175,21 @@ test("the loop brake is a rail: an entry and an add-on are refused, an exit pass
   assert.equal(railsFromEnv({} as NodeJS.ProcessEnv).lossStreakHaltH, 4);
   assert.equal(railsFromEnv({} as NodeJS.ProcessEnv).reentryCooldownH, 4);
 });
+
+test("a launch token is never swapped straight into another: the buy leg would skip every entry brake as an exit", () => {
+  // Review 2026-09-10: with OBS_MAX_CANDIDATES=2 the model could swap a held token A into token B. The intent counted as
+  // an exit because it sells a candidate, so B was bought past the loop brake, the daily brake, spacing and the caps.
+  const r = railsFromEnv({ OBS_TRADING: "on", OBS_TRADE_ASSETS: "ETH@robinhood,USDG@robinhood" } as NodeJS.ProcessEnv);
+  const token = (symbol: string, contract: string) => ({ ...ETH, symbol, kind: "erc20", contract, decimals: 18, candidate: { tierPct: 1 } }) as never;
+  const A = token("AAA", "0x000000000000000000000000000000000000aaaa");
+  const B = token("BBB", "0x000000000000000000000000000000000000bbbb");
+  const c = ctx({ rails: r, balances: { "ETH@robinhood": 0.5, "AAA@robinhood": 1000 }, nativeOnFromChain: 0.5 });
+  for (const exit of [true, false]) {
+    const v = checkRails({ from: A, to: B, amount: 1000, usd: 150, exit }, c);
+    assert.equal(v.ok, false, `refused whether or not it is marked an exit (exit: ${exit})`);
+    assert.match((v as { reason: string }).reason, /AAA to BBB is a launch token straight into another: sell to ETH first/);
+  }
+  // Leaving a token for the base is untouched by this rule.
+  const out = checkRails({ from: A, to: ETH, amount: 1000, usd: 150, exit: true }, c);
+  assert.doesNotMatch(out.ok ? "" : (out as { reason: string }).reason, /straight into another/);
+});

@@ -215,6 +215,10 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
   if (!r.tradingOn && !exitLeavesUnderTradingOff(i, c)) return { ok: false, reason: "trading is off (OBS_TRADING)" };
   if (!(i.amount > 0)) return { ok: false, reason: "amount must be positive" };
   if (assetKey(i.from) === assetKey(i.to)) return { ok: false, reason: "from and to are the same asset" };
+  // A launch token is never swapped straight into another. Leaving one is an exit back to the base; taking the next is
+  // its own entry under every rail. As one intent it counted as an exit (it sells a candidate), and so skipped the loop
+  // brake, the daily brake, spacing, the caps and the reads gate on the way into the second token (review 2026-09-10).
+  if (i.from.candidate && i.to.candidate) return { ok: false, reason: `${i.from.symbol} to ${i.to.symbol} is a launch token straight into another: sell to ETH first, and the next buy is its own entry under every rail` };
   // Neither leg, entry or exit: the desk's own token sits in its wallet and is never sold, bought, or approved.
   for (const leg of [i.from, i.to]) if (leg.contract && r.neverTrade.has(leg.contract.toLowerCase())) return { ok: false, reason: `${leg.symbol} is on the never-trade list (the desk's own token, or ${"$"}OBS); neither leg of a swap may be it` };
   if (r.ethBase && !r.basisOn && !i.exit && i.to.symbol === "USDG") return { ok: false, reason: "the book's base is ETH; USDG is a hop on the way to a pool, not a place to park (OBS_BASE)" };
