@@ -8,7 +8,8 @@
 // sell that reverts on the own router is a position the floor cannot close. The lane runs exactly as it is (rails
 // as set, the trading switch treated as on for this call the way a paper session does); nothing is hand-built.
 import { resolveAny, readFeed, tokenInfo } from "../src/desk/candidates.ts";
-import { resolveAsset } from "../src/desk/assets.ts";
+import { resolveAsset, assetKey } from "../src/desk/assets.ts";
+import { isHolding } from "../src/desk/book.ts";
 import { railsFromEnv } from "../src/desk/rails.ts";
 import { railView, swapBatch, buildUserOp, simulateUserOp, ethInPlan, spendableEthRaw, formatGasPlan, aaOn } from "../src/desk/aa.ts";
 import { executeOnChain, quoteOnChain, encodeSwap } from "../src/desk/onchain.ts";
@@ -45,48 +46,65 @@ const prices = await assetPrices([eth.symbol, tok.symbol], { OBS: reads.market?.
 const ethUsd = prices.ETH ?? reads.prices.ethUsd ?? null;
 if (!(ethUsd != null && ethUsd > 0)) fail("ETH is unpriced right now");
 const amountEth = Number((sizeUsd / ethUsd).toPrecision(6));
-console.log(`wallet: ${real.bySymbol.ETH ?? 0} ETH on the book (native plus WETH); buying $${sizeUsd} = ${amountEth} ETH of ${tok.symbol} at $${ethUsd.toFixed(0)} an ETH`);
+// The rails' balance view for a leg, from the wallet as read plus what this script knows landed since. The first run
+// (2026-09-10) handed the sell the snapshot taken before the buy, and the rails refused it as "holds 0 BYCOCKET":
+// the chain had the tokens, the context did not.
+const rails = { ...railsFromEnv(), tradingOn: true };
+const ctxWith = async (byKey: Record<string, number>, now: number) => ({ rails, ...(await railView(byKey)), openOrders: 0, lastEntryAt: null, now });
+const balanceOf = async () => Number(await readTokenBalance(tok, token, desk)) / 10 ** tok.decimals;
+// A balance already in the wallet (an earlier run that bought and could not sell) is sold as it is; no second buy.
+const already = await balanceOf();
+const skipBuy = isHolding(already);
+if (skipBuy) console.log(`wallet already holds ${already} ${tok.symbol} from an earlier run; skipping the buy and selling that`);
+else console.log(`wallet: ${real.bySymbol.ETH ?? 0} ETH on the book (native plus WETH); buying $${sizeUsd} = ${amountEth} ETH of ${tok.symbol} at $${ethUsd.toFixed(0)} an ETH`);
 
-// The buy as the lane would send it: quote, WETH plan, batch, user operation, simulation through the entry point.
-const q = await quoteOnChain(eth, tok, amountEth);
-if (!q) fail("no pool route, or the pools did not answer");
-console.log(`buy quote: ${q.route.hops.map((h) => h.key).join(" then ")}; expected ${q.amountOut} ${tok.symbol}, floor ${q.minOut}; fees ${q.feePct.toFixed(2)}%, all-in cost vs mark ${q.costPct?.toFixed(2) ?? "?"}%`);
-const spend = await spendableEthRaw(desk);
-const plan = ethInPlan(q.amountInRaw, spend.native, spend.weth);
-const tx = encodeSwap(q.route, plan.amountInRaw, q.minOutRaw, desk, BigInt(Math.floor(Date.now() / 1000) + 1200));
-const calls = swapBatch({ tx, withdrawRaw: plan.withdrawRaw });
-const built = await buildUserOp(calls);
-console.log(`buy operation: ${calls.length} call${calls.length === 1 ? "" : "s"} (${plan.withdrawRaw > 0n ? "WETH.withdraw, then " : ""}the router); ${formatGasPlan(built.gas)}`);
-const sim = await simulateUserOp(built);
-console.log(sim.ok ? "buy simulation through the entry point: OK" : `buy simulation through the entry point: ${sim.reason}`);
-if (!sim.ok) fail("the buy would not go; nothing sent");
+let got: number | null = null;
+if (!skipBuy) {
+  // The buy as the lane would send it: quote, WETH plan, batch, user operation, simulation through the entry point.
+  const q = await quoteOnChain(eth, tok, amountEth);
+  if (!q) fail("no pool route, or the pools did not answer");
+  console.log(`buy quote: ${q.route.hops.map((h) => h.key).join(" then ")}; expected ${q.amountOut} ${tok.symbol}, floor ${q.minOut}; fees ${q.feePct.toFixed(2)}%, all-in cost vs mark ${q.costPct?.toFixed(2) ?? "?"}%`);
+  const spend = await spendableEthRaw(desk);
+  const plan = ethInPlan(q.amountInRaw, spend.native, spend.weth);
+  const tx = encodeSwap(q.route, plan.amountInRaw, q.minOutRaw, desk, BigInt(Math.floor(Date.now() / 1000) + 1200));
+  const calls = swapBatch({ tx, withdrawRaw: plan.withdrawRaw });
+  const built = await buildUserOp(calls);
+  console.log(`buy operation: ${calls.length} call${calls.length === 1 ? "" : "s"} (${plan.withdrawRaw > 0n ? "WETH.withdraw, then " : ""}the router); ${formatGasPlan(built.gas)}`);
+  const sim = await simulateUserOp(built);
+  console.log(sim.ok ? "buy simulation through the entry point: OK" : `buy simulation through the entry point: ${sim.reason}`);
+  if (!sim.ok) fail("the buy would not go; nothing sent");
+}
 if (!live) {
-  console.log("\nnothing sent. Add --now to send the buy and then sell it back.");
+  console.log(skipBuy ? "\nnothing sent. Add --now to sell what the wallet holds." : "\nnothing sent. Add --now to send the buy and then sell it back.");
   process.exit(0);
 }
 
 // The real round trip, through the production lane both ways.
-const rails = { ...railsFromEnv(), tradingOn: true };
-const ctx = async (now: number) => ({ rails, ...(await railView(real.byKey)), openOrders: 0, lastEntryAt: null, now });
-const t0 = Date.now();
-const buy = await executeOnChain({ from: eth, to: tok, amount: amountEth, usd: sizeUsd }, await ctx(t0), t0);
-if (!buy.ok) fail(`BUY REFUSED: ${buy.reason}`);
-console.log(`buy ${buy.trade.id}: ${buy.trade.status}${buy.trade.explorerUrl ? ` ${buy.trade.explorerUrl}` : ""}`);
-console.log(`  ${buy.trade.note}`);
-if (buy.trade.status !== "settled") fail("the buy did not settle inside the lane's wait; the sell is not attempted. Read the ledger before running again.");
-const got = buy.trade.to.amount;
+if (!skipBuy) {
+  const t0 = Date.now();
+  const buy = await executeOnChain({ from: eth, to: tok, amount: amountEth, usd: sizeUsd }, await ctxWith(real.byKey, t0), t0);
+  if (!buy.ok) fail(`BUY REFUSED: ${buy.reason}`);
+  console.log(`buy ${buy.trade.id}: ${buy.trade.status}${buy.trade.explorerUrl ? ` ${buy.trade.explorerUrl}` : ""}`);
+  console.log(`  ${buy.trade.note}`);
+  if (buy.trade.status !== "settled") fail("the buy did not settle inside the lane's wait; the sell is not attempted. Read the ledger before running again.");
+  got = buy.trade.to.amount;
+}
 
-// Sell everything that landed. The lane clamps the exit to the wallet's exact raw balance, so this float is only a float.
-const held = Number(await readTokenBalance(tok, token, desk)) / 10 ** tok.decimals;
-console.log(`wallet now holds ${held} ${tok.symbol} (the lane received ${got}); selling all of it`);
+// Sell everything the wallet holds, read from the chain now, and hand the rails a view that knows it is there. The
+// lane clamps the exit to the wallet's exact raw balance, so this float is only a float.
+const held = await balanceOf();
+if (!isHolding(held)) fail(`the wallet holds ${held} ${tok.symbol}, nothing to sell`);
+console.log(`wallet now holds ${held} ${tok.symbol}${got != null ? ` (the lane received ${got})` : ""}; selling all of it`);
 const px = prices[tok.symbol] ?? null;
 const t1 = Date.now();
-const sell = await executeOnChain({ from: tok, to: eth, amount: held, usd: px != null ? held * px : sizeUsd, exit: true }, await ctx(t1), t1);
+const sell = await executeOnChain({ from: tok, to: eth, amount: held, usd: px != null ? held * px : sizeUsd, exit: true }, await ctxWith({ ...real.byKey, [assetKey(tok)]: held }, t1), t1);
 if (!sell.ok) fail(`SELL REFUSED: ${sell.reason}\nThe wallet still holds ${held} ${tok.symbol}. This is the failure the probe exists to find; do not arm the desk on this route.`);
 console.log(`sell ${sell.trade.id}: ${sell.trade.status}${sell.trade.explorerUrl ? ` ${sell.trade.explorerUrl}` : ""}`);
 console.log(`  ${sell.trade.note}`);
 if (sell.trade.status !== "settled") fail("the sell did not settle inside the lane's wait; read the ledger.");
 const back = sell.trade.to.amount;
-const left = Number(await readTokenBalance(tok, token, desk)) / 10 ** tok.decimals;
-console.log(`\nround trip: ${amountEth} ETH -> ${got} ${tok.symbol} -> ${back} ETH, ${((back / amountEth - 1) * 100).toFixed(2)}%${left > 0 ? ` (${left} ${tok.symbol} left as dust)` : " (nothing left)"}`);
+const left = await balanceOf();
+console.log(got != null
+  ? `\nround trip: ${amountEth} ETH -> ${got} ${tok.symbol} -> ${back} ETH, ${((back / amountEth - 1) * 100).toFixed(2)}%${left > 0 ? ` (${left} ${tok.symbol} left as dust)` : " (nothing left)"}`
+  : `\nsold ${held} ${tok.symbol} -> ${back} ETH${left > 0 ? ` (${left} ${tok.symbol} left as dust)` : " (nothing left)"}`);
 console.log("the desk's own router sells under account abstraction: PROVEN on chain");
