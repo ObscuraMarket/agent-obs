@@ -65,6 +65,8 @@ export class AgentComponent implements OnInit, AfterViewInit, OnDestroy {
    * panel is open, so the panel always has a row marked open above it; closing leaves the row until the next read.
    */
   agents: ObsPublicAgent[] = [];
+  /** The Agents card is hidden for now (2026-09-10); true puts it back as it was. "Your agent" stays either way. */
+  readonly showAgents = false;
   /** The API's list as it came, so opening a hidden agent can put its row back without another read. */
   private allAgents: ObsPublicAgent[] = [];
   get agentsSummary(): string { return agentsSummary(this.agents); }

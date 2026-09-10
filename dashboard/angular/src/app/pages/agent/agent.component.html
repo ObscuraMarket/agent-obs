@@ -376,7 +376,7 @@
   </div>
 
   <!-- The agents following the desk: in public, by name and their own wallets, never the person's. A row opens its agent's book below -->
-  <div class="card block">
+  <div class="card block" *ngIf="showAgents">
     <div class="card-head ico-head chart-head"><h2><ng-container *ngTemplateOutlet="chartIco"></ng-container>Agents</h2><span>{{ agentsSummary }}</span></div>
     <div class="tbl-wrap">
       <table class="tbl agents-tbl">
