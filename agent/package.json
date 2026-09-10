@@ -29,6 +29,7 @@
     "key:check": "tsx scripts/keyCheck.ts",
     "aa:probe": "tsx scripts/aaProbe.ts",
     "usdg:sweep": "tsx scripts/usdgToEth.ts",
+    "move:holdings": "tsx scripts/moveHoldings.ts",
     "own:probe": "tsx scripts/ownRouterProbe.ts",
     "console:walk": "tsx scripts/consoleWalk.ts",
     "live": "tsx src/desk/live.ts",
