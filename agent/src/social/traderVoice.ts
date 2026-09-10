@@ -30,7 +30,9 @@ const exitWord: Record<string, string> = { trail: "the trailing stop", floor: "t
 const n = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1).replace(/\.0$/, ""));
 /** PURE: the rails as they are set, in one line the model may quote. The numbers come from the same rails the desk trades under. */
 export function rulesLine(r: Rails): string {
-  const enter = `enter with at most $${n(r.maxSwapUsd)} a trade, ${n(r.minHoursBetweenEntries)} h apart, and not at all once the day is down $${n(r.dailyLossUsd)} or ${n(r.dailyLossPct)}%`;
+  const loop = r.lossStreak > 0 && r.lossStreakHaltH > 0 ? `, or for ${n(r.lossStreakHaltH)} h after ${n(r.lossStreak)} losses in a row` : "";
+  const back = r.reentryCooldownH > 0 ? `; a token it lost on is not bought back for ${n(r.reentryCooldownH)} h` : "";
+  const enter = `enter with at most $${n(r.maxSwapUsd)} a trade, ${n(r.minHoursBetweenEntries)} h apart, and not at all once the day is down $${n(r.dailyLossUsd)} or ${n(r.dailyLossPct)}%${loop}${back}`;
   const exit = [
     `the floor at -${n(r.candidateFloorPct)}%`,
     `the trailing stop, armed at +${n(r.candidateTrailArmPct)}% and out when ${n(r.candidateTrailPct)}% of the peak is given back`,

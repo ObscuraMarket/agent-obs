@@ -70,7 +70,7 @@ test("an empty desk says so, and the prompt hands the model the block, the memor
 
 test("the rules line quotes the rails as they are set, so a mechanic post carries real numbers", () => {
   const line = rulesLine(railsFromEnv({ OBS_MAX_SWAP_USD: "200", OBS_MIN_HOURS_BETWEEN_ENTRIES: "0.5", OBS_DAILY_LOSS_USD: "250", OBS_DAILY_LOSS_PCT: "15", OBS_CANDIDATE_FLOOR_PCT: "30", OBS_CANDIDATE_TRAIL_ARM_PCT: "20", OBS_CANDIDATE_TRAIL_PCT: "15", OBS_CANDIDATE_TAKE_PROFIT_PCT: "30", OBS_CANDIDATE_TAKE_PROFIT_SHARE: "0.33", OBS_CANDIDATE_TAPE_EXIT_MIN_PCT: "10", OBS_CANDIDATE_TAPE_EXIT_PRESSURE_PCT: "45", OBS_CANDIDATE_TAPE_EXIT_SHARE: "0.6", OBS_CANDIDATE_REMAINDER_FLOOR_PCT: "5", OBS_CANDIDATE_MAX_HOLD_H: "8" } as NodeJS.ProcessEnv));
-  assert.equal(line, "enter with at most $200 a trade, 0.5 h apart, and not at all once the day is down $250 or 15%. Exits, whichever comes first: the floor at -30%; the trailing stop, armed at +20% and out when 15% of the peak is given back; the take-profit, 33% sold at +30%; the tape exit, 60% sold past +10% once buyers fall under 45% of the tape; a remainder floor at -5% after a partial sale; and the time stop at 8 h.");
+  assert.equal(line, "enter with at most $200 a trade, 0.5 h apart, and not at all once the day is down $250 or 15%, or for 4 h after 3 losses in a row; a token it lost on is not bought back for 4 h. Exits, whichever comes first: the floor at -30%; the trailing stop, armed at +20% and out when 15% of the peak is given back; the take-profit, 33% sold at +30%; the tape exit, 60% sold past +10% once buyers fall under 45% of the tape; a remainder floor at -5% after a partial sale; and the time stop at 8 h.");
   assert.ok(!line.includes("—"));
 });
 

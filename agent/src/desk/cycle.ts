@@ -632,6 +632,7 @@ if (decision.kind === "propose-swap" && decision.from && decision.to && decision
       equityUsd: mark.equityUsd,
       lastEntryAt: lastEntryAt(bookTrades),
       now,
+      closes: readCloses(),
     };
     // A swap must be argued for. An exit of a held position is exempt: leaving is never blocked on paperwork.
     const argued = from.candidate ? { ok: true as const, cited: 0 } : evidenceCheck(parsed.analysis, observation, { minEvidence: rails.minEvidence, minConviction: rails.minConviction });

@@ -69,6 +69,16 @@ export interface Rails {
   dailyLossPct: number;
   /** Selectivity: entries are spaced. Exits are not. Nothing is counted by the day: the desk enters whenever the reads say so, under the loss brake. */
   minHoursBetweenEntries: number;
+  /**
+   * The loop brake (OBS_LOSS_STREAK, OBS_LOSS_STREAK_HALT_H, OBS_REENTRY_COOLDOWN_H; zero disables each). After this
+   * many losing exits in a row, no new entry and no add-on until this many hours after the last of them; and a token
+   * the desk lost on is not bought back for this many hours. Exits never. The daily brake bounds one day and resets at
+   * midnight; on 2026-09-09 the desk lost on four exits in a row through the afternoon and kept entering into the same
+   * tape at twice the morning's rate, and the daily brake only tripped once every position was already open.
+   */
+  lossStreak: number;
+  lossStreakHaltH: number;
+  reentryCooldownH: number;
   /** A swap must be argued for: this many evidence lines quoting observed figures, and this conviction. */
   minEvidence: number;
   minConviction: number;
@@ -119,6 +129,9 @@ export function railsFromEnv(env: NodeJS.ProcessEnv = process.env): Rails {
     dailyLossUsd: Number(env.OBS_DAILY_LOSS_USD ?? 50),
     dailyLossPct: Number(env.OBS_DAILY_LOSS_PCT ?? 5),
     minHoursBetweenEntries: Number(env.OBS_MIN_HOURS_BETWEEN_ENTRIES ?? 2),
+    lossStreak: Number(env.OBS_LOSS_STREAK ?? 3),
+    lossStreakHaltH: Number(env.OBS_LOSS_STREAK_HALT_H ?? 4),
+    reentryCooldownH: Number(env.OBS_REENTRY_COOLDOWN_H ?? 4),
     minEvidence: Number(env.OBS_MIN_EVIDENCE ?? 3),
     minConviction: Number(env.OBS_MIN_CONVICTION ?? 4),
     ethBase: (env.OBS_BASE ?? "eth").toLowerCase() === "eth",
@@ -160,6 +173,8 @@ export interface RailContext {
   /** When the last entry (a non-exit swap) was sent, for the spacing rule. */
   lastEntryAt?: number | null;
   now?: number;
+  /** The desk's closed trades (trade memory), any order, for the loop brake. Null or absent: the brake stays off rather than guessing. */
+  closes?: CloseLike[] | null;
   /**
    * The swap is signed by a person's agent wallet (the mirror's leg, or a /sell from the console), not the desk's
    * own. An exit so signed passes the trading switch: OBS_TRADING=off is the operator's brake on the house book,
@@ -208,6 +223,9 @@ export function checkRails(i: Intent, c: RailContext): { ok: true } | { ok: fals
     const halt = dailyLossHalt(c.dayStartEquityUsd ?? null, c.equityUsd ?? null, r);
     if (halt) return { ok: false, reason: halt };
     const now = c.now ?? Date.now();
+    // The loop brake reads add-ons too: money added during a losing run is the averaging-down loop by another name.
+    const loop = loopHalt(i.to.symbol, c.closes, now, r);
+    if (loop) return { ok: false, reason: loop };
     const soon = i.addOn ? null : spacingHalt(c.lastEntryAt ?? null, now, r);
     if (soon) return { ok: false, reason: soon };
   }
@@ -329,6 +347,65 @@ export function spacingHalt(lastEntryAt: number | null, now: number, r: Rails, w
   const ago = now - lastEntryAt;
   if (ago >= r.minHoursBetweenEntries * 3600e3) return null;
   return `${whose} was ${(ago / 3600e3).toFixed(1)}h ago; entries are at least ${r.minHoursBetweenEntries}h apart`;
+}
+
+/** What the loop brake needs of a close: trade memory's rows carry all of it. */
+export interface CloseLike {
+  at: number;
+  symbol: string;
+  realizedUsd: number;
+  paper?: boolean;
+}
+export interface CloseEvent {
+  at: number;
+  symbol: string;
+  realizedUsd: number;
+}
+
+/**
+ * PURE: real closes as exit EVENTS, newest first. Two lots of one token sold in one swap are two rows in trade
+ * memory and one exit here, netted: on 2026-09-09 BYCOCKET closed +$26.15 and -$83.50 in the same minute, and a
+ * count by row read the win as a reset of a run that had just lost $57.
+ */
+export function closeEvents(closes: CloseLike[]): CloseEvent[] {
+  const rows = closes.filter((c) => !c.paper && Number.isFinite(c.at) && Number.isFinite(c.realizedUsd)).sort((a, b) => b.at - a.at);
+  const out: CloseEvent[] = [];
+  for (const c of rows) {
+    const last = out[out.length - 1];
+    if (last && last.symbol === c.symbol && last.at - c.at <= 60_000) last.realizedUsd += c.realizedUsd;
+    else out.push({ at: c.at, symbol: c.symbol, realizedUsd: c.realizedUsd });
+  }
+  return out;
+}
+
+const hhmm = (at: number): string => new Date(at).toISOString().slice(11, 16);
+const signedUsd = (v: number): string => `${v < 0 ? "-" : "+"}$${Math.abs(v).toFixed(2)}`;
+
+/**
+ * PURE: the loop brake, for one entry. Two reads, both self-clearing. The streak: the last N exits were all losses
+ * and the latest is inside the halt window, so a green close ends it and quiet time expires it. The re-entry: this
+ * token's latest exit was a loss inside the cooldown. Null with no closes at all: no guessing, like the daily brake.
+ */
+export function loopHalt(symbol: string, closes: CloseLike[] | null | undefined, now: number, r: Rails): string | null {
+  if (!closes) return null;
+  const events = closeEvents(closes);
+  const n = Math.floor(r.lossStreak);
+  if (n > 0 && r.lossStreakHaltH > 0 && events.length >= n) {
+    const run = events.slice(0, n);
+    const until = run[0].at + r.lossStreakHaltH * 3600e3;
+    if (run.every((e) => e.realizedUsd < 0) && now < until) {
+      const named = [...run].reverse().map((e) => `${e.symbol} ${signedUsd(e.realizedUsd)}`).join(", ");
+      return `loop brake: ${n} losses in a row (${named}), the last at ${hhmm(run[0].at)} UTC; no new entry for ${r.lossStreakHaltH}h after it, ${((until - now) / 3600e3).toFixed(1)}h to go`;
+    }
+  }
+  if (r.reentryCooldownH > 0) {
+    const last = events.find((e) => e.symbol === symbol);
+    if (last && last.realizedUsd < 0) {
+      const until = last.at + r.reentryCooldownH * 3600e3;
+      if (now < until) return `${symbol} lost ${signedUsd(last.realizedUsd).slice(1)} at ${hhmm(last.at)} UTC; a token the desk lost on is not bought back for ${r.reentryCooldownH}h, ${((until - now) / 3600e3).toFixed(1)}h to go`;
+    }
+  }
+  return null;
 }
 
 /** PURE: the book's first mark of the UTC day that `now` falls in, from stored snapshots; null when the day has no mark yet. */

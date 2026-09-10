@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkRails, railsFromEnv, baseLeg, mapStatus, partnerAllowed, depositAddressLooksRight, clampToBalance, type Intent, type RailContext, dailyLossHalt, dayStartEquity } from "../src/desk/rails.ts";
+import { checkRails, railsFromEnv, baseLeg, mapStatus, partnerAllowed, depositAddressLooksRight, clampToBalance, type Intent, type RailContext, dailyLossHalt, dayStartEquity, closeEvents, loopHalt } from "../src/desk/rails.ts";
 import { resolveAsset, assetKey } from "../src/desk/assets.ts";
 
 const ETH = resolveAsset("ETH@robinhood")!;
@@ -104,4 +104,74 @@ test("ETH is the base: a swap into USDG is refused as a park unless the basis ne
   assert.equal(baseLeg(tok, ETH, base).note, null, "already coming back to ETH");
   assert.equal(baseLeg(ETH, USDG, base).note, null, "not an exit; the rails decide that one");
   assert.equal(baseLeg(tok, USDG, rails).note, null, "with the basis on, USDG is a legitimate leg");
+});
+
+// 2026-09-09 as trade memory recorded it, real closes only, in the order they happened.
+const T = (h: number, m: number) => Date.UTC(2026, 8, 9, h, m);
+const yesterday = [
+  { at: T(9, 48), symbol: "MANTA", realizedUsd: 29.05 },
+  { at: T(12, 3), symbol: "4AI", realizedUsd: 24.52 },
+  { at: T(12, 8), symbol: "BYCOCKET", realizedUsd: 1.83 },
+  { at: T(13, 26), symbol: "MANTA", realizedUsd: -7.59 },
+  { at: T(13, 57), symbol: "BYCOCKET", realizedUsd: 1.83 },
+  { at: T(14, 37), symbol: "BARBELL", realizedUsd: -54.68 },
+  { at: T(15, 7), symbol: "HARVEST", realizedUsd: -19.25 },
+  { at: T(15, 27), symbol: "4AI", realizedUsd: -26.36 },
+  { at: T(16, 4), symbol: "ECHELON", realizedUsd: -23.51 },
+  { at: T(17, 30), symbol: "BYCOCKET", realizedUsd: 26.15 },
+  { at: T(17, 30), symbol: "BYCOCKET", realizedUsd: -83.5 },
+  { at: T(18, 53), symbol: "ARTON", realizedUsd: -71.54 },
+];
+const upTo = (h: number, m: number) => yesterday.filter((c) => c.at <= T(h, m));
+
+test("closes become exit events: two lots sold in one swap are one exit, netted, and a paper close is not an exit", () => {
+  const ev = closeEvents([...yesterday, { at: T(19, 0), symbol: "PAPER", realizedUsd: -500, paper: true }]);
+  assert.equal(ev.length, 11, "twelve rows, the BYCOCKET pair merged, the paper row dropped");
+  assert.equal(ev[0].symbol, "ARTON", "newest first");
+  const byc = ev.find((e) => e.symbol === "BYCOCKET" && e.at === T(17, 30))!;
+  assert.equal(Number(byc.realizedUsd.toFixed(2)), -57.35, "the +$26.15 and the -$83.50 are one $57.35 loss, not a win that resets a run");
+  assert.equal(closeEvents([]).length, 0);
+});
+
+test("the loop brake halts entries after N losses in a row, clears on a green close, and expires on its own", () => {
+  const r = railsFromEnv({ OBS_TRADING: "on", OBS_LOSS_STREAK: "3", OBS_LOSS_STREAK_HALT_H: "4", OBS_REENTRY_COOLDOWN_H: "0" } as NodeJS.ProcessEnv);
+  assert.equal(loopHalt("X", upTo(15, 7), T(15, 8), r), null, "two losses in a row is not the brake");
+  const halt = loopHalt("X", upTo(15, 27), T(15, 28), r)!;
+  assert.match(halt, /loop brake: 3 losses in a row \(BARBELL -\$54\.68, HARVEST -\$19\.25, 4AI -\$26\.36\), the last at 15:27 UTC/);
+  assert.match(halt, /no new entry for 4h after it, 4\.0h to go/);
+  // What the brake would have refused on the day: every entry after 15:27, which is where $178.55 of the $203.07 went.
+  for (const [h, m, sym] of [[15, 53, "ECHELON"], [16, 29, "BYCOCKET"], [17, 7, "MEME"], [17, 38, "ARTON"], [18, 18, "ARTON"]] as const) {
+    assert.match(loopHalt(sym, upTo(h, m), T(h, m), r) ?? "", /loop brake/, `${sym} at ${h}:${m} is refused`);
+  }
+  for (const [h, m, sym] of [[13, 27, "4AI"], [14, 4, "BARBELL"], [14, 44, "HARVEST"], [15, 21, "MEME"]] as const) {
+    assert.equal(loopHalt(sym, upTo(h, m), T(h, m), r), null, `${sym} at ${h}:${m} still goes`);
+  }
+  assert.equal(loopHalt("X", upTo(15, 27), T(19, 28), r), null, "four quiet hours after the last loss, it expires");
+  assert.equal(loopHalt("X", [...upTo(15, 27), { at: T(16, 0), symbol: "WIN", realizedUsd: 12 }], T(16, 1), r), null, "one green close ends the run");
+  assert.equal(loopHalt("X", upTo(15, 27), T(15, 28), railsFromEnv({ OBS_LOSS_STREAK: "0" } as NodeJS.ProcessEnv)), null, "zero disables it");
+  assert.equal(loopHalt("X", null, T(15, 28), r), null, "no closes handed in: no guessing");
+  assert.equal(loopHalt("X", [], T(15, 28), r), null);
+});
+
+test("a token the desk lost on is not bought back inside the cooldown, and the netted exit is what counts", () => {
+  const r = railsFromEnv({ OBS_TRADING: "on", OBS_LOSS_STREAK: "0", OBS_REENTRY_COOLDOWN_H: "4" } as NodeJS.ProcessEnv);
+  assert.match(loopHalt("BYCOCKET", yesterday, T(18, 0), r)!, /BYCOCKET lost \$57\.35 at 17:30 UTC; a token the desk lost on is not bought back for 4h, 3\.5h to go/);
+  assert.match(loopHalt("ECHELON", yesterday, T(19, 0), r)!, /ECHELON lost \$23\.51/);
+  assert.equal(loopHalt("MANTA", yesterday, T(18, 0), r), null, "MANTA's loss was at 13:26, outside the window");
+  assert.equal(loopHalt("BYCOCKET", upTo(13, 57), T(14, 0), r), null, "its latest exit was a win: nothing to cool off");
+  assert.equal(loopHalt("NEVER", yesterday, T(18, 0), r), null, "a token never closed has no history");
+  assert.equal(loopHalt("BYCOCKET", yesterday, T(18, 0), railsFromEnv({ OBS_LOSS_STREAK: "0", OBS_REENTRY_COOLDOWN_H: "0" } as NodeJS.ProcessEnv)), null, "zero disables it (the streak is off here too, or it would answer for the run)");
+});
+
+test("the loop brake is a rail: an entry and an add-on are refused, an exit passes, and no closes means no brake", () => {
+  const r = railsFromEnv({ OBS_TRADING: "on", OBS_LOSS_STREAK: "3", OBS_LOSS_STREAK_HALT_H: "4", OBS_TRADE_ASSETS: "ETH@robinhood,USDG@robinhood" } as NodeJS.ProcessEnv);
+  const halted = ctx({ rails: r, closes: upTo(15, 27), now: T(15, 30) });
+  const entry = intent({ from: USDG, to: ETH, amount: 10, usd: 10 });
+  assert.match((checkRails(entry, halted) as { ok: false; reason: string }).reason, /loop brake: 3 losses in a row/);
+  assert.match((checkRails({ ...entry, addOn: true }, halted) as { ok: false; reason: string }).reason, /loop brake/, "an add-on is money added during a losing run");
+  assert.deepEqual(checkRails(intent({ exit: true, from: USDG, to: ETH, amount: 10, usd: 10 }), { ...halted, balances: { "USDG@robinhood": 40, "ETH@robinhood": 0.05 } }), { ok: true }, "an exit is never blocked");
+  assert.deepEqual(checkRails(entry, ctx({ rails: r, now: T(15, 30) })), { ok: true }, "with no closes handed in, the rail stays out of the way");
+  assert.equal(railsFromEnv({} as NodeJS.ProcessEnv).lossStreak, 3, "the defaults: three in a row");
+  assert.equal(railsFromEnv({} as NodeJS.ProcessEnv).lossStreakHaltH, 4);
+  assert.equal(railsFromEnv({} as NodeJS.ProcessEnv).reentryCooldownH, 4);
 });
